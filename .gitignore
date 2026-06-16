@@ -1,0 +1,15 @@
+node_modules/
+dist/
+release/
+
+# Local Claude Code settings (personal, not for the public repo)
+.claude/settings.local.json
+.vite/
+*.log
+npm-debug.log*
+.DS_Store
+
+# Flatpak build artifacts (if you build a Flathub manifest locally)
+.flatpak-builder/
+build-dir/
+repo/

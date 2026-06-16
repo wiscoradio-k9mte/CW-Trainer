@@ -1,0 +1,76 @@
+appId: io.github.wiscoradio_k9mte.CWTrainer
+productName: Wisco Radio CW Trainer
+copyright: Copyright © 2026 Travis Engh (K9MTE)
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the bundled renderer (dist/) and the Electron main process ship inside
+# the app. Vite has already bundled React and all source, so node_modules is
+# not needed at runtime.
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+
+linux:
+  category: Education
+  # No-space slug for the unpacked binary, so the binary, snap name, and launch
+  # command all read "wr-cw-trainer" (productName "Wisco Radio CW Trainer" would
+  # otherwise put spaces in the executable path). "wr-" = Wisco Radio.
+  executableName: wr-cw-trainer
+  # Keep synopsis under ~78 chars — the Snap store enforces a short summary.
+  synopsis: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
+  description: >
+    WISCO RADIO CW Trainer teaches amateur-radio Morse code (CW) from your first
+    two characters to a full on-air contact. Koch-method lessons, a six-rung copy
+    ladder, paddle and straight-key sending practice with a live decoder, and a
+    QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — plus realistic
+    band conditions (receiver filtering, QSB fading, and AGC).
+  desktop:
+    entry:
+      Name: Wisco Radio CW Trainer
+      GenericName: Morse Code Trainer
+      Comment: Learn Morse code the Koch way
+      Categories: Education;HamRadio;
+      Keywords: morse;cw;ham;radio;koch;telegraph;amateur;qso;pota;sota;
+  target:
+    - snap
+    - flatpak
+
+snap:
+  grade: stable
+  confinement: strict
+  summary: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
+  # Interfaces this app needs: a display, audio output, and graphics. These are
+  # the standard electron-builder Snap defaults, minus "network" — the trainer
+  # is fully offline. (Snapcraft has no "default" interface; the list must be
+  # explicit real interface names.)
+  plugs:
+    - desktop
+    - desktop-legacy
+    - home
+    - x11
+    - wayland
+    - unity7
+    - browser-support
+    - gsettings
+    - audio-playback
+    - pulseaudio
+    - opengl
+
+flatpak:
+  # The freedesktop runtime + the shared Electron base app, bumped together.
+  # IMPORTANT: Flathub rejects end-of-life runtimes. Before submitting, check
+  # https://docs.flathub.org for the current freedesktop version and raise both
+  # of these to match (and install the matching runtimes — see README). No
+  # --share=network: the app is fully offline.
+  runtimeVersion: "24.08"
+  baseVersion: "24.08"
+  finishArgs:
+    - --share=ipc
+    - --socket=wayland
+    - --socket=fallback-x11
+    - --socket=pulseaudio
+    - --device=dri
