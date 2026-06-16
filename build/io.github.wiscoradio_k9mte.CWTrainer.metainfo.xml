@@ -46,6 +46,7 @@
 
   <url type="homepage">https://github.com/wiscoradio-k9mte/CW-Trainer</url>
   <url type="bugtracker">https://github.com/wiscoradio-k9mte/CW-Trainer/issues</url>
+  <url type="vcs-browser">https://github.com/wiscoradio-k9mte/CW-Trainer</url>
 
   <!-- Flathub requires at least one screenshot at a public URL. Replace these
        with real screenshots committed under build/screenshots/ (or anywhere
@@ -65,7 +66,7 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="1.0.0" date="2026-06-15">
+    <release version="1.0.0" date="2026-06-15" type="stable">
       <description>
         <p>First public release.</p>
       </description>

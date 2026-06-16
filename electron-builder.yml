@@ -62,12 +62,13 @@ snap:
 
 flatpak:
   # The freedesktop runtime + the shared Electron base app, bumped together.
-  # IMPORTANT: Flathub rejects end-of-life runtimes. Before submitting, check
-  # https://docs.flathub.org for the current freedesktop version and raise both
-  # of these to match (and install the matching runtimes — see README). No
-  # --share=network: the app is fully offline.
-  runtimeVersion: "24.08"
-  baseVersion: "24.08"
+  # IMPORTANT: Flathub rejects end-of-life runtimes. 25.08 is the current
+  # freedesktop runtime (verified June 2026, when 24.08 reached end of life);
+  # the SDK rolls a new version each August, so re-check https://docs.flathub.org
+  # before a future release and raise both of these together (install the
+  # matching runtimes — see README). No --share=network: the app is fully offline.
+  runtimeVersion: "25.08"
+  baseVersion: "25.08"
   finishArgs:
     - --share=ipc
     - --socket=wayland

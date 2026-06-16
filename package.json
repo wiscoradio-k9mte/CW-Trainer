@@ -2,15 +2,33 @@
   "name": "wr-cw-trainer",
   "version": "1.0.0",
   "description": "WISCO RADIO CW Trainer — learn Morse code with the Koch method, copy & sending practice, and a QSO simulator.",
+  "keywords": [
+    "morse",
+    "cw",
+    "ham-radio",
+    "amateur-radio",
+    "koch",
+    "telegraph",
+    "qso",
+    "pota",
+    "sota",
+    "electron"
+  ],
   "author": "Travis Engh (K9MTE) <wiscoradio@gmail.com>",
   "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/wiscoradio-k9mte/CW-Trainer",
   "repository": {
     "type": "git",
-    "url": "https://github.com/wiscoradio-k9mte/CW-Trainer.git"
+    "url": "git+https://github.com/wiscoradio-k9mte/CW-Trainer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wiscoradio-k9mte/CW-Trainer/issues"
   },
   "main": "electron/main.cjs",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "concurrently -k -n vite,electron -c blue,yellow \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
