@@ -1811,7 +1811,7 @@ function LearnTab({ player, settings }) {
             <button style={S.btn} onClick={() => { setDrilling(false); player.stop(); clearTimeout(timerRef.current); }}>← BACK</button>
           </div>
 
-          <div style={{ ...S.label, marginBottom: 6 }}>What did you hear?</div>
+          <div style={{ fontSize: 14, color: "#C9CDD3", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>Tap the letter you heard</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))", gap: 8 }}>
             {pool.map((ch) => (
               <button key={ch} onClick={() => answer(ch)}

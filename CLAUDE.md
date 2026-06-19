@@ -12,7 +12,13 @@ practice, and a QSO simulator (POTA/SOTA/IOTA/ragchew). Fully offline. By Travis
 ## Product profile (the rules in force)
 - **Finished software product**, not a kit → **software doctrine** applies
   (modern/best-available; the through-hole/parts-forever hardware rules do NOT apply).
-- **Platform:** Electron desktop, **Linux only**, targeting **Snap Store + Flathub**.
+- **Platform (now):** Electron desktop, **Linux first**, targeting **Snap Store + Flathub**.
+- **Platform roadmap (planned, sequenced):** Linux → Windows (Microsoft Store) →
+  macOS (App Store) → iOS + Android. Multi-platform is the intended direction, not an
+  open question — the code is pure React + Web Audio and the `store` persistence facade
+  was written anticipating Capacitor/browser targets. Linux-only is the starting point,
+  not the end state. Weigh portable/field features (pause-resume, master volume,
+  touch-first paddle) against this roadmap, not against the current desktop build alone.
 - **Offline:** no network requested or used. Don't add network without a feature that
   needs it (and a profile revisit).
 - **Layout/distribution intent:** self-distributable `.flatpak`/`.snap` plus Flathub
@@ -58,9 +64,8 @@ plain-language jargon glosses, one-time W1AW example-callsign nudge).
 - **Persistent cross-session progress history** — currently only lesson number persists.
   The storage seam supports it; scope is a product call (Marcus's headline request).
 - **Free-recall answer entry** vs. the multiple-choice drill grid (enhancement).
-- **Platform expansion: web/PWA or mobile** — the code is pure React + Web Audio and the
-  persistence layer anticipates Capacitor/browser. Biggest lever for portable/field
-  operators (POTA) and phone-first beginners. Held, not decided.
+- (Platform expansion is decided — see the roadmap in the profile above. The open part
+  is only *sequencing/timing*, owned by the human. Linux → Windows → macOS → iOS/Android.)
 
 ## Usability panel
 Matched ham cast in `~/WiscoRadio/Workshop/personas/cast/cw-trainer-panel.md`
