@@ -67,6 +67,41 @@ plain-language jargon glosses, one-time W1AW example-callsign nudge).
 - (Platform expansion is decided — see the roadmap in the profile above. The open part
   is only *sequencing/timing*, owned by the human. Linux → Windows → macOS → iOS/Android.)
 
+## Post-Linux-launch roadmap
+Ordered work that comes after the Linux desktop app is ready to push to Snap + Flathub.
+
+**1. Finish the Linux launch** (once the weekend screenshots + real-device AT pass land):
+- Snap: `snapcraft register wr-cw-trainer` (name must be globally unique), `snapcraft login`,
+  `snapcraft upload --release=stable release/wr-cw-trainer_*.snap`.
+- Flathub: fork `flathub/flathub`, open a PR on the `new-pr` branch adding the manifest
+  `io.github.wiscoradio_k9mte.CWTrainer.yml`. Ownership verified via GitHub (App ID is
+  `io.github.<user>.*`), no domain needed.
+- Set `StartupWMClass` in `electron-builder.yml` from the real build (`xprop WM_CLASS`), rebuild.
+- Tag a GitHub release.
+
+**2. Keep it healthy (maintenance from day one):**
+- CI: GitHub Actions running `npm test` + `npm run build` as required PR checks.
+- Weekly Snyk/Dependabot → route to `security-engineer` (triage by reachable risk, patch the
+  safe wins with `test-qa-engineer` re-verifying, surface judgment calls). See
+  `~/WiscoRadio/Workshop/docs/remote-operation.md`.
+- Triage first real-user issues.
+- Optional hygiene: tighten the Snap `home` plug to match the Flatpak's least-privilege;
+  one git-history secret scan.
+
+**3. Product enhancements (deferred, prioritized):**
+- Persistent cross-session progress history (Marcus's headline — decide scope first).
+- Free-recall answer entry vs. the multiple-choice drill grid.
+- CW craft fidelity: prosigns (SK/AR/KN) sent as single run-together sounds; Iambic Mode B
+  toggle. (Tunable thresholds — dit/dah split, char-gap timer — only with real-operator
+  validation, not one persona's number.)
+
+**4. Platform expansion (sequenced, per the roadmap above):**
+- Windows (Microsoft Store) — Electron build.
+- macOS (App Store) — Electron build + notarization.
+- iOS + Android — Capacitor. Portable/field features become worth doing *here*: pause/resume
+  of an interrupted drill, in-app master volume, touch-first paddle, outdoor/high-contrast
+  theme (Priya's items).
+
 ## Usability panel
 Matched ham cast in `~/WiscoRadio/Workshop/personas/cast/cw-trainer-panel.md`
 (Dale/Carol/Marcus/Ray/Priya/Sam). Panel findings are hypotheses — verify with real
