@@ -2,6 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Locked-down CSP for an offline, file://-loaded Electron app: no remote
+         anything. 'unsafe-inline' is only granted to style-src, for the small
+         inline <style> block below; React's style props go through the CSSOM and
+         are not governed by this. No 'unsafe-eval' — the production bundle needs
+         none. connect-src 'self' keeps the app from reaching the network at all. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>WISCO RADIO — CW Trainer</title>
     <style>

@@ -39,19 +39,25 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --linux",
     "dist:snap": "npm run build && electron-builder --linux snap",
-    "dist:flatpak": "npm run build && electron-builder --linux flatpak"
+    "dist:flatpak": "npm run build && electron-builder --linux flatpak",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
+  "overrides": {
+    "shell-quote": "1.8.4"
+  },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
-    "vite": "^5.4.11",
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9",
     "wait-on": "^8.0.1"
   }
 }
