@@ -1,4 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import {
+  MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
+  DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
+  SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
+  buildRagchew, buildPota, buildSota, buildIota, buildQso, isReadyToAdvance,
+} from "./src/cw-core.js";
 
 /* ================= PERSISTENCE =================
    One small save/load layer for the whole app. Backed by localStorage, which
@@ -28,44 +34,7 @@ const store = {
   },
 };
 
-/* ================= MORSE DATA ================= */
-const MORSE = {
-  A: ".-", B: "-...", C: "-.-.", D: "-..", E: ".", F: "..-.", G: "--.",
-  H: "....", I: "..", J: ".---", K: "-.-", L: ".-..", M: "--", N: "-.",
-  O: "---", P: ".--.", Q: "--.-", R: ".-.", S: "...", T: "-", U: "..-",
-  V: "...-", W: ".--", X: "-..-", Y: "-.--", Z: "--..",
-  0: "-----", 1: ".----", 2: "..---", 3: "...--", 4: "....-",
-  5: ".....", 6: "-....", 7: "--...", 8: "---..", 9: "----.",
-  ".": ".-.-.-", ",": "--..--", "?": "..--..", "/": "-..-.", "=": "-...-",
-  "+": ".-.-.", "@": ".--.-.", "-": "-....-",
-};
-const REV = Object.fromEntries(Object.entries(MORSE).map(([k, v]) => [v, k]));
-
-const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
-const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P US-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
-// Pull a two-letter state from the end of a QTH like "NEWINGTON CT"
-const stateOf = (qth) => {
-  const tok = (qth || "").trim().split(/\s+/).pop() || "";
-  return /^[A-Za-z]{2}$/.test(tok) ? tok.toUpperCase() : "CT";
-};
-// Personalize practice/teaching text to the configured operator
-function subTokens(s, settings) {
-  return s
-    .replaceAll("{ME}", settings.myCall)
-    .replaceAll("{NAME}", settings.myName)
-    .replaceAll("{QTH}", settings.myQth)
-    .replaceAll("{ST}", stateOf(settings.myQth));
-}
-const DX_PREFIXES = ["W9","K0","N8","KD9","W1","K4","N5","VE3","W7","K6","AC9","KB0","N2","W4"];
-const IOTA_DX_PREFIXES = ["G4","EI5","OH2","JA1","9A2","F5","ON4","SM5","GM3","CT1"];
-const NAMES = ["BOB","JIM","SUE","ANN","TOM","DAN","RAY","KEN","JOE","AL","ED","MAX","SAM","LEE","ART","HAL"];
-const QTHS = ["MADISON WI","DULUTH MN","CEDAR RAPIDS IA","TOLEDO OH","FARGO ND","BOISE ID","TUCSON AZ","BANGOR ME","SPARTA WI","MOLINE IL","TOPEKA KS","DENVER CO"];
-const RSTS = ["599","579","559","589","569"];
-// Classic 40-lesson Koch sequence (the LCWO/G4FON family — exact order varies
-// slightly between traditions): full-speed characters from day one,
-// two to start, one new character per lesson at 90% accuracy.
-const KOCH = ["K","M","U","R","E","S","N","A","P","T","L","W","I",".","J","Z","=","F","O","Y",",","V","G","5","/","Q","9","2","H","3","8","B","?","4","7","C","1","D","6","0","X"];
-const glyphs = (code) => code.split("").map((c) => (c === "." ? "·" : "−")).join(" ");
+/* MORSE DATA, QSO builders, timing, similarity, and Koch gate are in src/cw-core.js */
 
 /* ============ CW LANGUAGE GUIDE DATA ============ */
 const LINGO = [
@@ -192,36 +161,6 @@ const POTA_WALKTHROUGH = [
   { who: "YOU", text: "BK GM UR 599 599 {ST} {ST} BK", why: "BK to accept, greeting, their report, your state twice. That's your whole half." },
   { who: "ACTIVATOR", text: "BK TU {ST} 73 DE W9ABC EE", why: "TU, your state as your handle, 73, dit-dit — and they're listening for the next hunter. Thirty seconds, start to finish." },
 ];
-const SUMMITS = ["W9/UP-001","W7A/AE-040","W0C/FR-063","W4G/NG-006","W6/CT-225","W2/GA-010"];
-const IOTA_REFS = ["NA-128","EU-005","OC-001","NA-067","EU-115","AF-004"];
-const randPark = () => "US-" + (1000 + Math.floor(Math.random() * 9000));
-// Contest cut numbers: 9 → N, 0 → T (599 → 5NN)
-const cutNum = (s, cut) => (cut ? s.replace(/9/g, "N").replace(/0/g, "T") : s);
-
-const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const randCall = (prefixes = DX_PREFIXES) => {
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  // Suffix 1–3 letters. Combined with the 1- and 2-letter prefixes, this yields
-  // every common format — 1×2, 1×3, 2×1, 2×2, 2×3 (a 1-letter suffix gives the
-  // shorter 2×1 / 1×1 calls). Weighted so 2- and 3-letter suffixes dominate,
-  // matching how often each length is actually heard on the air.
-  const suffixLen = [1, 2, 2, 2, 3, 3][Math.floor(Math.random() * 6)];
-  let s = "";
-  for (let i = 0; i < suffixLen; i++) s += letters[Math.floor(Math.random() * 26)];
-  return rand(prefixes) + s;
-};
-
-/* ================= TIMING ================= */
-function timing(charWpm, effWpm) {
-  const u = 1.2 / charWpm; // seconds per unit at character speed
-  let charSp = 3 * u, wordSp = 7 * u;
-  if (effWpm < charWpm) {
-    const ta = (60 * charWpm - 37.2 * effWpm) / (effWpm * charWpm);
-    charSp = (3 * ta) / 19;
-    wordSp = (7 * ta) / 19;
-  }
-  return { u, charSp, wordSp };
-}
 
 /* ================= AUDIO ENGINE ================= */
 function useMorsePlayer() {
@@ -697,25 +636,7 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
   return { decoded, buffer, straightDown, straightUp, paddleDown, paddleUp, clear };
 }
 
-/* ================= GRADING ================= */
-function similarity(a, b) {
-  a = a.trim().toUpperCase().replace(/\s+/g, " ");
-  b = b.trim().toUpperCase().replace(/\s+/g, " ");
-  if (!a && !b) return 1;
-  const m = a.length, n = b.length;
-  if (!m || !n) return 0;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++)
-    for (let j = 1; j <= n; j++)
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
-      );
-  return 1 - dp[m][n] / Math.max(m, n);
-}
+/* similarity() is in src/cw-core.js */
 
 function CharDiff({ target, attempt }) {
   const t = target.toUpperCase();
@@ -735,13 +656,18 @@ function CharDiff({ target, attempt }) {
 }
 
 /* ================= SHARED UI ================= */
+// Font sizes use rem so the user's browser font preference scales the text.
+// 16px base reference: label 11px→0.6875rem, btn/btnAmber 14px→0.875rem,
+// display 20px→1.25rem, input 18px→1.125rem.
+// Structural values (padding, gap, radius, maxWidth) stay in px — they are
+// layout boundaries, not text, and must not grow with font scaling.
 const S = {
   panel: { background: "#1E2228", border: "1px solid #2E343C", borderRadius: 10, padding: 16, marginBottom: 14 },
-  label: { fontSize: 11, letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" },
-  btn: { background: "#2A313A", border: "1px solid #3A434E", color: "#E8E2D6", padding: "10px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1 },
-  btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
-  display: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "14px 16px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 20, letterSpacing: 3, minHeight: 56, wordBreak: "break-all", boxShadow: "inset 0 2px 12px rgba(0,0,0,0.6)" },
-  input: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "12px 14px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 18, letterSpacing: 2, width: "100%", boxSizing: "border-box", textTransform: "uppercase" },
+  label: { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" },
+  btn: { background: "#2A313A", border: "1px solid #3A434E", color: "#E8E2D6", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1 },
+  btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
+  display: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "14px 16px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.25rem", letterSpacing: 3, minHeight: 56, wordBreak: "break-all", boxShadow: "inset 0 2px 12px rgba(0,0,0,0.6)" },
+  input: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "12px 14px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem", letterSpacing: 2, width: "100%", boxSizing: "border-box", textTransform: "uppercase" },
 };
 
 function Display({ children, cursor }) {
@@ -754,8 +680,15 @@ function Display({ children, cursor }) {
 }
 
 function TouchKey({ keyDown, keyUp }) {
+  // role="button" + tabIndex makes this focusable and announced by AT.
+  // Keying is owned by the window keydown handler — do not add a competing
+  // handler here (double-fire). The window handler's preventDefault on Space
+  // suppresses page scroll even when this div is focused.
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label="Straight key — press and hold Space, or hold this control, to send"
       onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); keyDown(); }}
       onPointerUp={(e) => { e.preventDefault(); keyUp(); }}
       onPointerCancel={keyUp}
@@ -776,9 +709,16 @@ function TouchKey({ keyDown, keyUp }) {
 }
 
 function PaddleKey({ paddleDown, paddleUp, swap }) {
-  const zone = (el, label, glyph) => (
+  // role="button" + tabIndex + aria-label make each zone focusable and announced by AT.
+  // Keying is owned by the window keydown handler — do not add a competing
+  // handler here (double-fire). The aria-label names the keyboard shortcut so a
+  // screen-reader user knows how to key from the keyboard, which already works.
+  const zone = (el, label, glyph, ariaLabel) => (
     <div
       key={el}
+      role="button"
+      tabIndex={0}
+      aria-label={ariaLabel}
       onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); paddleDown(el); }}
       onPointerUp={(e) => { e.preventDefault(); paddleUp(el); }}
       onPointerCancel={() => paddleUp(el)}
@@ -797,14 +737,14 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
       <div style={{ fontSize: 10, color: "#8A6A33", marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
     </div>
   );
-  const dit = zone(".", "DIT", "·");
-  const dah = zone("-", "DAH", "—");
+  const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow");
+  const dah = zone("-", "DAH", "—", "Dah paddle — press and hold X or right arrow");
   return (
     <div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         {swap ? <>{dah}{dit}</> : <>{dit}{dah}</>}
       </div>
-      <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+      <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
         Keyboard: Z / ← is the left zone, X / → the right · squeeze both to alternate
       </div>
     </div>
@@ -816,7 +756,7 @@ function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
     <div>
       <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
         {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"]].map(([v, l]) => (
-          <button key={v} onClick={() => onKeyType(v)}
+          <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
             style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: 11, ...(keyType === v ? { borderColor: "#F2A93B", color: "#F2A93B" } : { color: "#8A929C" }) }}>
             {l}
           </button>
@@ -832,7 +772,7 @@ function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
         ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
         : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
       {keyType === "paddle" && (
-        <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 6 }}>
+        <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 6 }}>
           ⇄ button swaps which paddle sends dit vs dah — set it to <span style={{ color: "#8A929C" }}>{swap ? "L for left-handed" : "R for right-handed"}</span>
         </div>
       )}
@@ -849,6 +789,7 @@ function Slider({ label, value, min, max, step, suffix, onChange }) {
       </div>
       <input
         type="range"
+        aria-label={label}
         min={min}
         max={max}
         step={step}
@@ -864,7 +805,9 @@ function Score({ pct }) {
   const color = pct >= 90 ? "#8FCB9B" : pct >= 70 ? "#F2A93B" : "#E07A5F";
   const msg = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 10 }}>
+    // aria-live="polite" + aria-atomic: announces the score when a copy attempt
+    // is graded. Both CopyTrainer and KeyTrainer use this component.
+    <div aria-live="polite" aria-atomic="true" style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 10 }}>
       <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 30, color, fontWeight: 700 }}>{pct}%</span>
       <span style={{ ...S.label, color }}>{msg}</span>
     </div>
@@ -974,10 +917,10 @@ function CopyTrainer({ player, settings }) {
         <div style={{ ...S.label, marginBottom: 8 }}>What to copy — climb as you improve</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
           {COPY_LEVELS.map(([v, l, desc], i) => (
-            <button key={v} onClick={() => setSource(v)}
+            <button key={v} aria-pressed={source === v} onClick={() => setSource(v)}
               style={{ ...S.btn, textAlign: "left", padding: "9px 12px", ...(source === v ? { borderColor: "#F2A93B" } : {}) }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: "#5A626C" }}>{i + 1}</span>
+                <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: "#8A929C" }}>{i + 1}</span>
                 <span style={{ color: source === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 13 }}>{l}</span>
               </div>
               {source === v && (
@@ -989,14 +932,14 @@ function CopyTrainer({ player, settings }) {
         <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
         <div style={{ display: "flex", gap: 8 }}>
           {[["easy", "EASY"], ["normal", "NORMAL"], ["real", "REAL LIFE"]].map(([v, l]) => (
-            <button key={v} onClick={() => setDifficulty(v)}
+            <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
               style={{ ...S.btn, flex: 1, padding: "8px 4px", fontSize: 11, ...(difficulty === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
               {l}
             </button>
           ))}
         </div>
         {difficulty === "easy" && (
-          <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
             Text appears letter by letter as it plays — hear it and see it together.
           </div>
         )}
@@ -1004,7 +947,7 @@ function CopyTrainer({ player, settings }) {
           <div style={{ marginTop: 12 }}>
             <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
               onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-            <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: -6 }}>
+            <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6 }}>
               Noise plus QSB fading on every playback — copy through real band conditions.
             </div>
           </div>
@@ -1148,181 +1091,7 @@ function KeyTrainer({ player, settings, setSettings }) {
 }
 
 /* ================= QSO SIMULATOR ================= */
-/* Contact scripts follow current on-air practice:
-   - Ragchew: 3x2 CQ, BT (=) separators, KN to hold the frequency, SK + dit-dit to close.
-   - POTA: hunters send their call ONCE — no DE, no K. Short exchange with BK turnovers,
-     state as QTH, activator closes "TU <state> 73 EE". Park refs use the US- prefix.
-   - SOTA: activator signs /P, summit ref (assoc/region-number) in the CQ, chaser-style exchange.
-   - IOTA: DX island station, contest-style — report + island ref, quick TU. */
-
-function buildRagchew({ myCall, myName, myQth, cut }) {
-  const dx = randCall();
-  const name = rand(NAMES);
-  const qth = rand(QTHS);
-  const rst = cutNum(rand(RSTS), cut);
-  const myRst = cutNum("599", cut);
-  return {
-    dx, flavor: "RAGCHEW",
-    summary: `Worked ${dx} — ${name} in ${qth}, ${rst} out. A proper sit-down QSO.`,
-    steps: [
-      {
-        who: "dx",
-        text: `CQ CQ CQ DE ${dx} ${dx} ${dx} K`,
-        copyHint: "A classic 3x2 CQ. The callsign is what matters — you'll hear it three times.",
-      },
-      {
-        who: "you",
-        suggested: `${dx} DE ${myCall} ${myCall} K`,
-        prompt: "Answer the CQ — their call once, DE, your call twice, K.",
-        mustContain: [myCall],
-      },
-      {
-        who: "dx",
-        text: `${myCall} DE ${dx} = GM TNX FER CALL = UR RST ${rst} ${rst} = NAME ${name} ${name} = QTH ${qth} = HW? ${myCall} DE ${dx} KN`,
-        copyHint: "The full exchange — RST, name, QTH, separated by BT (=). KN at the end means only you should answer.",
-      },
-      {
-        who: "you",
-        suggested: `R R ${dx} DE ${myCall} = GM ${name} TNX FER RPT = UR RST ${myRst} ${myRst} = NAME ${myName} ${myName} = QTH ${myQth} = HW? ${dx} DE ${myCall} KN`,
-        prompt: "Roger it, then send your exchange back — report, name, QTH, with = between thoughts.",
-        mustContain: [myRst, myName],
-      },
-      {
-        who: "dx",
-        text: `R FB ${myName} = TNX FER FB QSO = 73 ES HPE CUAGN ${myCall} DE ${dx} SK EE`,
-        copyHint: "The sign-off — SK closes the contact, and the dit-dit (EE) is the handshake.",
-      },
-    ],
-  };
-}
-
-function buildPota({ myCall, myQth, cut }) {
-  const myState = stateOf(myQth);
-  const dx = randCall();
-  const rst = cutNum(rand(RSTS), cut);
-  const myRst = cutNum("599", cut);
-  const park = randPark();
-  return {
-    dx, flavor: "POTA",
-    summary: `Hunted ${dx} at ${park} — ${rst} from the park. In the log.`,
-    steps: [
-      {
-        who: "dx",
-        text: `CQ POTA CQ POTA DE ${dx} ${dx} ${park} K`,
-        copyHint: "A park activator. Grab the callsign — the US- number is the park reference.",
-      },
-      {
-        who: "you",
-        suggested: `${myCall}`,
-        prompt: "POTA protocol: send your callsign ONCE. No DE, no K — you're one voice in a pileup.",
-        mustContain: [myCall],
-      },
-      {
-        who: "dx",
-        text: `${myCall} GM UR ${rst} ${rst} BK`,
-        copyHint: "Short and sweet — your report twice, then BK turns it back to you.",
-      },
-      {
-        who: "you",
-        suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
-        prompt: "BK back, greeting, their report, your state twice, BK. That's the whole exchange.",
-        mustContain: [myRst, myState],
-      },
-      {
-        who: "dx",
-        text: `BK TU ${myState} 73 DE ${dx} EE`,
-        copyHint: "Activators often use your state as your handle — TU, your state, 73, dit-dit, next hunter.",
-      },
-    ],
-  };
-}
-
-function buildSota({ myCall, cut }) {
-  const dx = randCall();
-  const rst = cutNum(rand(RSTS), cut);
-  const myRst = cutNum("599", cut);
-  const summit = rand(SUMMITS);
-  return {
-    dx, flavor: "SOTA",
-    summary: `Chased ${dx}/P on ${summit} — ${rst}. Summit in the log.`,
-    steps: [
-      {
-        who: "dx",
-        text: `CQ SOTA DE ${dx}/P ${dx}/P ${summit} K`,
-        copyHint: "A summit activator, signing portable. The slash-P and the summit ref are the tells.",
-      },
-      {
-        who: "you",
-        suggested: `${myCall}`,
-        prompt: "Chase it — your callsign once, like a POTA pileup.",
-        mustContain: [myCall],
-      },
-      {
-        who: "dx",
-        text: `${myCall} GM UR ${rst} ${rst} BK`,
-        copyHint: "QRP from a mountaintop — the report may not be pretty, but it's honest.",
-      },
-      {
-        who: "you",
-        suggested: `BK R R UR ${myRst} ${myRst} TU`,
-        prompt: "Roger, send their report, TU. Summit ops are on battery — keep it tight.",
-        mustContain: [myRst],
-      },
-      {
-        who: "dx",
-        text: `BK TU ES 73 DE ${dx}/P EE`,
-        copyHint: "TU 73 and the dit-dit — they're already listening for the next chaser.",
-      },
-    ],
-  };
-}
-
-function buildIota({ myCall, cut }) {
-  const dx = randCall(IOTA_DX_PREFIXES);
-  const ref = rand(IOTA_REFS);
-  const rpt = cutNum("599", cut);
-  return {
-    dx, flavor: "IOTA",
-    summary: `Worked ${dx} on ${ref} — 599 to the island. New one for the log.`,
-    steps: [
-      {
-        who: "dx",
-        text: `CQ CQ IOTA DE ${dx} ${dx} ${ref} K`,
-        copyHint: "An island station — DX prefix, and the ref is continent-number (NA, EU, OC...).",
-      },
-      {
-        who: "you",
-        suggested: `${myCall}`,
-        prompt: "DX-style pileup — your callsign once, then listen hard.",
-        mustContain: [myCall],
-      },
-      {
-        who: "dx",
-        text: `${myCall} ${rpt} ${rpt} ${ref} ${ref} TU`,
-        copyHint: "Contest pace: report and island reference, nothing else. Copy that ref.",
-      },
-      {
-        who: "you",
-        suggested: `R ${rpt} ${rpt} TU`,
-        prompt: "Confirm and report — fast and clean. The pileup is waiting.",
-        mustContain: [rpt],
-      },
-      {
-        who: "dx",
-        text: `TU 73 QRZ IOTA DE ${dx} K`,
-        copyHint: "TU, and straight back to QRZ — island stations don't linger.",
-      },
-    ],
-  };
-}
-
-function buildQso(profile) {
-  const roll = Math.random();
-  if (roll < 0.35) return buildPota(profile);
-  if (roll < 0.55) return buildSota(profile);
-  if (roll < 0.7) return buildIota(profile);
-  return buildRagchew(profile);
-}
+/* buildRagchew, buildPota, buildSota, buildIota, buildQso are in src/cw-core.js */
 
 function QsoSim({ player, settings, setSettings }) {
   const [qso, setQso] = useState(null);
@@ -1487,7 +1256,7 @@ function QsoSim({ player, settings, setSettings }) {
               ["normal", "NORMAL", "Clean signal, no help. Copy by ear, check yourself, then continue."],
               ["real", "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
             ].map(([v, l, desc]) => (
-              <button key={v} onClick={() => setDifficulty(v)}
+              <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
                 style={{ ...S.btn, textAlign: "left", padding: "10px 14px", ...(difficulty === v ? { borderColor: "#F2A93B" } : {}) }}>
                 <span style={{ color: difficulty === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700 }}>{l}</span>
                 <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{desc}</div>
@@ -1498,7 +1267,7 @@ function QsoSim({ player, settings, setSettings }) {
             <div style={{ marginBottom: 6 }}>
               <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
                 onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-              <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: -6, marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6, marginBottom: 12 }}>
                 Adjustable any time during the contact — find the edge of your comfort and sit just past it.
               </div>
             </div>
@@ -1550,7 +1319,7 @@ function QsoSim({ player, settings, setSettings }) {
               </div>
             )}
             <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
-            <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
               <span style={{ color: "#8A929C" }}>?</span> or <span style={{ color: "#8A929C" }}>AGN</span> — repeat the whole transmission · partial call + <span style={{ color: "#8A929C" }}>?</span> (NM0?) — they confirm their full call · <span style={{ color: "#8A929C" }}>QRS</span> — slower please
             </div>
           </div>
@@ -1638,7 +1407,7 @@ function QsoSim({ player, settings, setSettings }) {
           <div style={{ ...S.label, marginBottom: 8 }}>Contact log</div>
           {log.map((e, i) => (
             <div key={i} style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, color: e.who === settings.myCall ? "#FFD89B" : "#8FCB9B", marginBottom: 6, wordBreak: "break-all" }}>
-              <span style={{ color: "#5A626C" }}>{e.who}:</span> {e.text}
+              <span style={{ color: "#8A929C" }}>{e.who}:</span> {e.text}
             </div>
           ))}
         </div>
@@ -1664,7 +1433,7 @@ function LingoGuide({ player, settings }) {
             onClick={() => setOpenCat(openCat === group.cat ? null : group.cat)}
             style={{ ...S.btn, width: "100%", border: "none", borderRadius: 0, textAlign: "left", padding: "14px 16px", display: "flex", justifyContent: "space-between", background: "transparent" }}>
             <span style={{ color: openCat === group.cat ? "#F2A93B" : "#E8E2D6", fontWeight: 700, letterSpacing: 2 }}>{group.cat.toUpperCase()}</span>
-            <span style={{ color: "#5A626C" }}>{openCat === group.cat ? "▲" : "▼"} {group.items.length}</span>
+            <span style={{ color: "#8A929C" }}>{openCat === group.cat ? "▲" : "▼"} {group.items.length}</span>
           </button>
           {openCat === group.cat && (
             <div style={{ padding: "0 16px 14px" }}>
@@ -1672,7 +1441,7 @@ function LingoGuide({ player, settings }) {
               {group.items.map(([term, meaning]) => (
                 <button key={term} onClick={() => say(term)}
                   style={{ display: "flex", gap: 12, width: "100%", background: "transparent", border: "none", borderBottom: "1px solid #23272D", padding: "9px 0", cursor: "pointer", textAlign: "left", alignItems: "baseline" }}>
-                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 16, minWidth: 64, letterSpacing: 1 }}>{term} <span style={{ color: "#5A626C", fontSize: 11 }}>🔊</span></span>
+                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 16, minWidth: 64, letterSpacing: 1 }}>{term} <span style={{ color: "#8A929C", fontSize: 11 }}>🔊</span></span>
                   <span style={{ color: "#C9CDD3", fontSize: 13, fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>{meaning}</span>
                 </button>
               ))}
@@ -1724,12 +1493,12 @@ function OnAirGuide({ player, settings }) {
           {CQ_ANATOMY.map(([seg, why]) => (
             <div key={seg} style={{ display: "flex", gap: 12, borderBottom: "1px solid #23272D", padding: "10px 0", alignItems: "baseline" }}>
               <button onClick={() => say(sub(seg))} style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 15, minWidth: 110, textAlign: "left", padding: 0, letterSpacing: 1 }}>
-                {sub(seg)} <span style={{ color: "#5A626C", fontSize: 10 }}>🔊</span>
+                {sub(seg)} <span style={{ color: "#8A929C", fontSize: 10 }}>🔊</span>
               </button>
               <span style={{ color: "#C9CDD3", fontSize: 13, fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>{why}</span>
             </div>
           ))}
-          <p style={{ color: "#5A626C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
+          <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
             Etiquette: before any CQ, send QRL? and listen. An empty-sounding frequency may be mid-QSO with a station you can't hear.
           </p>
         </div>
@@ -1744,7 +1513,7 @@ function OnAirGuide({ player, settings }) {
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             {[["599", "Perfect copy, loud, clean"], ["579", "Solid copy, good signal"], ["559", "Workable but weak"]].map(([r, d]) => (
               <button key={r} onClick={() => say(r)} style={{ ...S.btn, flex: 1, padding: "10px 4px", textAlign: "center" }}>
-                <div style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 18 }}>{r} <span style={{ fontSize: 10, color: "#5A626C" }}>🔊</span></div>
+                <div style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: 18 }}>{r} <span style={{ fontSize: 10, color: "#8A929C" }}>🔊</span></div>
                 <div style={{ fontSize: 10, color: "#8A929C", marginTop: 4, fontFamily: "system-ui, sans-serif" }}>{d}</div>
               </button>
             ))}
@@ -1759,7 +1528,7 @@ function OnAirGuide({ player, settings }) {
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>A complete QSO, line by line</div>
           {QSO_WALKTHROUGH.map((l) => <WalkLine key={l.text} who={l.who} text={sub(l.text)} why={l.why} onHear={say} />)}
-          <p style={{ color: "#5A626C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+          <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
             This exact pattern is what the QSO tab simulates — when you're ready, go work one.
           </p>
         </div>
@@ -1769,7 +1538,7 @@ function OnAirGuide({ player, settings }) {
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>A POTA hunt, line by line</div>
           {POTA_WALKTHROUGH.map((l) => <WalkLine key={l.text} who={l.who} text={sub(l.text)} why={l.why} onHear={say} />)}
-          <p style={{ color: "#5A626C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+          <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
             Most new CW ops make their first real contact exactly this way — the exchange is short, the script is fixed, and activators are patient. Send ? whenever you need a repeat. Nobody minds.
           </p>
         </div>
@@ -1864,7 +1633,7 @@ function LearnTab({ player, settings }) {
   const newChars = lesson === 1 ? [KOCH[0], KOCH[1]] : [KOCH[lesson]];
   const attempts = history.length;
   const accuracy = attempts ? Math.round((history.filter(Boolean).length / attempts) * 100) : 0;
-  const ready = attempts >= 20 && accuracy >= 90;
+  const ready = isReadyToAdvance(history);
 
   const playChar = (ch) =>
     player.play(ch, { charWpm: settings.charWpm, effWpm: settings.charWpm, freq: settings.freq });
@@ -1920,7 +1689,7 @@ function LearnTab({ player, settings }) {
     <div>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
         {[["chars", "CHARS"], ["lingo", "LINGO"], ["onair", "ON AIR"], ["history", "HISTORY"]].map(([v, l]) => (
-          <button key={v} onClick={() => { player.stop(); setSection(v); }}
+          <button key={v} aria-pressed={section === v} onClick={() => { player.stop(); setSection(v); }}
             style={{ ...S.btn, flex: 1, padding: "8px 2px", fontSize: 11, ...(section === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
             {l}
           </button>
@@ -1937,12 +1706,40 @@ function LearnTab({ player, settings }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
             <span style={S.label}>Lesson {lesson} of {maxLesson}</span>
             <span style={{ display: "flex", gap: 6 }}>
-              <button style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson <= 1}
+              <button aria-label="Previous lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson <= 1}
                 onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
-              <button style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson >= maxLesson}
+              <button aria-label="Next lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson >= maxLesson}
                 onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
             </span>
           </div>
+
+          {/* C2: jump-to-lesson input + skip-ahead affordance.
+              Clearing history on jump mirrors what the arrows do — no special case.
+              Clamped to [1, maxLesson] so an out-of-range value is silently
+              corrected rather than blowing up downstream. The gentle note about
+              Koch method is shown on any jump > 1 step to set honest expectations
+              without blocking the user (product decision: note, not confirm). */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", flex: 1 }}>
+              Already know some? Skip ahead:
+            </span>
+            <input
+              type="number"
+              aria-label="Jump to lesson"
+              min={1}
+              max={maxLesson}
+              value={lesson}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
+                setLesson(v);
+                setHistory([]);
+              }}
+              style={{ ...S.input, width: 62, padding: "6px 10px", fontSize: 14, textTransform: "none", letterSpacing: 0 }}
+            />
+          </div>
+          <p style={{ color: "#8A929C", fontSize: 11, fontFamily: "system-ui, sans-serif", margin: "0 0 10px", lineHeight: 1.5 }}>
+            The Koch method assumes you've mastered earlier characters — each lesson builds on the ones before it.
+          </p>
 
           <div style={{ ...S.label, marginBottom: 6 }}>{lesson === 1 ? "Meet your first two characters" : "New character"}</div>
           <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
@@ -1966,8 +1763,11 @@ function LearnTab({ player, settings }) {
 
           <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0" }} onClick={startDrill}>▶ START DRILL</button>
 
-          <p style={{ color: "#5A626C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
-            This is the Koch method: every character plays at full speed ({settings.charWpm} wpm) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
+          <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
+            This is the Koch method: every character plays at full speed ({settings.charWpm} wpm — words per minute, the standard measure of how fast code is sent) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
+            {settings.effWpm < settings.charWpm && (
+              <> The gaps between characters are stretched (Farnsworth spacing — characters stay fast, pauses give you time to think). Raise effective speed in Settings to close the gap as you improve.</>
+            )}
           </p>
         </div>
       )}
@@ -1976,18 +1776,33 @@ function LearnTab({ player, settings }) {
         <div style={S.panel}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
             <span style={S.label}>Lesson {lesson} · {pool.length} chars</span>
-            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 15, color: ready ? "#8FCB9B" : accuracy >= 90 ? "#F2A93B" : "#8A929C" }}>
+            {/* aria-live so the accuracy updates are announced as they change.
+                aria-label gives a natural reading ("90 percent, 18 of 20")
+                instead of the terse "90% · 18/20" the visual text shows. */}
+            <span
+              aria-live="polite"
+              aria-label={`${accuracy} percent, ${attempts} of 20`}
+              style={{ fontFamily: "ui-monospace, monospace", fontSize: 15, color: ready ? "#8FCB9B" : accuracy >= 90 ? "#F2A93B" : "#8A929C" }}
+            >
               {accuracy}% · {attempts}/20
             </span>
           </div>
 
-          <div style={{ ...S.display, textAlign: "center", fontSize: 34, minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {/* aria-live="polite" + aria-atomic: screen reader announces each drill result
+              as it flips (correct/incorrect/waiting). "polite" queues behind the user's
+              own input rather than interrupting. aria-atomic reads the whole region, not
+              just the changed node, so the full result string is announced. */}
+          <div
+            aria-live="polite"
+            aria-atomic="true"
+            style={{ ...S.display, textAlign: "center", fontSize: "2.125rem", minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
             {flash ? (
               <span style={{ color: flash.ok ? "#8FCB9B" : "#E07A5F" }}>
                 {flash.ok ? "✓" : `✗  ${flash.char}  ${glyphs(MORSE[flash.char])}`}
               </span>
             ) : (
-              <span style={{ color: "#5A626C", fontSize: 16, letterSpacing: 3 }}>LISTEN...</span>
+              <span style={{ color: "#8A929C", fontSize: "1rem", letterSpacing: 3 }}>LISTEN...</span>
             )}
           </div>
 
@@ -2010,6 +1825,25 @@ function LearnTab({ player, settings }) {
             <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0", marginTop: 14 }} onClick={nextLesson}>
               ★ 90% SOLID — NEXT LESSON
             </button>
+          )}
+
+          {/* C1: cliff panel — shown when the learner has done ≥20 reps but is
+              still below 90%. The drill already loops silently; this makes the
+              situation legible and names the path forward without adding a
+              "drop back" shortcut (product decision: keep drilling). Threshold
+              is delegated to isReadyToAdvance so it stays single-sourced. */}
+          {attempts >= 20 && !ready && (
+            <div style={{ marginTop: 14, padding: "14px 16px", background: "#1A2118", border: "1px solid #3A4A3A", borderRadius: 8 }}>
+              <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, color: "#F2A93B", marginBottom: 6 }}>
+                {accuracy}%
+              </div>
+              <p style={{ color: "#C9CDD3", fontSize: 13, fontFamily: "system-ui, sans-serif", margin: "0 0 8px", lineHeight: 1.6 }}>
+                Good effort — you're building the pattern. Keep drilling and your rolling accuracy will climb.
+              </p>
+              <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+                {accuracy}% over your last set — reach 90% to unlock the next character. Each correct answer shifts the window forward, so a good run now counts right away.
+              </p>
+            </div>
           )}
         </div>
       )}
@@ -2042,24 +1876,29 @@ function Settings({ settings, setSettings }) {
     <div style={S.panel}>
       <Slider label="Character speed" value={settings.charWpm} min={10} max={35} step={1} suffix=" wpm" onChange={set("charWpm")} />
       <Slider label="Effective speed (Farnsworth)" value={settings.effWpm} min={4} max={settings.charWpm} step={1} suffix=" wpm" onChange={set("effWpm")} />
+      {/* C3: Farnsworth gloss at point of use — the deeper paragraph below covers
+          the full story; this one-liner is for first-glance context at the slider. */}
+      <p style={{ color: "#8A929C", fontSize: 11, fontFamily: "system-ui, sans-serif", margin: "-8px 0 10px", lineHeight: 1.5 }}>
+        Farnsworth: characters stay at full speed; the pauses between them stretch so you have time to think. Close the gap by raising this toward character speed as you improve.
+      </p>
       <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={35} step={1} suffix=" wpm" onChange={set("keyWpm")} />
       <Slider label="Sidetone" value={settings.freq} min={400} max={900} step={10} suffix=" Hz" onChange={set("freq")} />
       <div style={{ marginBottom: 14 }}>
         <div style={{ ...S.label, marginBottom: 6 }}>RX filter (band noise voicing)</div>
         <div style={{ display: "flex", gap: 6 }}>
           {[["wide", "WIDE"], ["cw", "CW 500"], ["apf", "APF"]].map(([v, l]) => (
-            <button key={v} onClick={() => setSettings((s) => ({ ...s, rxFilter: v }))}
+            <button key={v} aria-pressed={settings.rxFilter === v} onClick={() => setSettings((s) => ({ ...s, rxFilter: v }))}
               style={{ ...S.btn, flex: 1, padding: "7px 4px", fontSize: 11, ...(settings.rxFilter === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
               {l}
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 6, lineHeight: 1.5 }}>
           How real-life band noise sounds. WIDE is open SSB-width hiss (2.4 kHz). CW 500 is a 500 Hz passband centered on your sidetone — the standard CW filter on most rigs. APF is a narrow ~60 Hz audio peak, the razor-filter sound dedicated CW ops run when digging signals out of the noise. AGC is always on — noise ducks under signals and swells back in the gaps.
         </div>
       </div>
       <div style={{ ...S.label, color: "#F2A93B", marginTop: 4, marginBottom: 8 }}>Your station</div>
-      <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginBottom: 10, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginBottom: 10, lineHeight: 1.5 }}>
         These start as an example (W1AW, the ARRL's station). Set them to your own call, name, and location — they personalize your practice contacts and are saved automatically.
       </div>
       <div>
@@ -2079,26 +1918,27 @@ function Settings({ settings, setSettings }) {
             onChange={(e) => setSettings((s) => ({ ...s, myQth: e.target.value.toUpperCase() }))} />
         </div>
       </div>
-      <div style={{ fontSize: 11, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 4 }}>
         End your QTH with your two-letter state — POTA exchanges send it as your handle.
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
         <div>
           <div style={S.label}>Cut numbers (contest style)</div>
-          <div style={{ fontSize: 12, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
             599 → 5NN, 0 → T in QSO exchanges
           </div>
         </div>
         <button
+          aria-pressed={settings.cutNumbers}
           onClick={() => setSettings((s) => ({ ...s, cutNumbers: !s.cutNumbers }))}
           style={{ ...S.btn, padding: "8px 14px", ...(settings.cutNumbers ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
           {settings.cutNumbers ? "5NN ON" : "599 OFF"}
         </button>
       </div>
-      <p style={{ color: "#5A626C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0 }}>
+      <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0 }}>
         Farnsworth keeps each character at full speed but stretches the gaps — train your ear at the character speed you'll actually hear on the air, with thinking room between letters. Close the gap by raising effective speed, not lowering character speed.
       </p>
-      <p style={{ color: "#5A626C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 10 }}>
+      <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 10 }}>
         🔇 No sound? On iPhone, flip the ring/silent switch off silent — silent mode mutes web audio entirely. Then check media volume and tap any play button.
       </p>
     </div>
@@ -2132,7 +1972,7 @@ function Splash({ onSkip }) {
           MADE IN THE DRIFTLESS
         </div>
       </div>
-      <div style={{ position: "absolute", bottom: 28, fontFamily: "system-ui, sans-serif", color: "#5A626C", fontSize: 11, letterSpacing: 1, animation: "splashIn 1.1s 1.5s ease both" }}>
+      <div style={{ position: "absolute", bottom: 28, fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: 11, letterSpacing: 1, animation: "splashIn 1.1s 1.5s ease both" }}>
         tap to skip
       </div>
     </div>
@@ -2162,10 +2002,20 @@ export default function CWTrainer() {
   // persists from there. W1AW (the ARRL's station, in Newington CT) is the
   // universally recognized example callsign, so it reads as "change me."
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...store.load("settings", {}) }));
+  // C4: nudge is visible while the call is still the default W1AW AND the user
+  // hasn't dismissed it. Dismissal persists so it shows at most once. Changing
+  // the call also satisfies it — we derive visibility rather than storing it.
+  const [nudgeDismissed, setNudgeDismissed] = useState(() => store.load("seenCallNudge", false));
   const player = useMorsePlayer();
 
   // Persist settings whenever they change
   useEffect(() => { store.save("settings", settings); }, [settings]);
+
+  // C4: persist nudge dismissal
+  const dismissCallNudge = () => {
+    store.save("seenCallNudge", true);
+    setNudgeDismissed(true);
+  };
 
   useEffect(() => {
     const t = setTimeout(() => setSplash(false), 5000);
@@ -2219,14 +2069,38 @@ export default function CWTrainer() {
               {settings.charWpm} wpm chars · {settings.effWpm} wpm effective · {settings.myCall}
             </div>
           </div>
-          <button style={{ ...S.btn, padding: "8px 12px" }} onClick={() => setShowSettings((v) => !v)}>⚙</button>
+          <button
+            aria-label="Settings"
+            aria-expanded={showSettings}
+            style={{ ...S.btn, padding: "8px 12px" }}
+            onClick={() => { setShowSettings((v) => !v); dismissCallNudge(); }}
+          >⚙</button>
         </header>
 
         {showSettings && <Settings settings={settings} setSettings={setSettings} />}
 
+        {/* C4: one-time W1AW nudge. Shown while the call is still the default
+            AND the user hasn't dismissed it (or tapped the gear, which also
+            satisfies it). Dismissal persists via store so it shows at most once
+            across launches. Changing the call in Settings collapses it via the
+            derived condition without requiring explicit dismissal. */}
+        {settings.myCall === "W1AW" && !nudgeDismissed && (
+          <div role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#1E2228", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+            <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", lineHeight: 1.6, flex: 1 }}>
+              <strong style={{ color: "#C9CDD3" }}>W1AW is an example callsign</strong> (the ARRL's station in Newington, CT). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
+            </span>
+            <button
+              aria-label="Dismiss callsign notice"
+              onClick={dismissCallNudge}
+              style={{ ...S.btn, padding: "2px 8px", fontSize: 13, lineHeight: 1, flexShrink: 0, color: "#8A929C" }}>
+              ✕
+            </button>
+          </div>
+        )}
+
         <nav style={{ display: "flex", gap: 6, marginBottom: 14 }}>
           {tabs.map(([v, l]) => (
-            <button key={v} onClick={() => { player.stop(); setTab(v); }}
+            <button key={v} aria-pressed={tab === v} onClick={() => { player.stop(); setTab(v); }}
               style={{ ...S.btn, flex: 1, ...(tab === v ? { background: "#3A2E18", borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
               {l}
             </button>

@@ -11,4 +11,7 @@ export default defineConfig({
   plugins: [react()],
   server: { port: 5173, strictPort: true },
   build: { outDir: "dist", emptyOutDir: true },
+  // vitest reads this block automatically — no separate vitest.config needed.
+  // environment: "node" because every test target is pure logic (no DOM, no browser APIs).
+  test: { environment: "node" },
 });
