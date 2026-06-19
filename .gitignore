@@ -2,8 +2,8 @@ node_modules/
 dist/
 release/
 
-# Local Claude Code settings (personal, not for the public repo)
-.claude/settings.local.json
+# Local Claude Code settings + agent memory (personal, not for the public repo)
+.claude/
 .vite/
 *.log
 npm-debug.log*
