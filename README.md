@@ -43,7 +43,11 @@ tables, Farnsworth timing, copy grading, and the QSO generators — factored int
 - **A six-rung copy ladder** — single characters, pairs, random groups, ham words,
   callsigns, and full QSO phrases.
 - **Sending practice** with a built-in iambic paddle and straight-key decoder that shows
-  exactly what your fist sends — including the HH "start over" error prosign.
+  exactly what your fist sends — including the HH "start over" error prosign. Key on screen,
+  with the keyboard (Space for a straight key; Z / X or the arrow keys for paddle), or with
+  **your own paddle or straight key through a USB adapter** — VBand-style adapters in
+  keyboard mode send the `[` / `]` bracket keys, which the trainer accepts for dit / dah
+  (use the dit/dah swap toggle if your levers come out reversed).
 - **A QSO simulator** with POTA, SOTA, IOTA, and ragchew contacts, on-air break-in fills
   (`?`, `AGN`, `QRS`, partial-call fills), and honest signal reports.
 - **Realistic band conditions** — selectable receiver filtering (wide / CW 500 Hz / APF),
