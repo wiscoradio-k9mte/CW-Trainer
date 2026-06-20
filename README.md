@@ -123,8 +123,8 @@ over `file://`) — this is what catches base-path problems before you package.
 ├── electron/main.cjs        # Electron main process (creates the window)
 ├── electron-builder.yml     # packaging config: Snap + Flatpak targets
 ├── build/
-│   ├── icon.png             # app icon (1024²; rasterized from icon.svg)
-│   ├── icon.svg             # icon source
+│   ├── icon.png             # app icon (square PNG, 1024² ideal)
+│   ├── screenshots/         # store-listing images (referenced by metainfo.xml)
 │   └── io.github.wiscoradio_k9mte.CWTrainer.metainfo.xml  # store metadata
 ├── LICENSE                  # GPL-3.0 full text
 ├── package.json
