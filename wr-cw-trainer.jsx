@@ -605,8 +605,8 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
       } else {
         const left = swapRef.current ? "-" : ".";
         const right = swapRef.current ? "." : "-";
-        if (e.code === "KeyZ" || e.code === "ArrowLeft") { e.preventDefault(); paddleDown(left); }
-        if (e.code === "KeyX" || e.code === "ArrowRight") { e.preventDefault(); paddleDown(right); }
+        if (e.code === "KeyZ" || e.code === "ArrowLeft" || e.code === "BracketLeft") { e.preventDefault(); paddleDown(left); }
+        if (e.code === "KeyX" || e.code === "ArrowRight" || e.code === "BracketRight") { e.preventDefault(); paddleDown(right); }
       }
     };
     const up = (e) => {
@@ -616,8 +616,8 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
       } else {
         const left = swapRef.current ? "-" : ".";
         const right = swapRef.current ? "." : "-";
-        if (e.code === "KeyZ" || e.code === "ArrowLeft") paddleUp(left);
-        if (e.code === "KeyX" || e.code === "ArrowRight") paddleUp(right);
+        if (e.code === "KeyZ" || e.code === "ArrowLeft" || e.code === "BracketLeft") paddleUp(left);
+        if (e.code === "KeyX" || e.code === "ArrowRight" || e.code === "BracketRight") paddleUp(right);
       }
     };
     window.addEventListener("keydown", dn);
@@ -1093,7 +1093,7 @@ function KeyTrainer({ player, settings, setSettings }) {
           <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
             <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
             <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X — on a computer or Android device. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
+              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
             </p>
           </div>
         </div>
