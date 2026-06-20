@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.wiscoradio_k9mte.CWTrainer</id>
+
+  <name>Wisco Radio CW Trainer</name>
+  <summary>Learn Morse code with the Koch method and a QSO simulator</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <developer id="io.github.wiscoradio_k9mte">
+    <name>Wisco Radio (K9MTE)</name>
+  </developer>
+
+  <description>
+    <p>
+      A focused trainer for amateur-radio Morse code (CW) that takes you from
+      your very first two characters all the way to a full on-air contact.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Koch-method character lessons — full-speed characters with Farnsworth spacing, one new character per lesson</li>
+      <li>Copy practice up a six-rung ladder: single characters, pairs, groups, ham words, callsigns, and full QSO phrases</li>
+      <li>Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends</li>
+      <li>Also keyboard compatible, so you can use your straight key or paddle with the VBand Morse USB Key Trainer</li>
+      <li>A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts, including on-air break-in fills</li>
+      <li>Realistic band conditions: selectable receiver filtering, QSB signal fading, and AGC</li>
+      <li>Reference guides on CW lingo, on-air procedure, and the history of the code</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.wiscoradio_k9mte.CWTrainer.desktop</launchable>
+
+  <categories>
+    <category>Education</category>
+    <category>HamRadio</category>
+  </categories>
+
+  <keywords>
+    <keyword>morse</keyword>
+    <keyword>cw</keyword>
+    <keyword>ham radio</keyword>
+    <keyword>koch</keyword>
+    <keyword>telegraph</keyword>
+    <keyword>qso</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/wiscoradio-k9mte/CW-Trainer</url>
+  <url type="bugtracker">https://github.com/wiscoradio-k9mte/CW-Trainer/issues</url>
+  <url type="vcs-browser">https://github.com/wiscoradio-k9mte/CW-Trainer</url>
+
+  <!-- Screenshots are fetched from public URLs on the main branch, so they must
+       be committed and on main before Flathub builds the listing. -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>Koch-method character lessons</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Learn.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Work a simulated POTA or SOTA contact</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-QSO.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Paddle and straight-key sending with a live decoder</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Key.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Copy practice across a six-rung ladder</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Copy.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Tune speed, Farnsworth, sidetone, and band conditions</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Settings.png</image>
+    </screenshot>
+  </screenshots>
+
+  <!-- No objectionable content: an empty rating means "suitable for everyone". -->
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="1.0.0" date="2026-06-15" type="stable">
+      <description>
+        <p>First public release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

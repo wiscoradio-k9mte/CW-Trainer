@@ -1,0 +1,104 @@
+name: wr-cw-trainer
+title: Wisco Radio CW Trainer
+base: core22
+version: "1.0.0"
+summary: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
+description: |
+  WISCO RADIO CW Trainer teaches amateur-radio Morse code (CW) from your first
+  two characters to a full on-air contact. Koch-method lessons, a six-rung copy
+  ladder, paddle and straight-key sending practice with a live decoder, and a
+  QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — plus realistic
+  band conditions (receiver filtering, QSB fading, and AGC).
+
+  The trainer is fully offline: it requests no network access.
+
+license: GPL-3.0-or-later
+grade: stable
+confinement: strict
+
+# Top-level icon for the snap (store listing + desktop). snapcraft installs this
+# into meta/gui/ as the canonical snap icon regardless of its pixel size, so the
+# 1254x1254 source needs no resizing. The in-tree hicolor copy below (referenced
+# by the .desktop Icon= key) covers the launcher's icon-theme lookup.
+icon: snap/local/icon.png
+
+# core22 + the gnome extension pulls in the gnome-42-2204 platform snap, which
+# ships current Mesa, GTK, and the rest of the desktop runtime. This is the
+# reason we left electron-builder's snap target: its bundled template hard-locks
+# gnome-3-28-1804 (2018 libraries), against which Electron 42 segfaults at launch
+# (MESA-LOADER swrast failure). core22+gnome is the proven, supported path for
+# packaging a modern Electron app as a strictly confined snap.
+
+# Build/run on amd64. Add more entries here if other arches are wanted later.
+architectures:
+  - build-on: amd64
+    build-for: amd64
+
+apps:
+  wr-cw-trainer:
+    # The gnome extension sets up the runtime wiring (XDG dirs, fontconfig,
+    # GTK/GDK, Wayland/X11, OpenGL, GSettings, themes, icon cache) and adds the
+    # desktop/wayland/x11/opengl/gsettings/gtk plugs automatically — so those are
+    # deliberately NOT listed below.
+    extensions: [gnome]
+    # --no-sandbox: Electron's own setuid chrome-sandbox cannot operate inside
+    # strict snap confinement; the snap sandbox provides the isolation instead.
+    # This is the standard, expected flag for confined Electron snaps.
+    command: bin/wr-cw-trainer --no-sandbox
+    desktop: usr/share/applications/io.github.wiscoradio_k9mte.CWTrainer.desktop
+    plugs:
+      # Audio output for the sidetone / Morse playback. The gnome extension does
+      # not provide audio, so it is requested explicitly here. audio-playback is
+      # the modern PipeWire/PulseAudio output interface; no capture is needed.
+      - audio-playback
+      # Keep the screen awake during practice — the app inhibits the screensaver
+      # while Morse audio plays. Without this plug, snap confinement blocks the
+      # SessionManager.Inhibit call and logs a harmless AppArmor denial each time.
+      - screen-inhibit-control
+      # Read/write the user's home for any future export/import; localStorage
+      # itself lives under the snap's own $SNAP_USER_DATA and needs no plug.
+      # NOTE: this can be tightened later (the Flatpak uses no broad home access);
+      # kept for parity with the previous build's posture.
+      - home
+    # Deliberately NO `network` plug: the app is fully offline.
+    environment:
+      # Keep Electron/Chromium caches and config inside the snap's writable area.
+      TMPDIR: $XDG_RUNTIME_DIR
+
+parts:
+  # The Electron app itself. We package the already-built unpacked tree that
+  # `npm run pack` (electron-builder --dir) produces at release/linux-unpacked/.
+  # Dumping a pre-built tree is the simplest reliable pattern: snapcraft does not
+  # have to run npm/Electron's downloader inside the build container.
+  cw-trainer:
+    plugin: dump
+    source: release/linux-unpacked
+    organize:
+      # Put the Electron payload under bin/ so the launch command is bin/wr-cw-trainer.
+      "*": bin/
+    stage:
+      - bin/*
+    prime:
+      - bin/*
+
+  # Desktop entry, icon, and AppStream metainfo so the app shows up in the
+  # launcher and the store listing renders correctly.
+  metadata:
+    plugin: dump
+    source: snap/local
+    organize:
+      cw-trainer.desktop: usr/share/applications/io.github.wiscoradio_k9mte.CWTrainer.desktop
+      # The full-resolution 1254x1254 source goes in the size-honest hicolor dir
+      # so the .desktop Icon= lookup resolves. (The launcher/store icon is also
+      # served by the top-level `icon:` key above.) If a future build adds a
+      # 256/512 resize step, add those size dirs too for sharper small renders.
+      icon.png: usr/share/icons/hicolor/1254x1254/apps/io.github.wiscoradio_k9mte.CWTrainer.png
+      io.github.wiscoradio_k9mte.CWTrainer.metainfo.xml: usr/share/metainfo/io.github.wiscoradio_k9mte.CWTrainer.metainfo.xml
+    stage:
+      - usr/share/applications/*
+      - usr/share/icons/*
+      - usr/share/metainfo/*
+    prime:
+      - usr/share/applications/*
+      - usr/share/icons/*
+      - usr/share/metainfo/*

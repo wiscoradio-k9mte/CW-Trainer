@@ -36,9 +36,15 @@ linux:
       Categories: Education;HamRadio;
       Keywords: morse;cw;ham;radio;koch;telegraph;amateur;qso;pota;sota;
   target:
-    - snap
+    # snap is built with real snapcraft (snap/snapcraft.yaml), NOT electron-builder
+    # — its legacy template targets a 2018 platform that segfaults Electron 42.
     - flatpak
 
+# electron-builder 26 logs a deprecation suggesting a `snapcraft:` key, but that
+# key is not yet accepted by 26.15.5's config schema, so the legacy `snap:` key is
+# correct. This build uses the template path (mksquashfs, no snapcraft/LXD needed);
+# the snap-template extraction bug it used to hit is patched in app-builder-lib —
+# see SNAP-BUILD-NOTES.md at the project root for the full story and the patch.
 snap:
   grade: stable
   confinement: strict

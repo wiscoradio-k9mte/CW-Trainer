@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Wisco Radio CW Trainer
+GenericName=Morse Code Trainer
+Comment=Learn Morse code the Koch way
+Exec=wr-cw-trainer
+Icon=io.github.wiscoradio_k9mte.CWTrainer
+Terminal=false
+Categories=Education;HamRadio;
+Keywords=morse;cw;ham;radio;koch;telegraph;amateur;qso;pota;sota;
+# PLACEHOLDER: set this to the real WM_CLASS of the running window. Determine it
+# from the running app with `xprop WM_CLASS` (click the window) on an X session,
+# then replace the value below. For an Electron app it is usually the productName
+# or the executable name. Until verified this is a best-guess placeholder.
+StartupWMClass=wr-cw-trainer

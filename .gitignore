@@ -13,3 +13,9 @@ npm-debug.log*
 .flatpak-builder/
 build-dir/
 repo/
+
+# Snapcraft build artifacts
+*.snap
+/parts/
+/stage/
+/prime/

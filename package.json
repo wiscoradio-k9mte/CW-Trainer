@@ -30,6 +30,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "postinstall": "patch-package",
     "dev": "concurrently -k -n vite,electron -c blue,yellow \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
@@ -38,7 +39,7 @@
     "start": "npm run build && electron .",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --linux",
-    "dist:snap": "npm run build && electron-builder --linux snap",
+    "dist:snap": "npm run pack && snapcraft pack",
     "dist:flatpak": "npm run build && electron-builder --linux flatpak",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -55,7 +56,8 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^42.4.1",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.15.5",
+    "patch-package": "^8.0.1",
     "vite": "^8.0.16",
     "vitest": "^4.1.9",
     "wait-on": "^8.0.1"

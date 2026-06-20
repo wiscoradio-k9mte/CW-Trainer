@@ -5,6 +5,18 @@ const path = require("path");
 // falls back to X11 automatically when Wayland isn't present.
 app.commandLine.appendSwitch("ozone-platform-hint", "auto");
 
+// Use a temp file instead of /dev/shm for Chromium's shared memory. Under
+// strict snap/flatpak confinement /dev/shm is restricted, which otherwise
+// crashes the renderer on launch ("Creating shared memory ... Permission
+// denied", SIGTRAP).
+app.commandLine.appendSwitch("disable-dev-shm-usage");
+
+// A 2D Morse trainer needs no GPU acceleration, and proprietary GPU drivers
+// don't pass cleanly into snap/flatpak sandboxes (the GPU shows up with a
+// null driver). Software rendering is smooth for this UI and far more
+// compatible across machines, so turn hardware acceleration off everywhere.
+app.disableHardwareAcceleration();
+
 // In dev, `npm run dev` sets this to the Vite dev server URL. When packaged
 // (Snap/Flatpak/AppImage) it is undefined, so we load the built files instead.
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
