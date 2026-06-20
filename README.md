@@ -13,9 +13,10 @@ characters all the way to a complete on-air contact. Built with
 - **License:** GPL-3.0-or-later
 - **Author:** Travis Engh (K9MTE) — Wisco Radio
 
-The trainer itself is a single React component (`wr-cw-trainer.jsx`); this repo wraps
-it with a build system (Vite) and packaging (electron-builder) so it can ship to the
-Linux app stores.
+The trainer's UI lives in one file (`wr-cw-trainer.jsx`), with its pure logic — Morse
+tables, Farnsworth timing, copy grading, and the QSO generators — factored into
+`src/cw-core.js` and covered by a unit-test suite. The repo wraps it with a build system
+(Vite) and packaging (electron-builder) so it can ship to the Linux app stores.
 
 ---
 
@@ -25,7 +26,9 @@ Linux app stores.
 - [Screenshots](#screenshots)
 - [Install](#install)
 - [Develop & run](#develop--run)
+- [Testing](#testing)
 - [Project layout](#project-layout)
+- [Contributing](#contributing)
 - [Package for the stores](#package-for-the-stores)
 - [Submitting to Flathub](#submitting-to-flathub)
 - [Notes & troubleshooting](#notes--troubleshooting)
@@ -110,12 +113,31 @@ over `file://`) — this is what catches base-path problems before you package.
 
 ---
 
+## Testing
+
+The pure logic — the Morse table, Farnsworth timing, the copy grader, the QSO
+generators, and the Koch advancement gate — lives in `src/cw-core.js` and is covered by a
+[vitest](https://vitest.dev/) suite:
+
+```bash
+npm test            # run the suite once
+npm run test:watch  # re-run on change while developing
+```
+
+Keep the suite green, and add tests for any new logic you put in `cw-core.js` — that's the
+bar a change has to clear. UI behavior in `wr-cw-trainer.jsx` is checked by hand (`npm run dev`).
+
+---
+
 ## Project layout
 
 ```
 .
-├── wr-cw-trainer.jsx        # the app — the whole trainer, in one React component
-├── src/main.jsx             # React entry: mounts the trainer into the page
+├── wr-cw-trainer.jsx        # the UI — the whole trainer (components + hooks), one file
+├── src/
+│   ├── cw-core.js           # pure logic: Morse tables, timing, grading, QSO builders
+│   ├── cw-core.test.js      # unit tests for cw-core.js (vitest)
+│   └── main.jsx             # React entry: mounts the trainer into the page
 ├── index.html               # Vite HTML entry
 ├── vite.config.mjs          # bundler config (base: "./" for Electron)
 ├── electron/main.cjs        # Electron main process (creates the window)
@@ -132,6 +154,49 @@ over `file://`) — this is what catches base-path problems before you package.
 > **Replacing the icon:** drop a square PNG (512×512 or larger; 1024² is ideal so every
 > generated size stays crisp) at `build/icon.png`. electron-builder picks it up
 > automatically — `build/` is its `buildResources` directory.
+
+---
+
+## Contributing
+
+Contributions are welcome. This is a community project for amateur-radio operators
+learning CW, and real-world feedback from people who actually operate is what makes it
+better — bug reports, fixes, and feature ideas are all genuinely valued.
+
+**Get set up**
+
+```bash
+git clone https://github.com/wiscoradio-k9mte/CW-Trainer.git
+cd CW-Trainer
+npm install
+npm run dev        # run with hot reload
+npm test           # run the test suite
+```
+
+**Where the code lives**
+
+- **`wr-cw-trainer.jsx`** — the entire UI in one file, organized into clearly named hooks
+  and components: the audio/tone engine (`useMorsePlayer`), the keyer + decoder
+  (`useKeyer`), the copy/sending/QSO trainers, the settings panel, and the reference
+  guides. It's long but sectioned — search for the part you want.
+- **`src/cw-core.js`** — the pure, testable logic (Morse tables, timing, grading, QSO
+  builders, the Koch gate). New logic belongs here so it can be unit-tested.
+- **`electron/main.cjs`** — the Electron main process (window creation and security).
+
+**Submit a change**
+
+1. Fork, then branch from `main` and keep the change focused.
+2. **Keep `npm test` green**, and add tests for any new logic in `cw-core.js` — a change to
+   the core that isn't covered won't be merged.
+3. For UI changes, run `npm run dev` and confirm the flow by hand.
+4. Open a pull request that explains what changed and why.
+
+**Report a bug or suggest a feature**
+
+Open an [issue](https://github.com/wiscoradio-k9mte/CW-Trainer/issues). Bug reports with
+steps to reproduce, and feature ideas grounded in how you actually operate, are the most
+useful — good community ideas get worked in as enhancements. Be kind in issues and
+reviews; we're all here to help more people learn the code.
 
 ---
 
@@ -211,8 +276,9 @@ org and their infrastructure builds it. The high-level steps:
 4. Follow the [Flathub submission docs](https://docs.flathub.org/docs/for-app-authors/submission)
    and their [requirements](https://docs.flathub.org/docs/for-app-authors/requirements).
 
-The `metainfo.xml` and the App ID in this repo are already Flathub-shaped, so the
-manifest is the main remaining piece.
+The `metainfo.xml` and App ID are already Flathub-shaped, and a starter manifest is
+included at `packaging/flathub/io.github.wiscoradio_k9mte.CWTrainer.yml` — submit that to
+`flathub/flathub` (fill in the release artifact's SHA256 and `StartupWMClass` first).
 
 ---
 
