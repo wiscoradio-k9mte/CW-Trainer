@@ -52,13 +52,11 @@ Linux app stores.
 
 ## Screenshots
 
-_Screenshots ship with the first release, captured from the running app._
-
-<!-- Uncomment once the images are committed under build/screenshots/ (these are the
-     same files the store listing in metainfo.xml expects):
-![The Koch-method learning screen](build/screenshots/learn.png)
-![The QSO simulator working a POTA contact](build/screenshots/qso.png)
--->
+![Koch-method character lessons](build/screenshots/WiscoRadio-Learn.png)
+![Work a simulated POTA or SOTA contact](build/screenshots/WiscoRadio-QSO.png)
+![Paddle and straight-key sending with a live decoder](build/screenshots/WiscoRadio-Key.png)
+![Copy practice across a six-rung ladder](build/screenshots/WiscoRadio-Copy.png)
+![Tune speed, Farnsworth, sidetone, and band conditions](build/screenshots/WiscoRadio-Settings.png)
 
 ---
 

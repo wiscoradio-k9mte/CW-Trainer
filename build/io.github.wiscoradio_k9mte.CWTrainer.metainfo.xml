@@ -49,17 +49,28 @@
   <url type="bugtracker">https://github.com/wiscoradio-k9mte/CW-Trainer/issues</url>
   <url type="vcs-browser">https://github.com/wiscoradio-k9mte/CW-Trainer</url>
 
-  <!-- Flathub requires at least one screenshot at a public URL. Replace these
-       with real screenshots committed under build/screenshots/ (or anywhere
-       reachable) before submitting. -->
+  <!-- Screenshots are fetched from public URLs on the main branch, so they must
+       be committed and on main before Flathub builds the listing. -->
   <screenshots>
     <screenshot type="default">
-      <caption>The Koch-method learning screen</caption>
-      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/learn.png</image>
+      <caption>Koch-method character lessons</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Learn.png</image>
     </screenshot>
     <screenshot>
-      <caption>The QSO simulator working a POTA contact</caption>
-      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/qso.png</image>
+      <caption>Work a simulated POTA or SOTA contact</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-QSO.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Paddle and straight-key sending with a live decoder</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Key.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Copy practice across a six-rung ladder</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Copy.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Tune speed, Farnsworth, sidetone, and band conditions</caption>
+      <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadio-Settings.png</image>
     </screenshot>
   </screenshots>
 
