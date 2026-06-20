@@ -655,6 +655,39 @@ function CharDiff({ target, attempt }) {
   );
 }
 
+/* ================= COUNTDOWN HOOK =================
+   Shared by CopyTrainer and QsoSim. Counts 5 → 1, then fires a callback.
+   Re-triggering (e.g. clicking NEW again mid-count) cancels the prior count
+   so the stale callback never fires. Cleanup on unmount does the same.
+   Only NEW-listen actions use this; REPLAY always plays immediately. */
+function useCountdown() {
+  const [countdown, setCountdown] = useState(null);
+  const intervalRef = useRef(null);
+  // remainRef lets the interval read the current value without stale closure
+  const remainRef = useRef(null);
+
+  const start = useCallback((fn) => {
+    clearInterval(intervalRef.current);
+    remainRef.current = 5;
+    setCountdown(5);
+    intervalRef.current = setInterval(() => {
+      remainRef.current -= 1;
+      if (remainRef.current <= 0) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+        setCountdown(null);
+        fn();
+      } else {
+        setCountdown(remainRef.current);
+      }
+    }, 1000);
+  }, []);
+
+  useEffect(() => () => clearInterval(intervalRef.current), []);
+
+  return { countdown, start };
+}
+
 /* ================= SHARED UI ================= */
 // Font sizes use rem so the user's browser font preference scales the text.
 // 16px base reference: label 11px→0.6875rem, btn/btnAmber 14px→0.875rem,
@@ -836,6 +869,7 @@ function CopyTrainer({ player, settings }) {
   const [noise, setNoise] = useState(18);
   const [session, setSession] = useState([]); // scores this sitting
   const noiseGain = (v) => (v / 100) * 0.5;
+  const { countdown, start: startCountdown } = useCountdown();
 
   // Band noise runs while real-life conditions are selected on this tab
   useEffect(() => {
@@ -956,14 +990,26 @@ function CopyTrainer({ player, settings }) {
 
       <div style={S.panel}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          <button style={S.btnAmber} onClick={() => { const t = newTarget(); playTarget(t); }}>▶ NEW</button>
+          <button style={S.btnAmber} onClick={() => startCountdown(() => { const t = newTarget(); playTarget(t); })}>▶ NEW</button>
           <button style={S.btn} onClick={() => playTarget()} disabled={!target}>↻ REPLAY</button>
           <button style={S.btn} onClick={() => playTarget(null, { eff: Math.max(4, settings.effWpm - 3) })} disabled={!target}>🐢 SLOWER</button>
           <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
           <button style={S.btn} onClick={() => setRevealed(true)} disabled={!target}>👁 REVEAL</button>
         </div>
 
-        {difficulty === "easy" && target && (
+        {/* Countdown: shown in the Display area (same spot as live text) while
+            the 5-second pre-play beat runs. Suppresses the live-text display so
+            the number always occupies the same visual space. */}
+        {countdown !== null && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ ...S.label, marginBottom: 6 }}>Get ready</div>
+            <Display>
+              <span style={{ fontSize: "2.5rem", fontWeight: 700 }}>{countdown}</span>
+            </Display>
+          </div>
+        )}
+
+        {difficulty === "easy" && target && countdown === null && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
             <Display cursor={player.playing}>{liveText}</Display>
@@ -1103,6 +1149,7 @@ function QsoSim({ player, settings, setSettings }) {
   const [log, setLog] = useState([]);
   const [fillMsg, setFillMsg] = useState(null);
   const fillTimer = useRef(null);
+  const { countdown, start: startCountdown } = useCountdown();
 
   const showFill = (msg) => {
     setFillMsg(msg);
@@ -1160,7 +1207,11 @@ function QsoSim({ player, settings, setSettings }) {
     setFillMsg(null);
     keyer.clear();
     if (difficulty === "real") player.startNoise(noiseGain(noise), settings.freq, settings.rxFilter);
-    playDx(q.steps[0].text);
+    // Countdown before the DX station starts sending — gives the user a moment
+    // to pick up their pencil. The QSO state is already set so the receiving
+    // panel renders immediately; the countdown shows there in place of the
+    // live-text display.
+    startCountdown(() => playDx(q.steps[0].text));
   };
 
   const cur = qso?.steps[step];
@@ -1174,7 +1225,9 @@ function QsoSim({ player, settings, setSettings }) {
     keyer.clear();
     setStep(next);
     if (next < qso.steps.length && qso.steps[next].who === "dx") {
-      playDx(qso.steps[next].text);
+      // Countdown before each fresh DX transmission so the user has a beat to
+      // reset their ear and pick up their pencil between exchanges.
+      startCountdown(() => playDx(qso.steps[next].text));
     }
   };
 
@@ -1288,7 +1341,18 @@ function QsoSim({ player, settings, setSettings }) {
             <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif", marginTop: 0 }}>{cur.copyHint}</p>
           )}
 
-          {difficulty === "easy" && (
+          {/* Countdown: shown in the Display area (same spot as easy-mode live text)
+              while the pre-play beat runs. Suppressed once playback begins. */}
+          {countdown !== null && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ ...S.label, marginBottom: 6 }}>Get ready</div>
+              <Display>
+                <span style={{ fontSize: "2.5rem", fontWeight: 700 }}>{countdown}</span>
+              </Display>
+            </div>
+          )}
+
+          {difficulty === "easy" && countdown === null && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
               <Display cursor={player.playing}>{liveText}</Display>
