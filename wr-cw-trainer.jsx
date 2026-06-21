@@ -1703,8 +1703,10 @@ function LearnTab({ player, settings }) {
   // function without stale closure. Same pattern as useKeyer's modeRef/swapRef.
   const poolRef = useRef(pool);
   poolRef.current = pool;
-  const answerRef = useRef(answer);
-  answerRef.current = answer;
+  // answerRef.current is assigned below, AFTER `answer` is declared — `answer` is a
+  // const, so referencing it up here throws a temporal-dead-zone error that crashes
+  // the LearnTab render (blank screen after the splash).
+  const answerRef = useRef(null);
 
   const playChar = (ch) =>
     player.play(ch, { charWpm: settings.charWpm, effWpm: settings.charWpm, freq: settings.freq });
@@ -1743,6 +1745,7 @@ function LearnTab({ player, settings }) {
       }
     }, ok ? 600 : 1200);
   };
+  answerRef.current = answer; // keep the keydown handler's ref pointing at the live answer()
 
   const nextLesson = () => {
     clearTimeout(timerRef.current);
