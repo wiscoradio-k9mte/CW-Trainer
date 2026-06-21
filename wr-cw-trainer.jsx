@@ -1699,6 +1699,13 @@ function LearnTab({ player, settings }) {
   const accuracy = attempts ? Math.round((history.filter(Boolean).length / attempts) * 100) : 0;
   const ready = isReadyToAdvance(history);
 
+  // Live refs so the keydown handler always sees the current pool and answer
+  // function without stale closure. Same pattern as useKeyer's modeRef/swapRef.
+  const poolRef = useRef(pool);
+  poolRef.current = pool;
+  const answerRef = useRef(answer);
+  answerRef.current = answer;
+
   const playChar = (ch) =>
     player.play(ch, { charWpm: settings.charWpm, effWpm: settings.charWpm, freq: settings.freq });
 
@@ -1748,6 +1755,28 @@ function LearnTab({ player, settings }) {
   };
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  // Keyboard answer handler — active only while drilling.
+  // Mirrors clicking an answer-grid button: same guard (lockRef), same call (answer).
+  // Uses poolRef/answerRef so the handler never captures stale pool or answer.
+  // The inField guard matches the keyer so a lesson-jump input doesn't fire here.
+  useEffect(() => {
+    if (!drilling) return;
+    const inField = (e) => {
+      const t = e.target;
+      return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
+    };
+    const onKey = (e) => {
+      if (e.repeat || inField(e)) return;
+      const ch = e.key.length === 1 ? e.key.toUpperCase() : null;
+      if (ch !== null && poolRef.current.includes(ch)) {
+        e.preventDefault();
+        answerRef.current(ch);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drilling]);
 
   return (
     <div>
@@ -1875,7 +1904,7 @@ function LearnTab({ player, settings }) {
             <button style={S.btn} onClick={() => { setDrilling(false); player.stop(); clearTimeout(timerRef.current); }}>← BACK</button>
           </div>
 
-          <div style={{ fontSize: 14, color: "#C9CDD3", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>Tap the letter you heard</div>
+          <div style={{ fontSize: 14, color: "#C9CDD3", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>Tap or type the letter you heard</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))", gap: 8 }}>
             {pool.map((ch) => (
               <button key={ch} onClick={() => answer(ch)}

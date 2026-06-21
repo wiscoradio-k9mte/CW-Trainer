@@ -1,7 +1,7 @@
 name: wr-cw-trainer
 title: Wisco Radio CW Trainer
 base: core22
-version: "1.0.0"
+version: "1.0.1"
 summary: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
 description: |
   WISCO RADIO CW Trainer teaches amateur-radio Morse code (CW) from your first

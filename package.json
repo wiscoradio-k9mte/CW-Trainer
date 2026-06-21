@@ -1,6 +1,6 @@
 {
   "name": "wr-cw-trainer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "WISCO RADIO CW Trainer — learn Morse code with the Koch method, copy & sending practice, and a QSO simulator.",
   "keywords": [
     "morse",
