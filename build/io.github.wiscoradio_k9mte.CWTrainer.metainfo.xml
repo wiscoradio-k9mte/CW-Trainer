@@ -3,7 +3,7 @@
   <id>io.github.wiscoradio_k9mte.CWTrainer</id>
 
   <name>Wisco Radio CW Trainer</name>
-  <summary>Learn Morse code with the Koch method and a QSO simulator</summary>
+  <summary>Learn Morse code (CW) the Koch way, with copy practice and a QSO sim</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
@@ -13,20 +13,16 @@
   </developer>
 
   <description>
-    <p>
-      A focused trainer for amateur-radio Morse code (CW) that takes you from
-      your very first two characters all the way to a full on-air contact.
-    </p>
-    <p>Features:</p>
+    <p>WISCO RADIO CW Trainer — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.</p>
     <ul>
-      <li>Koch-method character lessons — full-speed characters with Farnsworth spacing, one new character per lesson</li>
-      <li>Copy practice up a six-rung ladder: single characters, pairs, groups, ham words, callsigns, and full QSO phrases</li>
-      <li>Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends</li>
-      <li>Also keyboard compatible, so you can use your straight key or paddle with the VBand Morse USB Key Trainer</li>
-      <li>A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts, including on-air break-in fills</li>
-      <li>Realistic band conditions: selectable receiver filtering, QSB signal fading, and AGC</li>
-      <li>Reference guides on CW lingo, on-air procedure, and the history of the code</li>
+      <li>Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.</li>
+      <li>A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.</li>
+      <li>Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends — including the HH "start over" prosign. Key on screen, with the keyboard, or with your own paddle or straight key through a USB adapter (VBand-compatible — the [ and ] keys).</li>
+      <li>A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — on-air break-in fills, honest signal reports, and a 5-second "get ready" countdown before the code starts.</li>
+      <li>Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.</li>
+      <li>Reference guides on CW lingo, on-air procedure, and the history of the code.</li>
     </ul>
+    <p>Made in the Driftless by Wisco Radio (K9MTE). GPL-3.0 · open source · fully offline.</p>
   </description>
 
   <launchable type="desktop-id">io.github.wiscoradio_k9mte.CWTrainer.desktop</launchable>
