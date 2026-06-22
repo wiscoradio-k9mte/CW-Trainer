@@ -40,7 +40,6 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --linux",
     "dist:snap": "npm run pack && snapcraft pack",
-    "dist:flatpak": "npm run build && electron-builder --linux flatpak",
     "test": "vitest run",
     "test:watch": "vitest"
   },

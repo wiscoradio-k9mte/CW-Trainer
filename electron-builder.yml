@@ -40,11 +40,10 @@ linux:
       Comment: Learn Morse code the Koch way
       Categories: Education;HamRadio;
       Keywords: morse;cw;ham;radio;koch;telegraph;amateur;qso;pota;sota;
-  target:
-    # snap is built with real snapcraft (snap/snapcraft.yaml), NOT electron-builder
-    # — its legacy template targets a 2018 platform that segfaults Electron 42.
-    - flatpak
 
+# The Snap is built with real snapcraft (snap/snapcraft.yaml); this electron-builder
+# config exists only to produce the unpacked Electron tree (`npm run pack`) that
+# snapcraft then packages.
 # electron-builder 26 logs a deprecation suggesting a `snapcraft:` key, but that
 # key is not yet accepted by 26.15.5's config schema, so the legacy `snap:` key is
 # correct. This build uses the template path (mksquashfs, no snapcraft/LXD needed);
@@ -70,19 +69,3 @@ snap:
     - audio-playback
     - pulseaudio
     - opengl
-
-flatpak:
-  # The freedesktop runtime + the shared Electron base app, bumped together.
-  # IMPORTANT: Flathub rejects end-of-life runtimes. 25.08 is the current
-  # freedesktop runtime (verified June 2026, when 24.08 reached end of life);
-  # the SDK rolls a new version each August, so re-check https://docs.flathub.org
-  # before a future release and raise both of these together (install the
-  # matching runtimes — see README). No --share=network: the app is fully offline.
-  runtimeVersion: "25.08"
-  baseVersion: "25.08"
-  finishArgs:
-    - --share=ipc
-    - --socket=wayland
-    - --socket=fallback-x11
-    - --socket=pulseaudio
-    - --device=dri

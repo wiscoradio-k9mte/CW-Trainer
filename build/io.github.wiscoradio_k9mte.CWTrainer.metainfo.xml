@@ -45,8 +45,8 @@
   <url type="bugtracker">https://github.com/wiscoradio-k9mte/CW-Trainer/issues</url>
   <url type="vcs-browser">https://github.com/wiscoradio-k9mte/CW-Trainer</url>
 
-  <!-- Screenshots are fetched from public URLs on the main branch, so they must
-       be committed and on main before Flathub builds the listing. -->
+  <!-- Screenshots referenced by public raw URLs on the main branch — keep them
+       committed so the URLs resolve for any AppStream consumer. -->
   <screenshots>
     <screenshot type="default">
       <caption>Koch-method character lessons</caption>

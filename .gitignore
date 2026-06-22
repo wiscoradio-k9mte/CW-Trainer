@@ -9,11 +9,6 @@ release/
 npm-debug.log*
 .DS_Store
 
-# Flatpak build artifacts (if you build a Flathub manifest locally)
-.flatpak-builder/
-build-dir/
-repo/
-
 # Snapcraft build artifacts
 *.snap
 /parts/

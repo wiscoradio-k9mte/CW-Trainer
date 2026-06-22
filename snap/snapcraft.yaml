@@ -65,8 +65,8 @@ apps:
       - screen-inhibit-control
       # Read/write the user's home for any future export/import; localStorage
       # itself lives under the snap's own $SNAP_USER_DATA and needs no plug.
-      # NOTE: this can be tightened later (the Flatpak uses no broad home access);
-      # kept for parity with the previous build's posture.
+      # NOTE: this can be tightened later — localStorage needs no home plug; kept
+      # for now for any future export/import feature.
       - home
     # Deliberately NO `network` plug: the app is fully offline.
     environment:
