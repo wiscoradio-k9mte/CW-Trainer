@@ -35,10 +35,9 @@ export const PROSIGN_CODES = {
 // "W9KN", and place names like "CEDAR RAPIDS" — all wrong.  Prosigns are
 // standalone tokens on the air; they never appear mid-word.
 //
-// Why here instead of inline in each player loop: three players (play, and two
-// loops in playMany) used to all do `MORSE[ch]` independently.  One tested
-// tokenizer is simpler than teaching each loop to peek ahead, and it makes the
-// prosign parse unit-testable without the Web Audio API.
+// Why here instead of inline in the player loop: one tested tokenizer is simpler
+// than teaching the audio loop to peek ahead, and it makes the prosign parse
+// unit-testable without the Web Audio API.
 export function toCodes(text) {
   const upper = text.toUpperCase();
   const result = [];
@@ -462,6 +461,37 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   };
 }
 
+/* ================= CQ FORMAT HELPER ================= */
+// Real CW CQ calling is inconsistent — operators vary how many times they repeat
+// their call depending on conditions, habit, and how busy the band is. This helper
+// models three common forms so the simulator presents varied CQ formats rather than
+// the same fixed string every session, which would train rote recognition instead of
+// real-ear copy.
+//
+// Variants (matching on-air practice per ARRL and POTA/SOTA operator surveys):
+//   3×3: "CQ CQ CQ <TAG> DE <call> <call> <call> <suffix> K"  (long, slower bands)
+//   3×2: "CQ CQ CQ <TAG> DE <call> <call> <suffix> K"         (most common)
+//   terse: "CQ <TAG> DE <call> <suffix> K"                     (quick, busy bands)
+//
+// activity: "ragchew"|"pota"|"sota"|"iota" — omitted for ragchew, prepended otherwise.
+// call: the caller's sign as it sounds on the air (includes /P for SOTA activator).
+// suffix: optional string appended after the call repetitions, before K
+//   (used for SOTA summit ref and IOTA island ref that chasers listen for).
+//
+// Returns a complete CQ line string.
+export function cqCall(activity, call, suffix = "") {
+  const tag = activity === "ragchew" ? "" : activity.toUpperCase();
+  // Compose the middle section: optional tag + "DE" + repeated call + optional suffix.
+  // Tag and suffix are only added when non-empty.
+  const tagStr    = tag    ? ` ${tag}` : "";
+  const suffixStr = suffix ? ` ${suffix}` : "";
+
+  const v = Math.floor(Math.random() * 3); // 0, 1, or 2
+  if (v === 0) return `CQ CQ CQ${tagStr} DE ${call} ${call} ${call}${suffixStr} K`;
+  if (v === 1) return `CQ CQ CQ${tagStr} DE ${call} ${call}${suffixStr} K`;
+  return            `CQ${tagStr} DE ${call}${suffixStr} K`;
+}
+
 /* ================= QSO SIMULATOR ================= */
 /* Contact scripts follow current on-air practice:
    - Ragchew: 3x2 CQ, BT (=) separators, KN to hold the frequency, SK + dit-dit to close.
@@ -480,28 +510,26 @@ export const ROLE_TERMS = {
   iota:    [["activator", "Activator"], ["chaser", "Chaser"]],
 };
 
-// Optional dxCall parameter: when supplied (pileup pickup), the picked caller's
-// call is used directly instead of generating a fresh random one. This means
-// every field — text, suggested, mustContain, prompt — is built with the
-// concrete call from the start. No post-hoc regex patching needed or used.
-export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer", dxCall = null) {
-  const dx = dxCall ?? randCall();
+export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
+  const dx = randCall();
   const name = rand(NAMES);
   const qth = rand(QTHS);
   const rst = cutNum(rand(RSTS), cut);
   const myRst = cutNum("599", cut);
 
-  // Answering role: behavior-identical to the original — this branch is
-  // snapshot-locked by tests to guarantee no regression from the refactor.
+  // Answering role: you hear the DX call CQ, then you answer.
   if (role === "answer") {
+    // The CQ format varies per cqCall — 3×3, 3×2, or terse. The copy hint is
+    // kept generic so it stays accurate for all three variants.
+    const dxCq = cqCall("ragchew", dx);
     return {
       dx, flavor: "RAGCHEW",
       summary: `Worked ${dx} — ${name} in ${qth}, ${rst} out. A proper sit-down QSO.`,
       steps: [
         {
           who: "dx",
-          text: `CQ CQ CQ DE ${dx} ${dx} ${dx} K`,
-          copyHint: "A classic 3x2 CQ. The callsign is what matters — you'll hear it three times.",
+          text: dxCq,
+          copyHint: "A CQ — the callsign is what matters. You may hear it two or three times.",
         },
         {
           who: "you",
@@ -529,16 +557,17 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer", dx
     };
   }
 
-  // Calling (activator) role: you call CQ and run the exchange.
+  // Calling role: you call CQ and run the exchange.
   // The exchange content mirrors the answering side but the speakers are swapped.
+  // cqCall generates a realistic varied format; all variants contain myCall.
   return {
     dx, flavor: "RAGCHEW",
     summary: `Called CQ, worked ${dx} — ${name} in ${qth}. A proper sit-down QSO.`,
     steps: [
       {
         who: "you",
-        suggested: `CQ CQ CQ DE ${myCall} ${myCall} ${myCall} K`,
-        prompt: "Call CQ — CQ three times, DE, your call three times, K.",
+        suggested: cqCall("ragchew", myCall),
+        prompt: "Call CQ — CQ, DE, your call, K. The number of repeats varies by habit and conditions.",
         mustContain: [myCall],
       },
       {
@@ -571,29 +600,26 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer", dx
   };
 }
 
-// Optional dxCall: when the pileup picks a specific caller, pass their call here
-// so all steps reference that call from the start — no regex substitution later.
-export function buildPota({ myCall, myQth, cut }, role = "hunter", dxCall = null) {
+export function buildPota({ myCall, myQth, cut }, role = "hunter") {
   const myState = stateOf(myQth);
-  const dx = dxCall ?? randCall();
+  const dx = randCall();
   const rst = cutNum(rand(RSTS), cut);
   const myRst = cutNum("599", cut);
   const park = randPark();
 
-  // Hunter (answering) role: behavior-identical to the original except the CQ
-  // text no longer includes the park reference.
-  // A2 (v1.1): On the air, POTA activators do NOT send the park ref in the CQ —
-  // it goes in the log.  The activator branch was already correct; this aligns
-  // the hunter branch to match real operating practice.
+  // Hunter (answering) role: you hear the POTA activator call CQ.
+  // A2 (v1.1): POTA activators do NOT send the park ref in the CQ — it goes in
+  // the log. The CQ format varies via cqCall; all variants contain "POTA".
   if (role === "hunter") {
+    const dxCq = cqCall("pota", dx);
     return {
       dx, flavor: "POTA",
       summary: `Hunted ${dx} at ${park} — ${rst} from the park. In the log.`,
       steps: [
         {
           who: "dx",
-          text: `CQ POTA CQ POTA DE ${dx} ${dx} K`,
-          copyHint: "A park activator calling CQ. Grab the callsign — the park reference isn't sent on the air, the activator logs it.",
+          text: dxCq,
+          copyHint: "A park activator calling CQ. Grab the callsign — the park ref isn't sent on the air, the activator logs it.",
         },
         {
           who: "you",
@@ -623,7 +649,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", dxCall = null
 
   // Activator role: you call CQ POTA and run the exchange.
   // On the air the park reference (US-XXXX) is NOT sent — it goes in the log.
-  // The prompt notes this because it surprises new POTA ops.
+  // cqCall generates a realistic varied POTA CQ; all variants include myCall.
   const dxState = stateOf(rand(QTHS));
   const dxRst   = cutNum(rand(RSTS), cut);
   return {
@@ -632,8 +658,8 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", dxCall = null
     steps: [
       {
         who: "you",
-        suggested: `CQ POTA CQ POTA DE ${myCall} ${myCall} K`,
-        prompt: `Call CQ POTA — your call twice, K. The park reference (${park}) goes in your log, not on the air.`,
+        suggested: cqCall("pota", myCall),
+        prompt: `Call CQ POTA. The park reference (${park}) goes in your log, not on the air.`,
         mustContain: [myCall],
       },
       {
@@ -662,17 +688,17 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", dxCall = null
   };
 }
 
-// Optional dxCall: when supplied for a pileup, the chaser's call is the picked
-// caller, not a random one. For SOTA/IOTA the activator signs /P; dxCall is the
-// base call and the /P form is derived here — consistent, no patchwork needed.
-export function buildSota({ myCall, cut }, role = "chaser", dxCall = null) {
-  const dx = dxCall ?? randCall();
+export function buildSota({ myCall, cut }, role = "chaser") {
+  const dx = randCall();
   const rst = cutNum(rand(RSTS), cut);
   const myRst = cutNum("599", cut);
   const summit = rand(SUMMITS);
 
-  // Chaser (answering) role: behavior-identical to the original.
+  // Chaser (answering) role: you hear the SOTA activator call CQ.
+  // The activator signs /P and includes the summit ref in the CQ so chasers can
+  // log it. The summit ref is passed as the suffix to cqCall.
   if (role === "chaser") {
+    const dxCq = cqCall("sota", `${dx}/P`, summit);
     return {
       dx, flavor: "SOTA",
       // dxSigned: the other station's call as it appears on-air (activator signs /P)
@@ -681,7 +707,7 @@ export function buildSota({ myCall, cut }, role = "chaser", dxCall = null) {
       steps: [
         {
           who: "dx",
-          text: `CQ SOTA DE ${dx}/P ${dx}/P ${summit} K`,
+          text: dxCq,
           copyHint: "A summit activator, signing portable. The slash-P and the summit ref are the tells.",
         },
         {
@@ -711,7 +737,8 @@ export function buildSota({ myCall, cut }, role = "chaser", dxCall = null) {
   }
 
   // Activator role: you're on the summit, calling CQ SOTA.
-  // You sign /P. The summit reference is in the CQ (chasers expect it there).
+  // You sign /P. The summit reference goes in the CQ — chasers expect it there.
+  // cqCall is given the portable call and the summit ref as suffix.
   const dxRst = cutNum(rand(RSTS), cut);
   return {
     dx, flavor: "SOTA",
@@ -719,7 +746,7 @@ export function buildSota({ myCall, cut }, role = "chaser", dxCall = null) {
     steps: [
       {
         who: "you",
-        suggested: `CQ SOTA DE ${myCall}/P ${myCall}/P ${summit} K`,
+        suggested: cqCall("sota", `${myCall}/P`, summit),
         prompt: `Call CQ SOTA signing portable. Summit ref ${summit} goes in the CQ — chasers expect it there.`,
         mustContain: [myCall],
       },
@@ -749,23 +776,22 @@ export function buildSota({ myCall, cut }, role = "chaser", dxCall = null) {
   };
 }
 
-// Optional dxCall: in the activator branch it supplies the chaser's call (the
-// station answering your CQ IOTA). The island station is always myCall; dxCall
-// only applies when a pileup caller has been picked.
-export function buildIota({ myCall, cut }, role = "chaser", dxCall = null) {
+export function buildIota({ myCall, cut }, role = "chaser") {
   const dx = randCall(IOTA_DX_PREFIXES);
   const ref = rand(IOTA_REFS);
   const rpt = cutNum("599", cut);
 
-  // Chaser (answering) role: behavior-identical to the original.
+  // Chaser (answering) role: you hear the IOTA island station call CQ.
+  // The ref follows the call in the CQ — passed as suffix to cqCall.
   if (role === "chaser") {
+    const dxCq = cqCall("iota", dx, ref);
     return {
       dx, flavor: "IOTA",
       summary: `Worked ${dx} on ${ref} — 599 to the island. New one for the log.`,
       steps: [
         {
           who: "dx",
-          text: `CQ CQ IOTA DE ${dx} ${dx} ${ref} K`,
+          text: dxCq,
           copyHint: "An island station — DX prefix, and the ref is continent-number (NA, EU, OC...).",
         },
         {
@@ -795,8 +821,8 @@ export function buildIota({ myCall, cut }, role = "chaser", dxCall = null) {
   }
 
   // Activator role: you're the DX island station, calling CQ IOTA.
-  // Use the supplied dxCall (pileup pickup) or generate a random stateside chaser.
-  const chaser = dxCall ?? randCall(DX_PREFIXES);
+  // The island ref follows the call in the CQ — passed as suffix to cqCall.
+  const chaser = randCall(DX_PREFIXES);
   const myRpt = cutNum("599", cut);
   return {
     dx: chaser, flavor: "IOTA",
@@ -804,8 +830,8 @@ export function buildIota({ myCall, cut }, role = "chaser", dxCall = null) {
     steps: [
       {
         who: "you",
-        suggested: `CQ CQ IOTA DE ${myCall} ${myCall} ${ref} K`,
-        prompt: `Call CQ IOTA — your call twice, island ref ${ref}, K. Contest pace.`,
+        suggested: cqCall("iota", myCall, ref),
+        prompt: `Call CQ IOTA with your island ref ${ref}. Contest pace.`,
         mustContain: [myCall],
       },
       {
@@ -839,121 +865,6 @@ export function buildIota({ myCall, cut }, role = "chaser", dxCall = null) {
 // that made it impossible to practice a specific role. If a thin shim is ever
 // needed for backwards compatibility, add a dispatcher here.
 
-/* ================= PILEUP MODEL ================= */
-/* Pure data model for the Activator + Real life pileup (Phase 4).
-   No audio, no React — the UI builds from this and drives playMany().
-
-   Design constraints (from the architect's brief):
-   - 2–4 callers, weighted toward 2–3 (more than 4 is mush on any receiver)
-   - Signal strengths SPREAD deliberately: one loud, one mid, one weak — not
-     uniform random. This makes "work the strongest first" a real teaching point.
-   - offsetMs 0..~600ms models timing overlap: not everyone keys simultaneously.
-   - Expose tuning constants so UAT feedback can change behavior without a code hunt. */
-
-// Tuning constants — named so UAT feedback translates directly to a single change.
-export const PILEUP_MAX_CALLERS = 4;       // absolute ceiling
-export const PILEUP_MAX_OFFSET_MS = 600;   // latest a caller can start after the group
-export const PILEUP_DETUNE_MIN_HZ = 30;    // minimum pitch offset from center freq
-export const PILEUP_DETUNE_MAX_HZ = 80;    // maximum pitch offset from center freq
-
-// Signal strength tiers for PILEUP_SPREAD_SIGNALS — one value per tier.
-// "Loud" at 0.85 so the strongest caller is clearly above mid; "weak" at 0.25
-// so it is genuinely difficult to pull but not inaudible. Values are 0..1 (gain).
-const SIGNAL_TIERS = [0.85, 0.55, 0.30, 0.15]; // index 0 = loudest
-
-// Build a spread signal array for `count` callers.
-// Returns signals in shuffled order (no positional loudness bias) so the user
-// can't predict which callsign will be loud just from hearing the order.
-function spreadSignals(count) {
-  // Take the first `count` tiers, then shuffle so position isn't predictable.
-  const tiers = SIGNAL_TIERS.slice(0, count);
-  // Fisher-Yates shuffle (in-place on a copy)
-  const arr = [...tiers];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-// buildPileup — pure data model for a pileup round.
-// activity: "pota" | "sota" | "iota" | "ragchew" — drives prefix selection
-//   (IOTA uses DX prefixes; everything else uses domestic).
-// Returns { callers: [{ call, rst, signal, offsetMs }, ...] }
-//
-// C3 (v1.1 UAT): the `partial` field has been removed.  It was set but never
-// read by the audio path — dead data.  The pileup already provides a difficulty
-// gradient through signal strength (the weak caller is genuinely hard to pull)
-// plus pitch detune and offset; `partial` added a second overlapping axis that
-// the audio never realized.  Removing it keeps the model honest.  If audible
-// partial-copy is wanted in a future pass, it belongs as an audio behavior, not
-// a boolean the player never consults.
-export function buildPileup(settings, activity) {
-  // 2–4 callers, weighted toward 2–3: [2,2,2,3,3,4] → ~50% twos, ~33% threes, ~17% fours.
-  const counts = [2, 2, 2, 3, 3, 4];
-  const count = counts[Math.floor(Math.random() * counts.length)];
-
-  // IOTA is a DX pileup — callers sound exotic (G4, JA1, etc.)
-  const prefixes = activity === "iota" ? IOTA_DX_PREFIXES : DX_PREFIXES;
-
-  const signals = spreadSignals(count);
-
-  const callers = Array.from({ length: count }, (_, i) => {
-    // Stagger offsets so not everyone keys at once — first caller at 0ms,
-    // the rest somewhere in 0..PILEUP_MAX_OFFSET_MS.
-    const offsetMs = i === 0 ? 0 : Math.floor(Math.random() * PILEUP_MAX_OFFSET_MS);
-    return {
-      call: randCall(prefixes),
-      rst:  "599",     // pileup callers send their call only, report at exchange stage
-      signal: signals[i],
-      offsetMs,
-    };
-  });
-
-  return { callers };
-}
-
-// matchPickup — pure function; the testable heart of the pileup interaction.
-// pileup:  the { callers } object from buildPileup
-// sent:    what the user keyed (string, already decoded and trimmed)
-// worked:  Set of call strings already worked this round
-//
-// Returns one of:
-//   { matched: caller }      — exactly one un-worked caller matches
-//   { ambiguous: [c1, c2] }  — fragment matches more than one un-worked caller
-//   null                     — nothing matches
-//
-// Matching rules (from the design, §2.4):
-//   1. Exact call match (case-insensitive)
-//   2. Unambiguous prefix/suffix fragment — the sent string is a prefix OR suffix
-//      of exactly ONE un-worked caller's call. Minimum fragment length: 2 chars
-//      (single-letter matches would hit too many calls to be useful).
-export function matchPickup(pileup, sent, worked = new Set()) {
-  if (!sent || sent.length === 0) return null;
-
-  const upper = sent.toUpperCase().replace(/\s+/g, "");
-  if (upper.length === 0) return null;
-
-  const unworked = pileup.callers.filter((c) => !worked.has(c.call));
-  if (unworked.length === 0) return null;
-
-  // Pass 1: exact match on the full call (case-insensitive)
-  const exact = unworked.find((c) => c.call.toUpperCase() === upper);
-  if (exact) return { matched: exact };
-
-  // Pass 2: fragment — prefix or suffix of the full call.
-  // Require at least 2 characters so "W" doesn't ambiguously match everyone.
-  if (upper.length < 2) return null;
-
-  const fragmentMatches = unworked.filter((c) => {
-    const call = c.call.toUpperCase();
-    return call.startsWith(upper) || call.endsWith(upper);
-  });
-
-  if (fragmentMatches.length === 1) return { matched: fragmentMatches[0] };
-  if (fragmentMatches.length > 1)  return { ambiguous: fragmentMatches };
-  return null;
-}
 
 /* ================= AGGREGATE SCORE HELPER (B4) ================= */
 // averageScore(nums) — mean of a numeric array, rounded to the nearest integer.

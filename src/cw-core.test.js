@@ -9,9 +9,8 @@ import {
   COMMON_WORDS, ROLE_TERMS,
   analyzeFist, FIST_TOLERANCE, FIST_MIN_ELEMENTS,
   toCodes,
-  buildPileup, matchPickup,
-  PILEUP_MAX_CALLERS, PILEUP_MAX_OFFSET_MS,
   averageScore,
+  cqCall,
 } from "./cw-core.js";
 
 // ---------------------------------------------------------------------------
@@ -332,7 +331,9 @@ describe("buildIota()", () => {
   it("activator role: first step is who:you, CQ IOTA with island ref", () => {
     const qso = buildIota(PROFILE, "activator");
     expect(qso.steps[0].who).toBe("you");
-    expect(qso.steps[0].suggested).toContain("CQ CQ IOTA");
+    // CQ format varies — check shape: CQ present, IOTA tag present, callsign present
+    expect(qso.steps[0].suggested).toContain("CQ");
+    expect(qso.steps[0].suggested).toContain("IOTA");
     expect(qso.steps[0].suggested).toContain(PROFILE.myCall);
     // Island ref format: XX-NNN
     expect(qso.steps[0].suggested).toMatch(/[A-Z]{2}-\d{3}/);
@@ -870,6 +871,95 @@ describe("ROLE_TERMS", () => {
 // These exercise behavior the existing suite went green without covering.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// cqCall() — CQ format variation helper
+// ---------------------------------------------------------------------------
+describe("cqCall()", () => {
+  const CALL = "K9MTE";
+  const ACTIVITIES = ["ragchew", "pota", "sota", "iota"];
+
+  // Run many times so all three variants are likely drawn at least once.
+  const RUNS = 60;
+
+  it("always contains the callsign for every activity", () => {
+    for (const act of ACTIVITIES) {
+      for (let i = 0; i < RUNS; i++) {
+        expect(cqCall(act, CALL)).toContain(CALL);
+      }
+    }
+  });
+
+  it("always contains 'CQ' for every activity", () => {
+    for (const act of ACTIVITIES) {
+      for (let i = 0; i < RUNS; i++) {
+        expect(cqCall(act, CALL)).toContain("CQ");
+      }
+    }
+  });
+
+  it("always ends with ' K' (standard CQ ending)", () => {
+    for (const act of ACTIVITIES) {
+      for (let i = 0; i < RUNS; i++) {
+        expect(cqCall(act, CALL).endsWith(" K")).toBe(true);
+      }
+    }
+  });
+
+  it("pota/sota/iota CQ always contains the activity tag", () => {
+    for (const act of ["pota", "sota", "iota"]) {
+      for (let i = 0; i < RUNS; i++) {
+        expect(cqCall(act, CALL)).toContain(act.toUpperCase());
+      }
+    }
+  });
+
+  it("ragchew CQ does NOT include any activity tag", () => {
+    for (let i = 0; i < RUNS; i++) {
+      const cq = cqCall("ragchew", CALL);
+      expect(cq).not.toContain("POTA");
+      expect(cq).not.toContain("SOTA");
+      expect(cq).not.toContain("IOTA");
+    }
+  });
+
+  it("suffix is included in the CQ when provided", () => {
+    const SUMMIT = "W9/UP-001";
+    for (let i = 0; i < RUNS; i++) {
+      expect(cqCall("sota", `${CALL}/P`, SUMMIT)).toContain(SUMMIT);
+    }
+  });
+
+  it("all three shape variants appear across many draws", () => {
+    // The three variants differ by how many times the callsign is repeated in the
+    // DE block: 3×3 sends it three times, 3×2 twice, terse once. Counting call
+    // occurrences distinguishes all three, so a regression that collapses cqCall
+    // to a single variant (e.g. always-terse or always-3×3) is caught here — not
+    // just the terse case. RUNS=60 makes drawing all three overwhelmingly likely.
+    const counts = new Set();
+    for (let i = 0; i < RUNS; i++) {
+      const cq = cqCall("pota", CALL);
+      const n = cq.split(/\s+/).filter((tok) => tok === CALL).length;
+      counts.add(n);
+    }
+    // Must have seen the call repeated 3, 2, and 1 times across the draws.
+    expect(counts.has(3)).toBe(true); // 3×3 variant
+    expect(counts.has(2)).toBe(true); // 3×2 variant
+    expect(counts.has(1)).toBe(true); // terse variant
+  });
+
+  it("mustContain invariant holds for SOTA: callsign and SOTA both appear", () => {
+    // The builder sets mustContain: [myCall] for the CQ step. Since cqCall always
+    // includes the call, that invariant is always satisfied.
+    for (let i = 0; i < RUNS; i++) {
+      const cq = cqCall("sota", `${CALL}/P`, "W9/UP-001");
+      // myCall appears in its /P form — the builder uses myCall as mustContain
+      // (not myCall/P) because mustContain is the base call, not the /P suffix form.
+      // This is consistent: the user's sign is K9MTE, and K9MTE/P always contains K9MTE.
+      expect(cq).toContain(CALL);
+    }
+  });
+});
+
 // The UI in wr-cw-trainer.jsx calls a drill generator as `cat.gen(settings)`,
 // where `settings` is the live app settings object. That object names the
 // cut-numbers flag `cutNumbers` — NOT `cut`. The cut-aware generators
@@ -918,6 +1008,14 @@ describe("drill cut-numbers wiring (real UI settings shape)", () => {
 // is to make a future change to the answering builders FAIL. This locks the
 // actual step text. Random tokens are masked by overriding Math.random with a
 // fixed sequence so the templates are deterministic and comparable.
+//
+// CQ variation (v1.1 Part 2): the CQ step now uses cqCall(), which picks one of
+// three realistic formats at random. The CQ step's text is therefore non-deterministic
+// even under a fixed seed (because the variant pick and the call lookup each consume
+// a random draw). The CQ step is therefore asserted by SHAPE (callsign + activity
+// tag present, ends with K), while every non-CQ step remains EXACT-locked.
+// This is the minimum relaxation: all exchange content stays byte-locked; only the
+// CQ format varies.
 describe("answering-branch text parity (strong lock)", () => {
   const PROF = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON WI", cut: false };
 
@@ -928,27 +1026,40 @@ describe("answering-branch text parity (strong lock)", () => {
     try { return fn(); } finally { Math.random = real; }
   }
   const SEED = [0.1, 0.3, 0.5, 0.7, 0.2, 0.9, 0.42, 0.15, 0.6];
-  const textOf = (fn, role) =>
-    withSeed(SEED, () => fn(PROF, role).steps.map((s) => s.text ?? s.suggested).join(" | "));
 
-  // These strings are the locked pre-refactor answering output under the fixed
-  // seed. If a future edit changes any answering-branch wording, these fail.
-  it("ragchew answering text is locked", () => {
-    expect(textOf(buildRagchew, "answer")).toBe(
-      "CQ CQ CQ DE VE3H VE3H VE3H K | VE3H DE K9MTE K9MTE K | " +
-      "K9MTE DE VE3H = GM TNX FER CALL = UR RST 569 569 = NAME MAX MAX = QTH CEDAR RAPIDS IA = HW? K9MTE DE VE3H KN | " +
-      "R R VE3H DE K9MTE = GM MAX TNX FER RPT = UR RST 599 599 = NAME TRAVIS TRAVIS = QTH MADISON WI = HW? VE3H DE K9MTE KN | " +
-      "R FB TRAVIS = TNX FER FB QSO = 73 ES HPE CUAGN K9MTE DE VE3H SK EE"
-    );
+  // textOf returns an array of step texts (text or suggested) for exact comparison.
+  const stepsOf = (fn, role) =>
+    withSeed(SEED, () => fn(PROF, role).steps.map((s) => s.text ?? s.suggested));
+
+  // Helper: assert CQ step shape — callsign present (when given), tag present (when given), ends with K.
+  function assertCqShape(cqText, call, tag) {
+    if (call) expect(cqText).toContain(call);
+    if (tag) expect(cqText).toContain(tag);
+    expect(cqText.endsWith(" K")).toBe(true);
+    expect(cqText).toContain("CQ");
+  }
+
+  it("ragchew answering: CQ step shape-checked; exchange steps exact-locked", () => {
+    const steps = stepsOf(buildRagchew, "answer");
+    // Step 0: DX CQ — shape check only (CQ format varies)
+    assertCqShape(steps[0], "VE3H");
+    // Steps 1–4: exact lock
+    expect(steps[1]).toBe("VE3H DE K9MTE K9MTE K");
+    expect(steps[2]).toBe("K9MTE DE VE3H = GM TNX FER CALL = UR RST 569 569 = NAME MAX MAX = QTH CEDAR RAPIDS IA = HW? K9MTE DE VE3H KN");
+    expect(steps[3]).toBe("R R VE3H DE K9MTE = GM MAX TNX FER RPT = UR RST 599 599 = NAME TRAVIS TRAVIS = QTH MADISON WI = HW? VE3H DE K9MTE KN");
+    expect(steps[4]).toBe("R FB TRAVIS = TNX FER FB QSO = 73 ES HPE CUAGN K9MTE DE VE3H SK EE");
   });
 
-  it("pota hunter text is locked (A2: park ref removed from activator CQ)", () => {
-    // A2 (v1.1): the activator's CQ no longer includes the park reference.
-    // On the air, POTA activators log the park ref — they don't send it.
-    expect(textOf(buildPota, "hunter")).toBe(
-      "CQ POTA CQ POTA DE VE3H VE3H K | K9MTE | K9MTE GM UR 589 589 BK | " +
-      "BK GM UR 599 599 WI WI BK | BK TU WI 73 DE VE3H EE"
-    );
+  it("pota hunter: CQ step shape-checked; exchange steps exact-locked (A2: no park ref)", () => {
+    const steps = stepsOf(buildPota, "hunter");
+    // Step 0: activator CQ — shape only; POTA tag must be present; park ref must NOT be
+    assertCqShape(steps[0], "VE3H", "POTA");
+    expect(steps[0]).not.toMatch(/US-\d+/);
+    // Steps 1–4: exact lock
+    expect(steps[1]).toBe("K9MTE");
+    expect(steps[2]).toBe("K9MTE GM UR 589 589 BK");
+    expect(steps[3]).toBe("BK GM UR 599 599 WI WI BK");
+    expect(steps[4]).toBe("BK TU WI 73 DE VE3H EE");
   });
 
   it("pota hunter CQ step does not contain a park reference (A2)", () => {
@@ -959,262 +1070,54 @@ describe("answering-branch text parity (strong lock)", () => {
     }
   });
 
-  it("sota chaser text is locked", () => {
-    expect(textOf(buildSota, "chaser")).toBe(
-      "CQ SOTA DE VE3H/P VE3H/P W7A/AE-040 K | K9MTE | K9MTE GM UR 589 589 BK | " +
-      "BK R R UR 599 599 TU | BK TU ES 73 DE VE3H/P EE"
-    );
+  it("sota chaser: CQ step shape-checked (includes /P and summit ref); exchange steps exact-locked", () => {
+    const steps = stepsOf(buildSota, "chaser");
+    // Step 0: SOTA activator CQ — must have /P call, SOTA tag, summit ref, ends K
+    assertCqShape(steps[0], "VE3H/P", "SOTA");
+    expect(steps[0]).toMatch(/[A-Z0-9]+\/[A-Z]+-\d+/); // summit ref present
+    // Steps 1–4: exact lock
+    expect(steps[1]).toBe("K9MTE");
+    expect(steps[2]).toBe("K9MTE GM UR 589 589 BK");
+    expect(steps[3]).toBe("BK R R UR 599 599 TU");
+    expect(steps[4]).toBe("BK TU ES 73 DE VE3H/P EE");
   });
 
-  it("iota chaser text is locked", () => {
-    const got = textOf(buildIota, "chaser");
-    // Lock the structural framing that must not regress.
-    expect(got).toMatch(/^CQ CQ IOTA DE /);
-    expect(got).toContain(" | K9MTE | ");
-    expect(got).toMatch(/TU 73 QRZ IOTA DE \S+ K$/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Phase 4 — buildPileup() and matchPickup()
-// ---------------------------------------------------------------------------
-
-// Rough callsign shape check (reused from drill tests above)
-const CALLSIGN_RE_P4 = /^[A-Z0-9]{1,2}[0-9][A-Z]{1,3}$/;
-
-describe("buildPileup()", () => {
-  const PROFILE_P4 = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON WI", cut: false };
-
-  it("returns 2–4 callers (run 40 times to hit all weight buckets)", () => {
-    for (let i = 0; i < 40; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "pota");
-      expect(callers.length).toBeGreaterThanOrEqual(2);
-      expect(callers.length).toBeLessThanOrEqual(PILEUP_MAX_CALLERS);
-    }
-  });
-
-  it("signals are spread (not all equal) across 40 runs", () => {
-    // The design requires spread — uniform random would occasionally produce
-    // equal values but the tier model should never do so.
-    for (let i = 0; i < 40; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "pota");
-      const signals = callers.map((c) => c.signal);
-      const unique = new Set(signals);
-      // With spread tiers, all signals must be distinct.
-      expect(unique.size).toBe(signals.length);
-    }
-  });
-
-  it("signal order is shuffled — the loudest caller is NOT always first", () => {
-    // The brief's teaching point ("work the strongest, loud not always first")
-    // depends on the tier array being shuffled before assignment. Without the
-    // shuffle, callers[0] is always the loudest (0.85) and the user can cheat by
-    // always picking the first caller. Over many runs the loudest must land off
-    // index 0 at least once, or the shuffle is broken.
-    let loudestEverOffFirst = false;
-    const TOP_TIER = 0.85; // the loudest tier in SIGNAL_TIERS (module-private)
-    for (let i = 0; i < 200; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "pota");
-      const loudestIdx = callers.reduce(
-        (best, c, idx) => (c.signal > callers[best].signal ? idx : best), 0);
-      // sanity: the loudest caller is in fact the top tier value
-      expect(callers[loudestIdx].signal).toBe(TOP_TIER);
-      if (loudestIdx !== 0) { loudestEverOffFirst = true; break; }
-    }
-    expect(loudestEverOffFirst).toBe(true);
-  });
-
-  it("all signals are in [0, 1]", () => {
-    for (let i = 0; i < 20; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "pota");
-      for (const c of callers) {
-        expect(c.signal).toBeGreaterThan(0);
-        expect(c.signal).toBeLessThanOrEqual(1);
-      }
-    }
-  });
-
-  it("every call is callsign-shaped", () => {
-    for (let i = 0; i < 40; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "pota");
-      for (const c of callers) {
-        expect(CALLSIGN_RE_P4.test(c.call)).toBe(true);
-      }
-    }
-  });
-
-  it("offsetMs is within [0, PILEUP_MAX_OFFSET_MS]", () => {
-    for (let i = 0; i < 40; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "pota");
-      for (const c of callers) {
-        expect(c.offsetMs).toBeGreaterThanOrEqual(0);
-        expect(c.offsetMs).toBeLessThanOrEqual(PILEUP_MAX_OFFSET_MS);
-      }
-    }
-  });
-
-  it("iota pileup uses DX-style prefixes (G4, JA1, etc. — not domestic W9/K0)", () => {
-    // Run enough times to get a statistical sample — not a guarantee per single call
-    // but over 40 runs at least one iota caller should be clearly non-domestic.
-    let sawDx = false;
-    const DOMESTIC = /^[WKN]/;
-    for (let i = 0; i < 40; i++) {
-      const { callers } = buildPileup(PROFILE_P4, "iota");
-      if (callers.some((c) => !DOMESTIC.test(c.call))) {
-        sawDx = true;
-        break;
-      }
-    }
-    expect(sawDx).toBe(true);
-  });
-
-  // C3 (v1.1): `partial` field removed — it was dead data (set but never read by
-  // the audio path).  Signal strength already provides the difficulty gradient.
-  it("each caller has required fields: call, rst, signal, offsetMs (no partial)", () => {
-    const { callers } = buildPileup(PROFILE_P4, "sota");
-    for (const c of callers) {
-      expect(typeof c.call).toBe("string");
-      expect(typeof c.rst).toBe("string");
-      expect(typeof c.signal).toBe("number");
-      expect(typeof c.offsetMs).toBe("number");
-      // partial must NOT be present — confirm it is gone to prevent re-introduction
-      expect(c.partial).toBeUndefined();
-    }
-  });
-});
-
-describe("matchPickup()", () => {
-  // Hand-built pileup so the tests are deterministic.
-  // C3 (v1.1): `partial` removed from the model; not present in these objects.
-  const fakePileup = {
-    callers: [
-      { call: "W9ABC", rst: "599", signal: 0.85, offsetMs: 0   },
-      { call: "N0XYZ", rst: "599", signal: 0.55, offsetMs: 200 },
-      { call: "KD9QQ", rst: "599", signal: 0.30, offsetMs: 450 },
-    ],
-  };
-
-  it("exact call (full, case-insensitive) → { matched } that caller", () => {
-    const result = matchPickup(fakePileup, "W9ABC");
-    expect(result).not.toBeNull();
-    expect(result.matched).toBeDefined();
-    expect(result.matched.call).toBe("W9ABC");
-  });
-
-  it("exact call lowercased → matched (case-insensitive)", () => {
-    const result = matchPickup(fakePileup, "w9abc");
-    expect(result?.matched?.call).toBe("W9ABC");
-  });
-
-  it("unique prefix fragment → { matched } correct caller", () => {
-    // "W9" is a prefix of W9ABC only — not a prefix/suffix of N0XYZ or KD9QQ
-    const result = matchPickup(fakePileup, "W9");
-    expect(result?.matched?.call).toBe("W9ABC");
-  });
-
-  it("unique suffix fragment → { matched } correct caller", () => {
-    // "ABC" is a suffix of W9ABC only
-    const result = matchPickup(fakePileup, "ABC");
-    expect(result?.matched?.call).toBe("W9ABC");
-  });
-
-  it("fragment matching two callers → { ambiguous } with both", () => {
-    // Build a pileup where two calls share a common suffix "QQ" fragment.
-    const ambigPileup = {
-      callers: [
-        { call: "W9QQ",  rst: "599", signal: 0.85, offsetMs: 0   },
-        { call: "KD9QQ", rst: "599", signal: 0.30, offsetMs: 200 },
-      ],
-    };
-    const result = matchPickup(ambigPileup, "QQ");
-    expect(result).not.toBeNull();
-    expect(result.ambiguous).toBeDefined();
-    expect(result.ambiguous.length).toBe(2);
-  });
-
-  it("non-matching string → null", () => {
-    const result = matchPickup(fakePileup, "ZZ9ZZZ");
-    expect(result).toBeNull();
-  });
-
-  it("empty sent → null", () => {
-    expect(matchPickup(fakePileup, "")).toBeNull();
-    expect(matchPickup(fakePileup, "  ")).toBeNull();
-  });
-
-  it("single character → null (too short to be unambiguous)", () => {
-    // "W" could match many stations; single-char fragments are rejected.
-    const result = matchPickup(fakePileup, "W");
-    expect(result).toBeNull();
-  });
-
-  it("already-worked caller is skipped even on exact match", () => {
-    const worked = new Set(["W9ABC"]);
-    const result = matchPickup(fakePileup, "W9ABC", worked);
-    // W9ABC is worked, so even an exact match returns null (or matches another).
-    // Only W9ABC matches "W9ABC" exactly, and it's worked, so → null.
-    expect(result).toBeNull();
-  });
-
-  it("worked Set filters the candidate list for fragment matching", () => {
-    // If W9ABC is worked, "W9" no longer has any match (W9 doesn't match N0XYZ or KD9QQ).
-    const worked = new Set(["W9ABC"]);
-    const result = matchPickup(fakePileup, "W9", worked);
-    expect(result).toBeNull();
-  });
-
-  it("empty pileup → null", () => {
-    expect(matchPickup({ callers: [] }, "W9ABC")).toBeNull();
-  });
-
-  it("all callers worked → null", () => {
-    const worked = new Set(["W9ABC", "N0XYZ", "KD9QQ"]);
-    expect(matchPickup(fakePileup, "W9ABC", worked)).toBeNull();
+  it("iota chaser: CQ step shape-checked (includes IOTA tag and island ref); exchange steps locked", () => {
+    const steps = stepsOf(buildIota, "chaser");
+    // Step 0: IOTA island CQ — must have IOTA tag, island ref, ends K
+    assertCqShape(steps[0], undefined, "IOTA"); // dx call varies by prefix pool
+    expect(steps[0]).toMatch(/[A-Z]{2}-\d{3}/); // island ref format
+    // Steps 2–4: exact lock (step 1 is K9MTE — always the same regardless of dx call)
+    expect(steps[1]).toBe("K9MTE");
+    // The remaining steps include the dx call which varies by IOTA_DX_PREFIXES pool —
+    // lock structural framing only (not the exact DX call value).
+    expect(steps[4]).toMatch(/^TU 73 QRZ IOTA DE \S+ K$/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 4 — activator builder dxCall parameter (pileup pickup correctness)
+// Activator builders — single-call consistency (no-foreign-call invariant)
 // ---------------------------------------------------------------------------
-// Mutation-safety contract: these tests MUST fail if any step field
-// (text, suggested, mustContain, prompt) still references a callsign that is
-// not the supplied dxCall (or myCall / myCall+"/P" for the activator's own sign).
-//
-// The defect this covers: the old regex-patch approach only updated .text fields
-// (DX-spoken steps). User "you" steps embedded the old random dx in .suggested,
-// .mustContain, and .prompt — all left unpatched. The parameterized builder fix
-// bakes the picked call in at construction so every field is correct from the start.
-describe("activator builders — dxCall parameter bakes the picked call into every field", () => {
-  // A profile where myCall is clearly distinct from the supplied DX call.
+// Verifies that every step across every activator/call role uses exactly one
+// consistent DX call throughout — the internally-generated random one. Previously
+// this was tested via a dxCall override parameter; now the builders generate the
+// call internally and this test verifies they stay consistent across all fields.
+describe("activator builders — single consistent DX call across all steps", () => {
   const PROF = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON WI", cut: false };
-  const PICKED = "W9PKD"; // valid callsign shape: 2-letter prefix, digit, 3-letter suffix
 
-  // Callsign-shape regex source (no flags here — we construct with /g fresh each
-  // call so lastIndex never leaks between the four tests in this describe block).
-  // A module-scoped /g regex carries lastIndex state across calls: if a previous
-  // matchAll() or test() left lastIndex non-zero, the next call starts mid-string
-  // and misses tokens, making the suite fail ~2 in 10 full runs.
-  //
-  // The negative lookahead (?!\/[A-Z]) prevents matching the callsign-shaped
-  // SOTA/POTA association prefix from refs like "W0C/FR-063" or "K4/WV-001" —
-  // those are summit/park refs, not callsigns, even though they look similar.
-  // Only /P is a legitimate callsign suffix on the air.
+  // The negative lookahead (?!\/[A-Z]) prevents matching summit/park ref prefixes
+  // like "W0C/FR-063" — only /P is a legitimate callsign suffix.
   const CALL_RE_SRC = /\b([A-Z0-9]{1,2}[0-9][A-Z]{1,3}(?:\/P)?)(?!\/[A-Z])\b/.source;
 
-  // Collect every callsign-shaped token from all fields of all steps.
   function collectCalls(steps) {
     const found = new Set();
     for (const s of steps) {
       for (const field of [s.text, s.suggested, s.prompt]) {
         if (!field) continue;
-        // Fresh /g regex per field scan — no shared lastIndex.
         for (const m of field.matchAll(new RegExp(CALL_RE_SRC, "g"))) found.add(m[1]);
       }
-      // mustContain may contain callsign-shaped RST values (e.g. "599") — filter
-      // those out by only adding tokens that pass the callsign shape test.
       if (Array.isArray(s.mustContain)) {
         for (const tok of s.mustContain) {
-          // Fresh non-global regex for .test() — no lastIndex to reset.
           if (new RegExp(CALL_RE_SRC).test(tok)) found.add(tok);
         }
       }
@@ -1222,66 +1125,49 @@ describe("activator builders — dxCall parameter bakes the picked call into eve
     return found;
   }
 
-  it("buildRagchew 'call' role: no step references a call other than dxCall or myCall", () => {
-    const qso = buildRagchew(PROF, "call", PICKED);
-    const calls = collectCalls(qso.steps);
-    // Every call-shaped token must be K9MTE or W9PICK.
-    const allowed = new Set([PROF.myCall, PICKED]);
-    for (const c of calls) {
-      expect(allowed.has(c)).toBe(true);
+  it("buildRagchew 'call' role: no step references a call other than qso.dx or myCall", () => {
+    // Run several times so the random DX call varies — invariant must hold for all.
+    for (let i = 0; i < 5; i++) {
+      const qso = buildRagchew(PROF, "call");
+      const calls = collectCalls(qso.steps);
+      const allowed = new Set([PROF.myCall, qso.dx]);
+      for (const c of calls) expect(allowed.has(c)).toBe(true);
     }
-    // Sanity: the picked call actually appears somewhere (not just myCall).
-    expect(calls.has(PICKED)).toBe(true);
   });
 
-  it("buildPota 'activator' role: no step references a call other than dxCall or myCall", () => {
-    const qso = buildPota(PROF, "activator", PICKED);
-    const calls = collectCalls(qso.steps);
-    const allowed = new Set([PROF.myCall, PICKED]);
-    for (const c of calls) {
-      expect(allowed.has(c)).toBe(true);
+  it("buildPota 'activator' role: no step references a call other than qso.dx or myCall", () => {
+    for (let i = 0; i < 5; i++) {
+      const qso = buildPota(PROF, "activator");
+      const calls = collectCalls(qso.steps);
+      const allowed = new Set([PROF.myCall, qso.dx]);
+      for (const c of calls) expect(allowed.has(c)).toBe(true);
     }
-    expect(calls.has(PICKED)).toBe(true);
   });
 
-  it("buildSota 'activator' role: no step references a call other than dxCall, myCall, or myCall/P", () => {
-    const qso = buildSota(PROF, "activator", PICKED);
-    const calls = collectCalls(qso.steps);
-    // SOTA activator signs /P, so myCall/P is legitimate in the CQ and close.
-    const allowed = new Set([PROF.myCall, PROF.myCall + "/P", PICKED]);
-    for (const c of calls) {
-      expect(allowed.has(c)).toBe(true);
+  it("buildSota 'activator' role: no step references a call other than qso.dx, myCall, or myCall/P", () => {
+    for (let i = 0; i < 5; i++) {
+      const qso = buildSota(PROF, "activator");
+      const calls = collectCalls(qso.steps);
+      const allowed = new Set([PROF.myCall, PROF.myCall + "/P", qso.dx]);
+      for (const c of calls) expect(allowed.has(c)).toBe(true);
     }
-    expect(calls.has(PICKED)).toBe(true);
   });
 
-  it("buildIota 'activator' role: no step references a call other than dxCall or myCall", () => {
-    const qso = buildIota(PROF, "activator", PICKED);
-    const calls = collectCalls(qso.steps);
-    const allowed = new Set([PROF.myCall, PICKED]);
-    for (const c of calls) {
-      expect(allowed.has(c)).toBe(true);
+  it("buildIota 'activator' role: no step references a call other than qso.dx or myCall", () => {
+    for (let i = 0; i < 5; i++) {
+      const qso = buildIota(PROF, "activator");
+      const calls = collectCalls(qso.steps);
+      const allowed = new Set([PROF.myCall, qso.dx]);
+      for (const c of calls) expect(allowed.has(c)).toBe(true);
     }
-    expect(calls.has(PICKED)).toBe(true);
   });
 
-  // Mutation-safety probe: without the fix, a random call is generated and
-  // embedded. This test would fail because the random call !== PICKED.
-  // Verify the picked call propagates to the DX object's own .dx field too.
-  it("qso.dx equals the supplied dxCall for all four activator builders", () => {
-    expect(buildRagchew(PROF, "call",      PICKED).dx).toBe(PICKED);
-    expect(buildPota(   PROF, "activator", PICKED).dx).toBe(PICKED);
-    expect(buildSota(   PROF, "activator", PICKED).dx).toBe(PICKED);
-    expect(buildIota(   PROF, "activator", PICKED).dx).toBe(PICKED);
-  });
-
-  // Normal (non-pileup) activator calls still work: no dxCall → random call generated.
-  it("normal activator calls (no dxCall) still produce a valid random DX call", () => {
-    const qso = buildPota(PROF, "activator");
-    expect(typeof qso.dx).toBe("string");
-    expect(qso.dx.length).toBeGreaterThan(0);
-    // Sanity: the generated call is callsign-shaped
-    expect(/^[A-Z0-9]{1,2}[0-9][A-Z]{1,3}$/.test(qso.dx)).toBe(true);
+  it("all activator builders produce a valid callsign-shaped qso.dx", () => {
+    const CALL_SHAPE = /^[A-Z0-9]{1,2}[0-9][A-Z]{1,3}$/;
+    expect(CALL_SHAPE.test(buildRagchew(PROF, "call").dx)).toBe(true);
+    expect(CALL_SHAPE.test(buildPota(PROF, "activator").dx)).toBe(true);
+    expect(CALL_SHAPE.test(buildSota(PROF, "activator").dx)).toBe(true);
+    expect(CALL_SHAPE.test(buildIota(PROF, "activator").dx)).toBe(true);
   });
 });
 

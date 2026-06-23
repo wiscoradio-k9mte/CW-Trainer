@@ -5,8 +5,6 @@ import {
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
   buildRagchew, buildPota, buildSota, buildIota, isReadyToAdvance,
   DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
-  buildPileup, matchPickup,
-  PILEUP_DETUNE_MIN_HZ, PILEUP_DETUNE_MAX_HZ,
   toCodes,
 } from "./src/cw-core.js";
 
@@ -460,141 +458,8 @@ function useMorsePlayer() {
     noiseRef.current = { src, g, duck, bp, mode, bw };
   }, [setNoiseLevel, stopNoise]);
 
-  // ---- Pileup: overlapping simultaneous transmissions ----
-  //
-  // playMany/stopMany are SEPARATE from the single-message play/stop path.
-  // They share the same AudioContext but track their own oscillator set in
-  // manyRef (an array, one entry per caller). stop() must NOT be called from
-  // playMany because it would clear the noise AGC state and kill the noise ref.
-  //
-  // Each caller gets:
-  //   - its own oscillator + gain node (gain scaled by caller.signal)
-  //   - a frequency detuned ±PILEUP_DETUNE_MIN_HZ..MAX_HZ around the base freq
-  //     so overlapping calls are separable by pitch (the primary fidelity lever)
-  //   - a start time of ctx.currentTime + offsetMs/1000
-  //
-  // Cleanup: stopMany() tears down all nodes; unmount also calls it.
-
-  const manyRef = useRef([]); // [{ osc, gain, timer }, ...]
-
-  const stopMany = useCallback(() => {
-    for (const node of manyRef.current) {
-      try {
-        clearTimeout(node.timer);
-        if (ctxRef.current) {
-          const now = ctxRef.current.currentTime;
-          node.gain.gain.cancelScheduledValues(now);
-          node.gain.gain.setValueAtTime(node.gain.gain.value, now);
-          node.gain.gain.linearRampToValueAtTime(0, now + 0.01);
-          node.osc.stop(now + 0.05);
-        }
-      } catch (e) {}
-    }
-    manyRef.current = [];
-  }, []);
-
-  // playMany(items, opts):
-  //   items: [{ text, gain (0..1 = signal), offsetMs }, ...]
-  //   opts:  { charWpm, effWpm, freq, onDone }
-  // Stops any previous manyRef transmissions first (not the single-message path).
-  const playMany = useCallback((items, { charWpm, effWpm, freq, onDone }) => {
-    stopMany();
-    const ctx = getCtx();
-
-    // Spread detune values so no two callers share the same pitch.
-    // Simple strategy: divide the detune range into slots and assign one per caller.
-    const range = PILEUP_DETUNE_MAX_HZ - PILEUP_DETUNE_MIN_HZ;
-    const slotSize = items.length > 1 ? range / (items.length - 1) : 0;
-
-    const schedule = () => {
-      const nodes = [];
-
-      items.forEach((item, i) => {
-        const { u, charSp } = timing(charWpm, effWpm);
-        const osc  = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-
-        osc.type = "sine";
-
-        // Detune: alternate above/below center freq; first caller stays closest to center.
-        // This gives separability in both directions around the tuned signal.
-        const detune = PILEUP_DETUNE_MIN_HZ + i * slotSize;
-        // Even-indexed callers above center, odd-indexed below.
-        osc.frequency.value = freq + (i % 2 === 0 ? detune : -detune);
-
-        gainNode.gain.value = 0;
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-
-        const startAt = ctx.currentTime + item.offsetMs / 1000;
-        osc.start(startAt);
-
-        // Schedule Morse keying for this caller's text.
-        // A1 (v1.1): tokenize via toCodes so prosigns key run-together.
-        let t = startAt + 0.05; // small settle before first element
-        const ramp = 0.004;
-        const callerGain = Math.min(1, Math.max(0, item.gain));
-
-        toCodes(item.text).forEach((tok) => {
-          if (tok.wordGap) { t += charSp; return; }
-          const code = tok.code;
-          code.split("").forEach((el, ei) => {
-            const dur = el === "." ? u : 3 * u;
-            gainNode.gain.setValueAtTime(0, t);
-            gainNode.gain.linearRampToValueAtTime(callerGain * 0.35, t + ramp);
-            gainNode.gain.setValueAtTime(callerGain * 0.35, t + dur - ramp);
-            gainNode.gain.linearRampToValueAtTime(0, t + dur);
-            t += dur;
-            if (ei < code.length - 1) t += u; // intra-character gap
-          });
-          t += charSp;
-        });
-
-        // Cleanup timer for this oscillator — extra 200ms cushion for ramps
-        const durMs = (t - ctx.currentTime) * 1000 + 200;
-        const timer = setTimeout(() => {
-          try { osc.stop(); } catch (e) {}
-        }, durMs);
-
-        nodes.push({ osc, gain: gainNode, timer });
-      });
-
-      manyRef.current = nodes;
-
-      // onDone fires after the last caller finishes (longest start+duration)
-      if (onDone) {
-        // Find the longest transmission end time: each item's offsetMs + its text length.
-        // A1 (v1.1): tokenize via toCodes so prosign duration is counted correctly
-        // (a prosign is one run-together code, not two characters with a char gap between).
-        const maxEndMs = items.reduce((maxMs, item) => {
-          const { u, charSp } = timing(charWpm, effWpm);
-          let t = 0;
-          for (const tok of toCodes(item.text)) {
-            if (tok.wordGap) { t += charSp; continue; }
-            const code = tok.code;
-            for (let ei = 0; ei < code.length; ei++) {
-              const dur = code[ei] === "." ? u : 3 * u;
-              t += dur + (ei < code.length - 1 ? u : 0);
-            }
-            t += charSp;
-          }
-          return Math.max(maxMs, item.offsetMs + t * 1000);
-        }, 0);
-        const doneTimer = setTimeout(onDone, maxEndMs + 400);
-        // Store the done timer so stopMany can clear it too
-        manyRef.current.push({ osc: null, gain: null, timer: doneTimer });
-      }
-    };
-
-    if (ctx.state === "running") {
-      schedule();
-    } else {
-      ctx.resume().then(schedule).catch(schedule);
-    }
-  }, [stopMany]);
-
-  useEffect(() => () => { stop(); stopMany(); stopNoise(); }, [stop, stopMany, stopNoise]);
-  return { play, stop, playing, playMany, stopMany, keyDownTone, keyUpTone, beep, startNoise, setNoiseLevel, stopNoise, unlock };
+  useEffect(() => () => { stop(); stopNoise(); }, [stop, stopNoise]);
+  return { play, stop, playing, keyDownTone, keyUpTone, beep, startNoise, setNoiseLevel, stopNoise, unlock };
 }
 
 /* ================= KEY DECODER ================= */
@@ -1706,21 +1571,6 @@ function QsoSim({ player, settings, setSettings }) {
     () => store.load("introQsoCollapsed", false)
   );
 
-  // Phase 4 — pileup sub-state.
-  // Only active when role is activator/call AND difficulty === "real".
-  // pileup:  the { callers } data model from buildPileup
-  // workedCalls: Set<string> — calls already worked this round
-  // pileupPhase: "listening" | null
-  //   "listening" = pileup is playing, waiting for the user to key a call pickup
-  //   null = not in pileup mode
-  const [pileup, setPileup]           = useState(null);
-  const [workedCalls, setWorkedCalls] = useState(new Set());
-  const [pileupPhase, setPileupPhase] = useState(null); // "listening" | null
-  // liveRegionMsg: text for the always-mounted pileup live region (assertive).
-  // Started here so it's in scope before enterPileup / the pileup pickup effect.
-  // Design §0: the region is ALWAYS mounted (not inside the pileupPhase guard) so
-  // the text change is seen by AT even when the pileup transitions away.
-  const [liveRegionMsg, setLiveRegionMsg] = useState("");
   // stepLive: text for the always-mounted step-transition live region (polite).
   // Set in advance() when a new DX or "your turn" step begins.
   const [stepLive, setStepLive] = useState("");
@@ -1748,8 +1598,7 @@ function QsoSim({ player, settings, setSettings }) {
     keyWpm: settings.keyWpm,
     freq: settings.freq,
     player,
-    // Keyer is also enabled during pileup listening so the user can key a pickup.
-    enabled: (!!qso && step < qso.steps.length) || pileupPhase === "listening",
+    enabled: !!qso && step < qso.steps.length,
     mode: settings.keyType,
     swap: settings.paddleSwap,
     onError: () => { setSendResult(null); showFill("HH — error signal, cleared"); },
@@ -1797,11 +1646,8 @@ function QsoSim({ player, settings, setSettings }) {
     setLiveText("");
     setFillMsg(null);
     keyer.clear();
-    // Reset pileup state from any previous round
-    setPileup(null); setWorkedCalls(new Set()); setPileupPhase(null);
     // Reset per-conversation score arrays (B4)
     setCopyScores([]); setSendScores([]);
-    player.stopMany();
     if (difficulty === "real") player.startNoise(noiseGain(noise), settings.freq, settings.rxFilter);
 
     // First step: if it's a dx step, count down then play.
@@ -1823,20 +1669,6 @@ function QsoSim({ player, settings, setSettings }) {
     setFillMsg(null);
     keyer.clear();
 
-    // Phase 4 pileup gate: after the user's CQ (step 0 in activator role, who:"you")
-    // at Real life difficulty, enter the pileup instead of advancing to the next
-    // normal step. The pileup replaces the single answering DX step.
-    const isActivatorCq =
-      difficulty === "real" &&
-      (role === "activator" || role === "call") &&
-      step === 0 &&
-      qso.steps[0].who === "you";
-
-    if (isActivatorCq) {
-      enterPileup();
-      return; // do NOT advance step — pileup handles its own exit into the exchange
-    }
-
     setStep(next);
     if (next < qso.steps.length) {
       const nextStep = qso.steps[next];
@@ -1855,71 +1687,6 @@ function QsoSim({ player, settings, setSettings }) {
         startCountdown(() => playDx(nextStep.text));
       }
     }
-  };
-
-  // enterPileup — build the pileup and start playing the overlapping callers.
-  // Called from advance() when the activator just sent their CQ at Real life difficulty.
-  const enterPileup = (existingPileup = null, existingWorked = null) => {
-    const profile = {
-      myCall: settings.myCall,
-      myName: settings.myName,
-      myQth:  settings.myQth,
-      cut:    settings.cutNumbers,
-    };
-    // Reuse the existing pileup object if re-entering after a worked caller (thinning).
-    const pile = existingPileup || buildPileup(profile, activity);
-    const worked = existingWorked || new Set();
-
-    setPileup(pile);
-    setWorkedCalls(worked);
-    setPileupPhase("listening");
-    keyer.clear();
-    setFillMsg(null);
-    setLiveRegionMsg("");
-
-    // Play all remaining (un-worked) callers simultaneously via playMany.
-    // Each caller's call is sent once (realistic pileup: one callsign, then wait).
-    const remaining = pile.callers.filter((c) => !worked.has(c.call));
-    if (remaining.length === 0) {
-      // All callers worked — end the pileup round and complete the QSO.
-      exitPileupDone();
-      return;
-    }
-
-    const items = remaining.map((c) => ({
-      text: c.call,
-      gain: c.signal,
-      offsetMs: c.offsetMs,
-    }));
-
-    player.playMany(items, {
-      charWpm: settings.charWpm,
-      effWpm: settings.effWpm,
-      freq: settings.freq,
-      onDone: () => {
-        // After one pass, the callers go quiet. The user has already heard them;
-        // they key their pickup. No auto-repeat — real pileups don't loop forever.
-        // The user can key "?" to trigger a replay (handled in the pileup keyer effect).
-      },
-    });
-
-    // Announce to screen readers that the pileup is starting
-    setLiveRegionMsg(
-      `Pileup: ${remaining.length} station${remaining.length !== 1 ? "s" : ""} calling. Key a callsign or fragment to pick one.`
-    );
-  };
-
-  // exitPileupDone — called when all pileup callers have been worked.
-  // Ends the pileup and completes the QSO (no further steps after the last exchange).
-  const exitPileupDone = () => {
-    setPileupPhase(null);
-    setPileup(null);
-    player.stopMany();
-    // Mark the QSO complete by advancing past the last step.
-    // The QSO object's steps after index 0 are the exchange steps (DX answers, etc.)
-    // For the pileup route, each worked caller ran through those steps individually,
-    // so we jump to the end to show the "QSO COMPLETE" panel.
-    setStep(qso.steps.length);
   };
 
   // Don't leave the fill-message timer running after unmount
@@ -1976,122 +1743,6 @@ function QsoSim({ player, settings, setSettings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyer.decoded]);
 
-  // Ref to carry pileup context across the exchange so "QRZ?" can re-enter.
-  // Declared before the pileup pickup effect that writes to it.
-  const pileupRef = useRef(null);
-
-  // Phase 4 pileup pickup effect.
-  // Watches keyer.decoded while pileupPhase === "listening".
-  // A "completed thought" is: the decoded string ends with space (word gap timer fired)
-  // or ends with ? (explicit end-of-thought signal the user can use to confirm).
-  useEffect(() => {
-    if (!pileup || pileupPhase !== "listening") return;
-    const raw = keyer.decoded;
-    if (!raw || !(raw.endsWith(" ") || raw.endsWith("?"))) return;
-
-    // Standalone "?" → replay the pileup (the user wants to hear them again).
-    if (raw.trim() === "?") {
-      keyer.clear();
-      const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
-      const items = remaining.map((c) => ({ text: c.call, gain: c.signal, offsetMs: c.offsetMs }));
-      player.playMany(items, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq });
-      setLiveRegionMsg("Replaying pileup.");
-      return;
-    }
-
-    // Strip trailing ? if present (the user may add it as a separator after a callsign).
-    const sent = raw.replace(/\?$/, "").replace(/\s+/g, "").toUpperCase();
-    if (!sent) return;
-
-    // "AGN" or "QRZ" → replay the pileup
-    if (sent === "AGN" || sent === "QRZ") {
-      keyer.clear();
-      const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
-      const items = remaining.map((c) => ({
-        text: c.call,
-        gain: c.signal,
-        offsetMs: c.offsetMs,
-      }));
-      player.playMany(items, {
-        charWpm: settings.charWpm,
-        effWpm: settings.effWpm,
-        freq: settings.freq,
-      });
-      setLiveRegionMsg("Replaying pileup.");
-      return;
-    }
-
-    const result = matchPickup(pileup, sent, workedCalls);
-
-    if (!result) {
-      // No match — prompt them to try again
-      keyer.clear();
-      showFill("QRM — no match, try a call fragment");
-      setLiveRegionMsg("No match. Try again or key a partial callsign.");
-      return;
-    }
-
-    if (result.ambiguous) {
-      // Fragment matches more than one caller — need them to be more specific
-      const calls = result.ambiguous.map((c) => c.call).join(", ");
-      keyer.clear();
-      showFill(`QRM — ambiguous: ${calls}`);
-      setLiveRegionMsg(`Ambiguous. Matches ${calls}. Send more of the call.`);
-      return;
-    }
-
-    // Clean match: pull this caller out and run the normal exchange with them.
-    const picked = result.matched;
-    const newWorked = new Set([...workedCalls, picked.call]);
-
-    // Determine signal strength label for post-pickup feedback
-    const signalLabel =
-      picked.signal >= 0.75 ? "loud" :
-      picked.signal >= 0.45 ? "moderate" : "weak";
-
-    keyer.clear();
-    player.stopMany(); // stop any still-playing callers
-    setPileupPhase(null);
-    setFillMsg(null);
-
-    // Announce pickup
-    setLiveRegionMsg(
-      `Got ${picked.call} — ${signalLabel} signal. Running the exchange.`
-    );
-
-    // Rebuild the QSO with the picked caller's call baked in from the start.
-    // Passing dxCall to the builder means every field — text, suggested,
-    // mustContain, prompt — is constructed with picked.call directly. There is
-    // no regex substitution: the architect flagged that approach as fragile
-    // (missed you-step fields, /P metachar risk, substring collision).
-    const builder = ACTIVITY_BUILDERS[activity];
-    const profile = {
-      myCall: settings.myCall,
-      myName: settings.myName,
-      myQth:  settings.myQth,
-      cut:    settings.cutNumbers,
-    };
-    const freshQso = { ...builder(profile, role, picked.call), pickedSignal: signalLabel };
-
-    // Store the updated worked set and pileup for when this exchange finishes
-    // so we can re-enter the pileup with the remaining callers.
-    setWorkedCalls(newWorked);
-
-    // Advance to step 1: the user's CQ (step 0) is already sent; the exchange
-    // proper starts at step 1 (the DX caller's answer).
-    setQso(freshQso);
-    const nextStep = 1; // after the user's CQ (step 0)
-    setStep(nextStep);
-    if (freshQso.steps[nextStep] && freshQso.steps[nextStep].who === "dx") {
-      startCountdown(() => playDx(freshQso.steps[nextStep].text));
-    }
-
-    // Save the pileup + new worked set for re-entry after this exchange ends.
-    // We store them in a ref so the "done" panel can offer QRZ → next.
-    pileupRef.current = { pileup, worked: newWorked, pickedSignal: signalLabel };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyer.decoded, pileupPhase]);
-
   const checkSend = () => {
     const sent = keyer.decoded.toUpperCase();
     const sim = Math.round(similarity(cur.suggested, sent) * 100);
@@ -2125,10 +1776,8 @@ function QsoSim({ player, settings, setSettings }) {
       {/* Always-mounted sr-only live regions (design §0 / C1).
           These must NOT be inside conditional blocks — they need to be in the DOM
           continuously so that text changes (set on events) are announced by AT.
-          - liveRegionMsg: pileup pickup results, fills, replays (assertive — time-sensitive)
-          - stepLive:     step transitions in the normal QSO loop (polite)
-          - resultLive:  copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite) */}
-      <div role="alert" aria-live="assertive" aria-atomic="true" style={S.srOnly}>{liveRegionMsg}</div>
+          - stepLive:   step transitions in the normal QSO loop (polite)
+          - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite) */}
       <div role="status" aria-live="polite"   aria-atomic="true" style={S.srOnly}>{stepLive}</div>
       <div role="status" aria-live="polite"   aria-atomic="true" style={S.srOnly}>{resultLive}</div>
 
@@ -2224,13 +1873,6 @@ function QsoSim({ player, settings, setSettings }) {
             </div>
           )}
 
-          {/* Pileup preview note: visible only when Activator + Real life is selected */}
-          {(role === "activator" || role === "call") && difficulty === "real" && (
-            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginBottom: 12, lineHeight: 1.6, borderLeft: "2px solid #3A4048", paddingLeft: 10 }}>
-              After your CQ, 2–4 stations will answer at once at different signal strengths. Key a callsign or fragment to pick one — the strongest first is good operating practice. Work them one at a time, then QRZ for the next.
-            </div>
-          )}
-
           {/* Start button — label adapts: activator starts by calling CQ */}
           <button style={S.btnAmber} onClick={start}>
             {role === "activator" || role === "call" ? "📻 CALL CQ" : "📻 LISTEN FOR CQ"}
@@ -2238,106 +1880,7 @@ function QsoSim({ player, settings, setSettings }) {
         </div>
       )}
 
-      {/* Pileup listening panel — replaces the normal DX/you panels during a pileup round.
-          Note: the liveRegionMsg aria-live region is hoisted above (always-mounted),
-          not here — so it survives the listening→exchange transition and keeps announcing. */}
-      {pileupPhase === "listening" && pileup && (
-        <div style={S.panel}>
-          <div style={{ ...S.label, marginBottom: 8 }}>
-            ◉ Pileup — {qso.flavor}
-            <span style={{ color: "#E07A5F", marginLeft: 8 }}>QSB</span>
-          </div>
-
-          {/* Pileup status: how many callers are still waiting */}
-          {(() => {
-            const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
-            return (
-              <div style={{ marginBottom: 10, fontFamily: "system-ui, sans-serif", fontSize: 13, color: "#C9CDD3", lineHeight: 1.6 }}>
-                <span style={{ color: "#F2A93B", fontWeight: 700 }}>{remaining.length}</span>
-                {" station"}{remaining.length !== 1 ? "s" : ""} calling.{" "}
-                {workedCalls.size > 0 && (
-                  <span style={{ color: "#8FCB9B" }}>{workedCalls.size} worked.</span>
-                )}
-              </div>
-            );
-          })()}
-
-          <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <div style={{ ...S.label, marginBottom: 6 }}>
-              Key a callsign to pick one{" "}
-              <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-            </div>
-            <Display cursor>{keyer.decoded}</Display>
-            {fillMsg && (
-              <div style={{ fontFamily: "ui-monospace, monospace", color: "#8FCB9B", fontSize: 13, letterSpacing: 1, marginTop: 8 }}>
-                ◉ {fillMsg}
-              </div>
-            )}
-            <KeyInput
-              keyer={keyer}
-              keyType={settings.keyType}
-              onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
-              swap={settings.paddleSwap}
-              onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
-            />
-            {/* E2: ≥12px; D2: gloss QRZ and QRM at point of use */}
-            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
-              Key the full call or a unique fragment — suffix (ABC) or prefix (W9). End with space or <span style={{ color: "#8A929C" }}>?</span>.{" "}
-              Key <span style={{ color: "#8A929C" }}>QRZ</span> <span style={{ color: "#5A626C" }}>(who's calling?)</span> or <span style={{ color: "#8A929C" }}>AGN</span> to replay.{" "}
-              <span style={{ color: "#5A626C" }}>QRM = interference on the frequency.</span>
-            </div>
-          </div>
-
-          {/* Noise slider stays accessible during the pileup */}
-          <div style={{ marginBottom: 6 }}>
-            <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
-              onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-            <button style={S.btn} onClick={() => {
-              const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
-              const items = remaining.map((c) => ({ text: c.call, gain: c.signal, offsetMs: c.offsetMs }));
-              player.playMany(items, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq });
-              keyer.clear();
-              setLiveRegionMsg("Replaying pileup.");
-            }}>↻ REPLAY</button>
-            {/* E3: SLOWER mirrors the normal-copy SLOWER — slowing the pileup improves
-                separability, which is the cheapest lever for the pileup-fidelity risk. */}
-            <button
-              aria-label="Replay pileup at reduced speed"
-              style={S.btn}
-              onClick={() => {
-                const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
-                const items = remaining.map((c) => ({ text: c.call, gain: c.signal, offsetMs: c.offsetMs }));
-                player.playMany(items, {
-                  charWpm: settings.charWpm,
-                  effWpm: Math.max(4, settings.effWpm - 3),
-                  freq: settings.freq,
-                });
-                keyer.clear();
-                setLiveRegionMsg("Replaying pileup at reduced speed.");
-              }}
-            >🐢 SLOWER</button>
-            <button style={S.btn} onClick={() => { player.stopMany(); keyer.clear(); }}>■ STOP</button>
-          </div>
-          {/* D3: explicit exit so a newcomer isn't trapped in the pileup.
-              Clears all QSO/pileup state and returns to the setup panel (!qso). */}
-          <div style={{ marginTop: 10, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
-            <button
-              aria-label="Leave pileup and return to setup"
-              style={{ ...S.btn, color: "#8A929C" }}
-              onClick={() => {
-                player.stop(); player.stopMany();
-                setQso(null); setPileup(null); setPileupPhase(null);
-                setWorkedCalls(new Set()); keyer.clear();
-              }}
-            >✕ LEAVE PILEUP / back to setup</button>
-          </div>
-        </div>
-      )}
-
-      {qso && !done && pileupPhase === null && cur && cur.who === "dx" && (
+      {qso && !done && cur && cur.who === "dx" && (
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 8 }}>
             {difficulty === "easy"
@@ -2429,7 +1972,7 @@ function QsoSim({ player, settings, setSettings }) {
         </div>
       )}
 
-      {qso && !done && pileupPhase === null && cur && cur.who === "you" && (
+      {qso && !done && cur && cur.who === "you" && (
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 8 }}>
             ◉ Your turn — step {step + 1} of {qso.steps.length}
@@ -2483,22 +2026,11 @@ function QsoSim({ player, settings, setSettings }) {
       )}
 
       {done && (() => {
-        // Pileup path: after each single-caller exchange, check if there are more
-        // callers left in the pileup. If so, offer QRZ → next caller instead of
-        // treating the whole QSO as complete. The pileupRef carries the pileup
-        // state across the exchange.
-        const pRef = pileupRef.current;
-        const hasMoreCallers =
-          pRef &&
-          pRef.pileup.callers.some((c) => !pRef.worked.has(c.call));
-
         // Per-conversation aggregate scores (B4). averageScore returns null for
         // empty arrays so we suppress the line when no graded steps occurred.
         const avgCopy = averageScore(copyScores);
         const avgSend = averageScore(sendScores);
 
-        // Shared score summary fragment — shown in both the pileup round-end
-        // and the QSO complete panels so the user sees context either way.
         const scoreSummary = (avgCopy !== null || avgSend !== null) && (
           <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: "6px 0 0" }}>
             {avgCopy !== null && <span>Avg copy: <span style={{ color: "#F2A93B" }}>{avgCopy}%</span></span>}
@@ -2509,46 +2041,10 @@ function QsoSim({ player, settings, setSettings }) {
 
         return (
           <div style={S.panel}>
-            {hasMoreCallers ? (
-              <>
-                <div style={{ fontFamily: "ui-monospace, monospace", color: "#8FCB9B", fontSize: 18, letterSpacing: 2, marginBottom: 6 }}>
-                  ✓ {qso.dx} IN THE LOG
-                  {pRef.pickedSignal && (
-                    <span style={{ fontSize: 13, color: "#8A929C", marginLeft: 8 }}>({pRef.pickedSignal} signal)</span>
-                  )}
-                </div>
-                <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif", marginTop: 0 }}>
-                  {pRef.pileup.callers.filter((c) => !pRef.worked.has(c.call)).length} station{pRef.pileup.callers.filter((c) => !pRef.worked.has(c.call)).length !== 1 ? "s" : ""} still calling. Key QRZ to continue.
-                </p>
-                {scoreSummary}
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                  <button style={S.btnAmber} onClick={() => {
-                    // Re-enter the pileup with the original QSO structure (to call CQ again isn't needed —
-                    // QRZ is the activator's signal that they're ready for the next caller).
-                    // Rebuild the QSO from scratch so the exchange steps have fresh DX call placeholders.
-                    const builder = ACTIVITY_BUILDERS[activity];
-                    const profile = { myCall: settings.myCall, myName: settings.myName, myQth: settings.myQth, cut: settings.cutNumbers };
-                    const freshQso = builder(profile, role);
-                    setQso(freshQso); setStep(0); setLog([]);
-                    setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
-                    setLiveText(""); setFillMsg(null); keyer.clear();
-                    // Re-enter with the existing pileup state (thinned to remaining callers)
-                    enterPileup(pRef.pileup, pRef.worked);
-                    pileupRef.current = null;
-                  }}>
-                    📻 QRZ — NEXT CALLER
-                  </button>
-                  <button style={S.btn} onClick={start}>✕ END ROUND</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 22, letterSpacing: 3 }}>QSO COMPLETE — 73</div>
-                <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif" }}>{qso.summary}</p>
-                {scoreSummary}
-                <button style={{ ...S.btnAmber, marginTop: 10 }} onClick={start}>📻 NEXT CONTACT</button>
-              </>
-            )}
+            <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 22, letterSpacing: 3 }}>QSO COMPLETE — 73</div>
+            <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif" }}>{qso.summary}</p>
+            {scoreSummary}
+            <button style={{ ...S.btnAmber, marginTop: 10 }} onClick={start}>📻 NEXT CONTACT</button>
           </div>
         );
       })()}
