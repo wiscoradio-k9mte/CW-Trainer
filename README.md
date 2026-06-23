@@ -1,252 +1,178 @@
-# WISCO RADIO — CW Trainer
+<p align="center">
+  <img src="build/screenshots/WiscoRadio-Banner.png" alt="WISCO RADIO CW Trainer" width="100%">
+</p>
 
-A detailed amateur-radio Morse code (CW) trainer for the Linux desktop: Koch-method
-lessons, copy and sending practice, and a full QSO simulator — from your first two
-characters all the way to a complete on-air contact. Built with
-[Electron](https://www.electronjs.org/) and packaged for the **Snap Store**.
+<h1 align="center">WISCO RADIO — CW Trainer</h1>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-![Platform: Linux](https://img.shields.io/badge/platform-Linux-333)
-![Built with Electron](https://img.shields.io/badge/built%20with-Electron-47848F?logo=electron&logoColor=white)
+<p align="center">
+  Learn Morse code the way hams actually use it — from your first two characters to a full on-air contact.<br>
+  Koch-method lessons · copy &amp; sending practice · a POTA / SOTA / IOTA / ragchew QSO simulator. <b>Fully offline.</b>
+</p>
 
-- **App ID:** `io.github.wiscoradio_k9mte.CWTrainer`
-- **License:** GPL-3.0-or-later
-- **Author:** Travis Engh (K9MTE) — Wisco Radio
-
-The trainer's UI lives in one file (`wr-cw-trainer.jsx`), with its pure logic — Morse
-tables, Farnsworth timing, copy grading, and the QSO generators — factored into
-`src/cw-core.js` and covered by a unit-test suite. The repo wraps it with a build system
-(Vite) and packaging (electron-builder + snapcraft) so it can ship to the Snap Store.
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-3.0"><img alt="License: GPL v3" src="https://img.shields.io/badge/License-GPLv3-blue.svg"></a>
+  <img alt="Platform: Linux" src="https://img.shields.io/badge/platform-Linux-333">
+  <img alt="Built with Electron" src="https://img.shields.io/badge/built%20with-Electron-47848F?logo=electron&logoColor=white">
+</p>
 
 ---
 
-## Contents
+## What it is
 
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Install](#install)
-- [Develop & run](#develop--run)
-- [Testing](#testing)
-- [Project layout](#project-layout)
-- [Contributing](#contributing)
-- [Package for the store](#package-for-the-store)
-- [Notes & troubleshooting](#notes--troubleshooting)
-- [License](#license)
+A free, fully-offline Morse code (CW) trainer for the Linux desktop, built by a ham for hams.
+Whether you've never sent a dit or you're knocking the rust off, four practice modes take you
+all the way from recognizing your first two characters to running a complete on-air contact —
+**no account, no network, no ads.**
 
----
-
-## Features
-
-- **Koch-method character lessons** — every character at full speed from lesson one,
-  with Farnsworth spacing and one new character added at 90% accuracy.
-- **A six-rung copy ladder** — single characters, pairs, random groups, ham words,
-  callsigns, and full QSO phrases.
-- **Sending practice** with a built-in iambic paddle and straight-key decoder that shows
-  exactly what your fist sends — including the HH "start over" error prosign. Key on screen,
-  with the keyboard (Space for a straight key; Z / X or the arrow keys for paddle), or with
-  **your own paddle or straight key through a USB adapter** — VBand-style adapters in
-  keyboard mode send the `[` / `]` bracket keys, which the trainer accepts for dit / dah
-  (use the dit/dah swap toggle if your levers come out reversed).
-- **A QSO simulator** with POTA, SOTA, IOTA, and ragchew contacts, on-air break-in fills
-  (`?`, `AGN`, `QRS`, partial-call fills), and honest signal reports.
-- **Realistic band conditions** — selectable receiver filtering (wide / CW 500 Hz / APF),
-  QSB signal fading, and AGC.
-- **Reference guides** on CW lingo, on-air procedure, and the history of the code.
-- **Fully offline** — no network access is requested or used.
+- 🎧 **Audio-first**, the way CW is really learned — full-speed characters with Farnsworth spacing.
+- 🛠️ **Bring your own key** — practice on screen, on the keyboard, or with your real straight key or
+  paddle through a VBand-style USB adapter.
+- 📻 **Real operating, simulated** — work POTA, SOTA, IOTA, and ragchew contacts as either side of the QSO.
+- 🔌 **Offline forever** — it never asks for the network.
 
 ---
 
 ## Screenshots
 
-![Koch-method character lessons](build/screenshots/WiscoRadio-Learn.png)
-![Work a simulated POTA or SOTA contact](build/screenshots/WiscoRadio-QSO.png)
-![Paddle and straight-key sending with a live decoder](build/screenshots/WiscoRadio-Key.png)
-![Copy practice across a six-rung ladder](build/screenshots/WiscoRadio-Copy.png)
-![Tune speed, Farnsworth, sidetone, and band conditions](build/screenshots/WiscoRadio-Settings.png)
+|  |  |
+|:--:|:--:|
+| <img src="build/screenshots/WiscoRadio-Learn.png" width="100%"><br>**Learn** — Koch-method character lessons | <img src="build/screenshots/WiscoRadio-Copy.png" width="100%"><br>**Copy** — the six-rung copy ladder |
+| <img src="build/screenshots/WiscoRadio-Key.png" width="100%"><br>**Key** — sending practice with a live decoder | <img src="build/screenshots/WiscoRadio-QSO.png" width="100%"><br>**QSO** — work a simulated contact |
+| <img src="build/screenshots/WiscoRadio-Settings.png" width="100%"><br>**Settings** — speed, Farnsworth, sidetone, band conditions | |
+
+---
+
+## Using the trainer
+
+The app opens to four modes, on the tabs across the top:
+
+### 📚 Learn
+Koch-method character lessons. Every character is sent at full speed from the very first lesson,
+with extra space between characters (Farnsworth) so your ear has time. A new character is added
+once you're copying the current set at 90%. Answer by tapping the on-screen letter or just typing it.
+
+### 📥 Copy
+Copy practice up a six-rung ladder — single characters, pairs, random groups, real ham words,
+callsigns, and finally full QSO phrases. Pick **Easy** (see the text as you hear it), **Normal**
+(copy by ear, then check yourself), or **Real life** (band noise and QSB fading — the way it
+really sounds on the air).
+
+### 📤 Key (sending)
+Sending practice with a built-in iambic-paddle and straight-key decoder that shows *exactly* what
+your fist sends — not what you meant. Choose a **drill category** (callsigns, calling CQ, signal
+reports, numbers, prosigns, Q-codes, common words, or full QSO lines) and climb the ladder as you
+improve. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
+paddle), or with **your own key or paddle** through a USB adapter (the `[` / `]` brackets a
+VBand-style adapter sends; flip the dit/dah swap if your levers come out reversed). Afterward you
+get **fist feedback** — your estimated speed and how tight your letter/word spacing reads.
+
+### 📻 QSO
+A simulated contact, set up the way you'd actually operate: pick the **activity** (Ragchew, POTA,
+SOTA, or IOTA), your **role** (Activator or Hunter/Chaser; or, for a ragchew, Call CQ or Answer a
+CQ), and the **difficulty**. Then work the whole exchange — call, signal report, the back-and-forth,
+and the sign-off — copying by ear and sending with your key. Real-life difficulty adds QSB fading,
+band noise, and on-air break-in fills (`?`, `AGN`, `QRS`).
+
+**Plus:** built-in reference guides (CW lingo, on-air procedure, and the history of the code), and a
+Settings panel for speed, Farnsworth timing, sidetone pitch, and band conditions (receiver
+filtering, QSB, AGC).
 
 ---
 
 ## Install
 
-### From the store
-
-Once published, install with a single command:
+**From the Snap Store** (once published):
 
 ```bash
-# Snap (planned)
 sudo snap install wr-cw-trainer
 ```
 
-> Not on the store yet — until then, build it from source.
+> Not on the store yet — until then, run it from source (below).
 
-### Build & run from source
-
-Requires **Node.js 18+** and npm.
+**From source** — requires **Node.js 18+** and npm:
 
 ```bash
 git clone https://github.com/wiscoradio-k9mte/CW-Trainer.git
 cd CW-Trainer
 npm install
-npm start        # builds the app and runs it in Electron
+npm start        # builds the app and opens it in Electron
 ```
-
-The icon (`build/icon.png`) and the GPL-3.0 `LICENSE` are already in the repo, so
-`npm install` is the only setup step.
-
----
-
-## Develop & run
-
-```bash
-npm run dev      # Vite dev server + Electron, with hot reload
-```
-
-This launches the Vite dev server on `http://localhost:5173` and opens Electron pointed
-at it. Edit `wr-cw-trainer.jsx` and the window reloads.
-
-```bash
-npm start        # build for production, then run it in Electron (no dev server)
-```
-
-Use `npm start` to confirm the **packaged-style** load works (assets served from `dist/`
-over `file://`) — this is what catches base-path problems before you package.
-
----
-
-## Testing
-
-The pure logic — the Morse table, Farnsworth timing, the copy grader, the QSO
-generators, and the Koch advancement gate — lives in `src/cw-core.js` and is covered by a
-[vitest](https://vitest.dev/) suite:
-
-```bash
-npm test            # run the suite once
-npm run test:watch  # re-run on change while developing
-```
-
-Keep the suite green, and add tests for any new logic you put in `cw-core.js` — that's the
-bar a change has to clear. UI behavior in `wr-cw-trainer.jsx` is checked by hand (`npm run dev`).
-
----
-
-## Project layout
-
-```
-.
-├── wr-cw-trainer.jsx        # the UI — the whole trainer (components + hooks), one file
-├── src/
-│   ├── cw-core.js           # pure logic: Morse tables, timing, grading, QSO builders
-│   ├── cw-core.test.js      # unit tests for cw-core.js (vitest)
-│   └── main.jsx             # React entry: mounts the trainer into the page
-├── index.html               # Vite HTML entry
-├── vite.config.mjs          # bundler config (base: "./" for Electron)
-├── electron/main.cjs        # Electron main process (creates the window)
-├── electron-builder.yml     # produces the unpacked Electron tree that snapcraft packages
-├── snap/snapcraft.yaml      # Snap package definition (core22 + gnome extension)
-├── build/
-│   ├── icon.png             # app icon (square PNG, 1024² ideal)
-│   ├── screenshots/         # store-listing images (referenced by metainfo.xml)
-│   └── io.github.wiscoradio_k9mte.CWTrainer.metainfo.xml  # store metadata
-├── LICENSE                  # GPL-3.0 full text
-├── package.json
-└── release/                 # build output (created by electron-builder / snapcraft)
-```
-
-> **Replacing the icon:** drop a square PNG (512×512 or larger; 1024² is ideal so every
-> generated size stays crisp) at `build/icon.png`. electron-builder picks it up
-> automatically — `build/` is its `buildResources` directory.
 
 ---
 
 ## Contributing
 
-Contributions are welcome. This is a community project for amateur-radio operators
-learning CW, and real-world feedback from people who actually operate is what makes it
-better — bug reports, fixes, and feature ideas are all genuinely valued.
-
-**Get set up**
-
-```bash
-git clone https://github.com/wiscoradio-k9mte/CW-Trainer.git
-cd CW-Trainer
-npm install
-npm run dev        # run with hot reload
-npm test           # run the test suite
-```
-
-**Where the code lives**
-
-- **`wr-cw-trainer.jsx`** — the entire UI in one file, organized into clearly named hooks
-  and components: the audio/tone engine (`useMorsePlayer`), the keyer + decoder
-  (`useKeyer`), the copy/sending/QSO trainers, the settings panel, and the reference
-  guides. It's long but sectioned — search for the part you want.
-- **`src/cw-core.js`** — the pure, testable logic (Morse tables, timing, grading, QSO
-  builders, the Koch gate). New logic belongs here so it can be unit-tested.
-- **`electron/main.cjs`** — the Electron main process (window creation and security).
-
-**Submit a change**
-
-1. Fork, then branch from `main` and keep the change focused.
-2. **Keep `npm test` green**, and add tests for any new logic in `cw-core.js` — a change to
-   the core that isn't covered won't be merged.
-3. For UI changes, run `npm run dev` and confirm the flow by hand.
-4. Open a pull request that explains what changed and why.
-
-**Report a bug or suggest a feature**
-
-Open an [issue](https://github.com/wiscoradio-k9mte/CW-Trainer/issues). Bug reports with
-steps to reproduce, and feature ideas grounded in how you actually operate, are the most
-useful — good community ideas get worked in as enhancements. Be kind in issues and
-reviews; we're all here to help more people learn the code.
+This is a community project for hams learning CW, and real-world feedback from people who actually
+operate is what makes it better. Bug reports with steps to reproduce, and feature ideas grounded in
+how you operate, are genuinely valued — open an
+[issue](https://github.com/wiscoradio-k9mte/CW-Trainer/issues). Be kind in issues and reviews;
+we're all here to help more people learn the code. Build/development details are below.
 
 ---
 
-## Package for the store
+<details>
+<summary><b>For developers &amp; maintainers</b> (build, test, project layout, packaging)</summary>
 
-Install the packaging tool first:
+### Architecture
 
-- **snapcraft** — `sudo snap install snapcraft --classic`
+The trainer's UI lives in one file, `wr-cw-trainer.jsx`, organized into clearly named hooks and
+components (the audio engine `useMorsePlayer`, the keyer/decoder `useKeyer`, the copy/sending/QSO
+trainers, settings, and the reference guides). The **pure logic** — Morse tables, Farnsworth timing,
+copy grading, the QSO/drill generators, and the Koch gate — is factored into `src/cw-core.js` and
+covered by a unit-test suite. Vite bundles it; Electron wraps it; snapcraft packages it.
 
-### Snap
+- **App ID:** `io.github.wiscoradio_k9mte.CWTrainer` · **License:** GPL-3.0-or-later · **Author:** Travis Engh (K9MTE)
 
-```bash
-npm run dist:snap         # → release/wr-cw-trainer_1.0.0_amd64.snap
-```
-
-Test it locally before publishing:
-
-```bash
-sudo snap install --dangerous release/wr-cw-trainer_*.snap
-wr-cw-trainer             # launch it
-sudo snap remove wr-cw-trainer
-```
-
-Publish to the **Snap Store**:
+### Develop & run
 
 ```bash
-snapcraft login
-snapcraft register wr-cw-trainer     # one-time; the name must be globally unique
-snapcraft upload --release=stable release/wr-cw-trainer_*.snap
+npm run dev      # Vite dev server + Electron, hot reload
+npm start        # production build, then run in Electron (mirrors the packaged load)
 ```
 
-> The snap **name** (`wr-cw-trainer` in `package.json`) must be available and registered
-> to your account. If it's taken, pick a variant (e.g. `wiscoradio-cw-trainer`) and
-> update the `name` field in `package.json`.
+### Test
 
----
+```bash
+npm test            # run the vitest suite once
+npm run test:watch  # re-run on change
+```
 
-## Notes & troubleshooting
+New logic belongs in `src/cw-core.js` so it's unit-testable; keep the suite green and add tests for
+any new core behavior. UI behavior in `wr-cw-trainer.jsx` is checked by hand (`npm run dev`).
 
-- **Blank white window when packaged?** That's almost always the asset base path.
-  `vite.config.mjs` sets `base: "./"` precisely to avoid it — keep it.
-- **No audio in the sandbox?** Snap needs the `audio-playback` plug (already configured).
-  Connect it if it didn't auto-connect: `sudo snap connect wr-cw-trainer:audio-playback`.
-- **No network access** is requested — the trainer is fully offline. Don't add it unless
-  you introduce a feature that needs it.
-- **Generic taskbar icon after install?** That's a `StartupWMClass` mismatch — cosmetic.
-  The snap desktop file (`snap/local/cw-trainer.desktop`) sets `StartupWMClass=wr-cw-trainer`;
-  if a future build changes the window class, confirm it with `xprop WM_CLASS` (X11) or the
-  Wayland app-id and update that value.
+### Project layout
+
+```
+.
+├── wr-cw-trainer.jsx        # the UI — the whole trainer (components + hooks), one file
+├── src/
+│   ├── cw-core.js           # pure logic: Morse tables, timing, grading, drill + QSO builders
+│   ├── cw-core.test.js      # unit tests for cw-core.js (vitest)
+│   └── main.jsx             # React entry: mounts the trainer
+├── electron/main.cjs        # Electron main process (window + security)
+├── electron-builder.yml     # produces the unpacked Electron tree snapcraft packages
+├── snap/snapcraft.yaml      # Snap package definition (core22 + gnome extension)
+├── build/                   # icon, screenshots, AppStream metainfo
+├── index.html · vite.config.mjs · package.json
+└── release/                 # build output (generated)
+```
+
+### Package for the Snap Store
+
+```bash
+sudo snap install snapcraft --classic
+npm run dist:snap                                  # → release/wr-cw-trainer_*.snap
+sudo snap install --dangerous release/wr-cw-trainer_*.snap   # test locally
+snapcraft login && snapcraft upload --release=stable release/wr-cw-trainer_*.snap
+```
+
+### Notes & troubleshooting
+
+- **Blank white window when packaged?** Asset base path — `vite.config.mjs` sets `base: "./"` to avoid it; keep it.
+- **No audio in the sandbox?** `sudo snap connect wr-cw-trainer:audio-playback` (usually auto-connects).
+- **Fully offline** — no network is requested; don't add it without a feature that needs it.
+
+</details>
 
 ---
 
