@@ -3,7 +3,11 @@ import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
-  buildRagchew, buildPota, buildSota, buildIota, buildQso, isReadyToAdvance,
+  buildRagchew, buildPota, buildSota, buildIota, isReadyToAdvance,
+  DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
+  buildPileup, matchPickup,
+  PILEUP_DETUNE_MIN_HZ, PILEUP_DETUNE_MAX_HZ,
+  toCodes,
 } from "./src/cw-core.js";
 
 /* ================= PERSISTENCE =================
@@ -238,7 +242,11 @@ function useMorsePlayer() {
     let t = ctx.currentTime + 0.15;
     const t0 = t;
     const ramp = 0.004;
-    const chars = text.toUpperCase().split("");
+    // A1 (v1.1): tokenize via toCodes so prosign tokens (AR, BT, SK, KN) key as
+    // single run-together codes rather than separate letters with a 3u gap between
+    // them.  toCodes returns [{code}, {wordGap:true}] entries; unknown chars are
+    // already dropped in the tokenizer.
+    const tokens = toCodes(text);
 
     // AGC: if band noise is running, duck it under the signal. Fast attack at
     // each character; slow recovery only in word gaps and at the end — the
@@ -246,8 +254,13 @@ function useMorsePlayer() {
     const duck = noiseRef.current ? noiseRef.current.duck.gain : null;
     const DUCK = 0.3;
 
-    chars.forEach((ch, idx) => {
-      if (ch === " ") {
+    // strPos tracks the position in the original display string for onChar
+    // (used by easy-mode live reveal: text.slice(0, strPos)).
+    let strPos = 0;
+    const upperText = text.toUpperCase();
+
+    tokens.forEach((tok) => {
+      if (tok.wordGap) {
         // Recovery in the word gap — offset scales with the gap so this event
         // always precedes the next character's duck at any speed setting
         if (duck) {
@@ -255,15 +268,23 @@ function useMorsePlayer() {
           duck.setTargetAtTime(1, t + Math.min(0.15, gapLen * 0.35), 0.3);
         }
         t += wordSp - charSp; // word gap replaces the trailing char gap
+        strPos++; // advance past the space character in the original string
         return;
       }
-      const code = MORSE[ch];
-      if (!code) return;
+      const code = tok.code;
+      // Advance strPos: find how many display characters this token consumed.
+      // Prosigns are two letters in the display; ordinary tokens are one.
+      // We advance to the end of the token in the original string.
+      const consumed = Object.keys({ AR: 1, BT: 1, SK: 1, KN: 1 }).some(
+        (ps) => upperText.slice(strPos, strPos + 2) === ps
+      ) ? 2 : 1;
       if (duck) duck.setTargetAtTime(DUCK, t, 0.015); // gain drops as the signal appears
       if (onChar) {
+        const capturedPos = strPos + consumed - 1;
         const delay = (t - ctx.currentTime) * 1000;
-        timersRef.current.push(setTimeout(() => onChar(idx, ch), Math.max(0, delay)));
+        timersRef.current.push(setTimeout(() => onChar(capturedPos, upperText[strPos]), Math.max(0, delay)));
       }
+      strPos += consumed;
       code.split("").forEach((el, i) => {
         const dur = el === "." ? u : 3 * u;
         gain.gain.setValueAtTime(0, t);
@@ -439,8 +460,141 @@ function useMorsePlayer() {
     noiseRef.current = { src, g, duck, bp, mode, bw };
   }, [setNoiseLevel, stopNoise]);
 
-  useEffect(() => () => { stop(); stopNoise(); }, [stop, stopNoise]);
-  return { play, stop, playing, keyDownTone, keyUpTone, beep, startNoise, setNoiseLevel, stopNoise, unlock };
+  // ---- Pileup: overlapping simultaneous transmissions ----
+  //
+  // playMany/stopMany are SEPARATE from the single-message play/stop path.
+  // They share the same AudioContext but track their own oscillator set in
+  // manyRef (an array, one entry per caller). stop() must NOT be called from
+  // playMany because it would clear the noise AGC state and kill the noise ref.
+  //
+  // Each caller gets:
+  //   - its own oscillator + gain node (gain scaled by caller.signal)
+  //   - a frequency detuned ±PILEUP_DETUNE_MIN_HZ..MAX_HZ around the base freq
+  //     so overlapping calls are separable by pitch (the primary fidelity lever)
+  //   - a start time of ctx.currentTime + offsetMs/1000
+  //
+  // Cleanup: stopMany() tears down all nodes; unmount also calls it.
+
+  const manyRef = useRef([]); // [{ osc, gain, timer }, ...]
+
+  const stopMany = useCallback(() => {
+    for (const node of manyRef.current) {
+      try {
+        clearTimeout(node.timer);
+        if (ctxRef.current) {
+          const now = ctxRef.current.currentTime;
+          node.gain.gain.cancelScheduledValues(now);
+          node.gain.gain.setValueAtTime(node.gain.gain.value, now);
+          node.gain.gain.linearRampToValueAtTime(0, now + 0.01);
+          node.osc.stop(now + 0.05);
+        }
+      } catch (e) {}
+    }
+    manyRef.current = [];
+  }, []);
+
+  // playMany(items, opts):
+  //   items: [{ text, gain (0..1 = signal), offsetMs }, ...]
+  //   opts:  { charWpm, effWpm, freq, onDone }
+  // Stops any previous manyRef transmissions first (not the single-message path).
+  const playMany = useCallback((items, { charWpm, effWpm, freq, onDone }) => {
+    stopMany();
+    const ctx = getCtx();
+
+    // Spread detune values so no two callers share the same pitch.
+    // Simple strategy: divide the detune range into slots and assign one per caller.
+    const range = PILEUP_DETUNE_MAX_HZ - PILEUP_DETUNE_MIN_HZ;
+    const slotSize = items.length > 1 ? range / (items.length - 1) : 0;
+
+    const schedule = () => {
+      const nodes = [];
+
+      items.forEach((item, i) => {
+        const { u, charSp } = timing(charWpm, effWpm);
+        const osc  = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+
+        osc.type = "sine";
+
+        // Detune: alternate above/below center freq; first caller stays closest to center.
+        // This gives separability in both directions around the tuned signal.
+        const detune = PILEUP_DETUNE_MIN_HZ + i * slotSize;
+        // Even-indexed callers above center, odd-indexed below.
+        osc.frequency.value = freq + (i % 2 === 0 ? detune : -detune);
+
+        gainNode.gain.value = 0;
+        osc.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
+        const startAt = ctx.currentTime + item.offsetMs / 1000;
+        osc.start(startAt);
+
+        // Schedule Morse keying for this caller's text.
+        // A1 (v1.1): tokenize via toCodes so prosigns key run-together.
+        let t = startAt + 0.05; // small settle before first element
+        const ramp = 0.004;
+        const callerGain = Math.min(1, Math.max(0, item.gain));
+
+        toCodes(item.text).forEach((tok) => {
+          if (tok.wordGap) { t += charSp; return; }
+          const code = tok.code;
+          code.split("").forEach((el, ei) => {
+            const dur = el === "." ? u : 3 * u;
+            gainNode.gain.setValueAtTime(0, t);
+            gainNode.gain.linearRampToValueAtTime(callerGain * 0.35, t + ramp);
+            gainNode.gain.setValueAtTime(callerGain * 0.35, t + dur - ramp);
+            gainNode.gain.linearRampToValueAtTime(0, t + dur);
+            t += dur;
+            if (ei < code.length - 1) t += u; // intra-character gap
+          });
+          t += charSp;
+        });
+
+        // Cleanup timer for this oscillator — extra 200ms cushion for ramps
+        const durMs = (t - ctx.currentTime) * 1000 + 200;
+        const timer = setTimeout(() => {
+          try { osc.stop(); } catch (e) {}
+        }, durMs);
+
+        nodes.push({ osc, gain: gainNode, timer });
+      });
+
+      manyRef.current = nodes;
+
+      // onDone fires after the last caller finishes (longest start+duration)
+      if (onDone) {
+        // Find the longest transmission end time: each item's offsetMs + its text length.
+        // A1 (v1.1): tokenize via toCodes so prosign duration is counted correctly
+        // (a prosign is one run-together code, not two characters with a char gap between).
+        const maxEndMs = items.reduce((maxMs, item) => {
+          const { u, charSp } = timing(charWpm, effWpm);
+          let t = 0;
+          for (const tok of toCodes(item.text)) {
+            if (tok.wordGap) { t += charSp; continue; }
+            const code = tok.code;
+            for (let ei = 0; ei < code.length; ei++) {
+              const dur = code[ei] === "." ? u : 3 * u;
+              t += dur + (ei < code.length - 1 ? u : 0);
+            }
+            t += charSp;
+          }
+          return Math.max(maxMs, item.offsetMs + t * 1000);
+        }, 0);
+        const doneTimer = setTimeout(onDone, maxEndMs + 400);
+        // Store the done timer so stopMany can clear it too
+        manyRef.current.push({ osc: null, gain: null, timer: doneTimer });
+      }
+    };
+
+    if (ctx.state === "running") {
+      schedule();
+    } else {
+      ctx.resume().then(schedule).catch(schedule);
+    }
+  }, [stopMany]);
+
+  useEffect(() => () => { stop(); stopMany(); stopNoise(); }, [stop, stopMany, stopNoise]);
+  return { play, stop, playing, playMany, stopMany, keyDownTone, keyUpTone, beep, startNoise, setNoiseLevel, stopNoise, unlock };
 }
 
 /* ================= KEY DECODER ================= */
@@ -473,6 +627,21 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
   const onErrorRef = useRef(null);
   onErrorRef.current = onError;
 
+  // Per-element timing for fist feedback (Phase 1).
+  // Plain ref array — no setState per element. Appending to a ref cannot cause
+  // a re-render or change timing, so this is safe inside the hot pushEl path.
+  // Reset on clear() and on HH wipe (resetErrorSignal) so the event list stays
+  // aligned with what the user last sent.
+  const eventsRef = useRef([]);
+  // Track when the key was last released so we can compute gapBeforeMs.
+  // Used by the straight-key path (straightUp records the real key-up time).
+  const lastUpAtRef = useRef(null);
+  // Paddle equivalent: records the wall-clock time at which the last paddle
+  // element ended (approximated as performance.now() + durMs at scheduling time).
+  // This lets sendNext measure the real gap the operator took between characters
+  // or words — the part of paddle timing the operator actually controls.
+  const paddleLastUpAtRef = useRef(null);
+
   const finalizeChar = useCallback(() => {
     if (bufRef.current) {
       const ch = REV[bufRef.current] || "■";
@@ -500,10 +669,16 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     bufRef.current = "";
     setBuffer("");
     setDecoded("");
+    eventsRef.current = []; // HH clears the timing record too
+    lastUpAtRef.current = null;
+    paddleLastUpAtRef.current = null;
     clearGapTimers();
     if (onErrorRef.current) onErrorRef.current();
   };
 
+  // pushEl handles the decode buffer and HH detection only.
+  // Timing events are recorded by the two callers (straightUp and sendNext)
+  // before pushEl is called, so there is no double-write.
   const pushEl = (el) => {
     if (el === ".") {
       ditRun.current += 1;
@@ -525,10 +700,19 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
   }, [player]);
   const straightUp = useCallback(() => {
     if (downAt.current === null) return;
-    const dur = performance.now() - downAt.current;
+    const now = performance.now();
+    const durMs = now - downAt.current;
     downAt.current = null;
     player.keyUpTone();
-    pushEl(dur < unitRef.current * 2 ? "." : "-");
+    const el = durMs < unitRef.current * 2 ? "." : "-";
+    // Record timing event: gapBeforeMs is time from last key-up to this key-down.
+    // We approximate: key-down was at (now - durMs), last key-up was lastUpAtRef.
+    const gapBeforeMs = lastUpAtRef.current !== null
+      ? Math.max(0, (now - durMs) - lastUpAtRef.current)
+      : 0;
+    eventsRef.current.push({ type: el === "." ? "dit" : "dah", durMs, gapBeforeMs });
+    lastUpAtRef.current = now;
+    pushEl(el);
     startGapTimers();
   }, [player, startGapTimers]);
 
@@ -556,7 +740,25 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     lastEl.current = el;
     const u = unitRef.current;
     const durMs = el === "." ? u : 3 * u;
+    const now = performance.now();
     player.beep(freqRef.current, durMs / 1000);
+    // Record the real gap the operator left before this element.
+    // For the first element (paddleLastUpAtRef is null) the gap is 0.
+    // For machine-timed intra-character elements (immediately following in the
+    // iambic loop) paddleLastUpAtRef is very recent so gapBeforeMs ≈ u — the
+    // intra-element gap analyzeFist already suppresses for paddle mode.
+    // For inter-character or inter-word pauses (operator releases the paddle,
+    // waits, then presses again) gapBeforeMs captures the real user-controlled
+    // gap, which is exactly what the character/word spacing verdicts need.
+    const gapBeforeMs = paddleLastUpAtRef.current !== null
+      ? Math.max(0, now - paddleLastUpAtRef.current)
+      : 0;
+    eventsRef.current.push({ type: el === "." ? "dit" : "dah", durMs, gapBeforeMs });
+    // Record when this element ends so the next call can measure the gap.
+    // We use now+durMs as an approximation of the element's end wall-clock time.
+    // The iambic loop fires sendNext again at durMs+u ms from now; that next call
+    // will read paddleLastUpAtRef and compute gapBeforeMs ≈ u (machine gap).
+    paddleLastUpAtRef.current = now + durMs;
     pushEl(el);
     loopTimer.current = setTimeout(sendNext, durMs + u);
   }, [player, startGapTimers]);
@@ -581,6 +783,9 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     bufRef.current = "";
     setBuffer("");
     setDecoded("");
+    eventsRef.current = [];  // wipe timing record on explicit clear
+    lastUpAtRef.current = null;
+    paddleLastUpAtRef.current = null;
     clearGapTimers();
     clearTimeout(loopTimer.current);
     sending.current = false;
@@ -633,7 +838,10 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     };
   }, [enabled, straightDown, straightUp, paddleDown, paddleUp, player]);
 
-  return { decoded, buffer, straightDown, straightUp, paddleDown, paddleUp, clear };
+  // events is the ref array — consumers read eventsRef.current directly.
+  // We expose it as a stable object ref so KeyTrainer can pass it to analyzeFist
+  // without triggering re-renders.
+  return { decoded, buffer, eventsRef, straightDown, straightUp, paddleDown, paddleUp, clear };
 }
 
 /* similarity() is in src/cw-core.js */
@@ -641,16 +849,23 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
 function CharDiff({ target, attempt }) {
   const t = target.toUpperCase();
   const a = attempt.trim().toUpperCase().replace(/\s+/g, " ");
+  const correctCount = t.split("").filter((ch, i) => a[i] === ch).length;
   return (
-    <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, letterSpacing: 2, lineHeight: 1.8, wordBreak: "break-all" }}>
-      {t.split("").map((ch, i) => {
-        const ok = a[i] === ch;
-        return (
-          <span key={i} style={{ color: ok ? "#8FCB9B" : "#E07A5F", borderBottom: ok ? "none" : "2px solid #E07A5F" }}>
-            {ch}
-          </span>
-        );
-      })}
+    <div>
+      {/* sr-only summary: gives screen-reader users a count instead of 40 color-coded
+          spans they can't distinguish by color alone. "N of M correct" pairs with the
+          Score announcement so the accessible view is complete without the visual diff. */}
+      <span style={S.srOnly}>{correctCount} of {t.length} characters correct</span>
+      <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, letterSpacing: 2, lineHeight: 1.8, wordBreak: "break-all" }} aria-hidden="true">
+        {t.split("").map((ch, i) => {
+          const ok = a[i] === ch;
+          return (
+            <span key={i} style={{ color: ok ? "#8FCB9B" : "#E07A5F", borderBottom: ok ? "none" : "2px solid #E07A5F" }}>
+              {ch}
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -701,6 +916,11 @@ const S = {
   btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
   display: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "14px 16px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.25rem", letterSpacing: 3, minHeight: 56, wordBreak: "break-all", boxShadow: "inset 0 2px 12px rgba(0,0,0,0.6)" },
   input: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "12px 14px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem", letterSpacing: 2, width: "100%", boxSizing: "border-box", textTransform: "uppercase" },
+  // sr-only: visually hidden but reachable by screen readers (clip technique, NOT
+  // display:none or aria-hidden — those remove the node from the accessibility tree).
+  // Used for always-mounted live regions: the region exists empty when idle and its
+  // text is set on the event, so AT sees a *change* and announces it.
+  srOnly: { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0,0,0,0)" },
 };
 
 function Display({ children, cursor }) {
@@ -736,7 +956,9 @@ function TouchKey({ keyDown, keyUp }) {
       }}
     >
       ● KEY ●
-      <div style={{ fontSize: 11, color: "#8A6A33", marginTop: 6, letterSpacing: 1 }}>hold to send — or use SPACEBAR</div>
+      {/* D3: first-timer dit/dah cue — one line, lightweight, gray, ≥12px */}
+      <div style={{ fontSize: 12, color: "#8A6A33", marginTop: 6, letterSpacing: 1 }}>short tap = dit · long hold = dah</div>
+      <div style={{ fontSize: 11, color: "#5A626C", marginTop: 3, letterSpacing: 1 }}>or use SPACEBAR</div>
     </div>
   );
 }
@@ -767,7 +989,7 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
     >
       <div style={{ fontSize: 26, lineHeight: 1 }}>{glyph}</div>
       <div style={{ fontSize: 14, letterSpacing: 3, marginTop: 6 }}>{label}</div>
-      <div style={{ fontSize: 10, color: "#8A6A33", marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
+      <div style={{ fontSize: 12, color: "#8A6A33", marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
     </div>
   );
   const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow");
@@ -777,7 +999,7 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         {swap ? <>{dah}{dit}</> : <>{dit}{dah}</>}
       </div>
-      <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+      <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
         Keyboard: Z / ← is the left zone, X / → the right · squeeze both to alternate
       </div>
     </div>
@@ -795,7 +1017,12 @@ function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
           </button>
         ))}
         {keyType === "paddle" && (
-          <button onClick={() => onSwap(!swap)} title="Swap dit/dah for left-handed keying"
+          // aria-label is the accessible name; title is visible on hover for sighted users.
+          // Screen readers ignore title when aria-label is present, so both serve their audience.
+          <button
+            onClick={() => onSwap(!swap)}
+            title="Swap dit/dah for left-handed keying"
+            aria-label={`Swap dit and dah paddles — currently ${swap ? "left-handed" : "right-handed"}`}
             style={{ ...S.btn, padding: "7px 12px", fontSize: 12, color: swap ? "#F2A93B" : "#8A929C", ...(swap ? { borderColor: "#F2A93B" } : {}) }}>
             ⇄ {swap ? "L" : "R"}
           </button>
@@ -805,7 +1032,7 @@ function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
         ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
         : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
       {keyType === "paddle" && (
-        <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 6 }}>
+        <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 6 }}>
           ⇄ button swaps which paddle sends dit vs dah — set it to <span style={{ color: "#8A929C" }}>{swap ? "L for left-handed" : "R for right-handed"}</span>
         </div>
       )}
@@ -837,10 +1064,12 @@ function Slider({ label, value, min, max, step, suffix, onChange }) {
 function Score({ pct }) {
   const color = pct >= 90 ? "#8FCB9B" : pct >= 70 ? "#F2A93B" : "#E07A5F";
   const msg = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
+  // aria-hidden: announcement comes from the caller's always-mounted sr-only live region
+  // (set in check()). Keeping aria-live here would double-announce: the region fires
+  // because it's already in the DOM when Score mounts together with its text, which is
+  // exactly the bug the live-region pattern (design §0) fixes.
   return (
-    // aria-live="polite" + aria-atomic: announces the score when a copy attempt
-    // is graded. Both CopyTrainer and KeyTrainer use this component.
-    <div aria-live="polite" aria-atomic="true" style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 10 }}>
+    <div aria-hidden="true" style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 10 }}>
       <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 30, color, fontWeight: 700 }}>{pct}%</span>
       <span style={{ ...S.label, color }}>{msg}</span>
     </div>
@@ -868,6 +1097,10 @@ function CopyTrainer({ player, settings }) {
   const [liveText, setLiveText] = useState("");
   const [noise, setNoise] = useState(18);
   const [session, setSession] = useState([]); // scores this sitting
+  // scoreLive: text for the always-mounted sr-only live region. Starts empty;
+  // set in check() so the screen reader sees a *change* and announces it.
+  // (The live region is already in the DOM before check() fires — that's the fix.)
+  const [scoreLive, setScoreLive] = useState("");
   const noiseGain = (v) => (v / 100) * 0.5;
   const { countdown, start: startCountdown } = useCountdown();
 
@@ -923,15 +1156,25 @@ function CopyTrainer({ player, settings }) {
 
   const check = () => {
     const pct = Math.round(similarity(target, attempt) * 100);
+    const msg = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
     setResult(pct);
     setRevealed(true);
     setSession((s) => [...s, pct]);
+    // Update the always-mounted sr-only region. Because the region is already in the
+    // DOM (empty), the AT sees a text change and announces it — the fix for the
+    // mount-with-content bug described in design §0.
+    setScoreLive(`${pct}% — ${msg}`);
   };
 
   const avg = session.length ? Math.round(session.reduce((a, b) => a + b, 0) / session.length) : null;
 
   return (
     <div>
+      {/* Always-mounted sr-only live region for score announcements (design §0 / C1).
+          Empty when idle; text set by check(). Being pre-mounted means the AT sees
+          the text change and speaks it — the mount-with-content pattern never fires. */}
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{scoreLive}</div>
+
       {!target && (
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 10 }}>Copy practice</div>
@@ -973,7 +1216,7 @@ function CopyTrainer({ player, settings }) {
           ))}
         </div>
         {difficulty === "easy" && (
-          <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
             Text appears letter by letter as it plays — hear it and see it together.
           </div>
         )}
@@ -981,7 +1224,7 @@ function CopyTrainer({ player, settings }) {
           <div style={{ marginTop: 12 }}>
             <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
               onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-            <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6 }}>
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6 }}>
               Noise plus QSB fading on every playback — copy through real band conditions.
             </div>
           </div>
@@ -1050,12 +1293,28 @@ function CopyTrainer({ player, settings }) {
 
 /* ================= KEY TRAINER ================= */
 function KeyTrainer({ player, settings, setSettings }) {
+  // category: which drill generator is active (index into DRILL_CATEGORIES)
+  const [catIdx, setCatIdx] = useState(0);
   const [target, setTarget] = useState("");
   const [result, setResult] = useState(null);
+  // analysis: the fist-timing result from analyzeFist, shown after CHECK
+  const [analysis, setAnalysis] = useState(null);
   const [errFlash, setErrFlash] = useState(false);
+  // E5: intro panel collapsed state — persisted via store so returning users skip it.
+  // Default: expanded (false) on first run; once dismissed, stays collapsed.
+  const [introCollapsed, setIntroCollapsed] = useState(
+    () => store.load("introKeyCollapsed", false)
+  );
+  // Live-region text for score + fist summary (C1, design §0). Empty when idle;
+  // set in check() so the AT sees a change and speaks it.
+  const [scoreLive, setScoreLive] = useState("");
+  // Live-region text for the category stepper position (C2). Set whenever catIdx
+  // changes so the screen-reader user knows where they are in the ladder.
+  const [catLive, setCatLive] = useState("");
   const errTimer = useRef(null);
   const flashErr = () => {
     setResult(null);
+    setAnalysis(null);
     setErrFlash(true);
     clearTimeout(errTimer.current);
     errTimer.current = setTimeout(() => setErrFlash(false), 1800);
@@ -1072,45 +1331,161 @@ function KeyTrainer({ player, settings, setSettings }) {
   });
 
   const newTarget = () => {
-    const t = Math.random() < 0.5
-      ? Array.from({ length: 3 }, () => rand(COMMON_WORDS)).join(" ")
-      : subTokens(rand(QSO_PHRASES), settings);
+    const cat = DRILL_CATEGORIES[catIdx];
+    const t = cat.gen(settings);
     setTarget(t);
     setResult(null);
+    setAnalysis(null);
     keyer.clear();
   };
 
-  const check = () => setResult(Math.round(similarity(target, keyer.decoded) * 100));
+  const check = () => {
+    const pct = Math.round(similarity(target, keyer.decoded) * 100);
+    setResult(pct);
+    // Analyze fist timing from the events accumulated since the last clear.
+    // Read from the ref directly — no re-render needed to compute this.
+    const fist = analyzeFist(keyer.eventsRef.current, settings.keyWpm, settings.keyType);
+    setAnalysis(fist);
+
+    // Build the sr-only announcement: score + fist summary in plain English.
+    // The always-mounted region is already in the DOM (empty), so setting its text
+    // here is a change the AT will announce (design §0 / C1 fix).
+    const scoreMsg = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
+    let liveMsg = `${pct}% — ${scoreMsg}.`;
+    if (fist && fist.elements > 0) {
+      liveMsg += ` Estimated ${fist.estWpm} wpm`;
+      if (!fist.lowSample) {
+        liveMsg += `, ${fist.wpmVerdict}`;
+      }
+      // Add any plain-English notes the analyzer produced
+      if (fist.notes.length > 0) {
+        liveMsg += ". " + fist.notes.join(". ");
+      }
+      liveMsg += ".";
+    }
+    setScoreLive(liveMsg);
+  };
+
+  // Verdict color: good=green, loose=caution-amber, tight=red
+  const verdictColor = (v) => v === "good" ? "#8FCB9B" : v === "loose" ? "#F2A93B" : "#E07A5F";
+  const verdictLabel = (v) => v === "good" ? "GOOD" : v === "loose" ? "LOOSE" : "TIGHT";
 
   return (
     <div>
+      {/* Always-mounted sr-only live regions (design §0 / C1 + C2).
+          Two regions, two purposes:
+          - scoreLive: score + fist summary after CHECK (polite, not time-critical)
+          - catLive:   category position when the stepper or direct-pick changes (polite)
+          Both start empty. Their text is set on the event so the AT sees a change. */}
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{scoreLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{catLive}</div>
+
+      {/* E5: collapsible intro panel. The toggle is always visible when !target so the
+          user can re-expand it. Collapsed state persists via the store facade (a UI
+          preference, not progress history — within the allowed persistence boundary). */}
       {!target && (
         <div style={S.panel}>
-          <div style={{ ...S.label, marginBottom: 10 }}>Sending practice</div>
-          <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-            Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
-          </p>
-          <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
-            <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
-            <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
-            </p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introCollapsed ? 0 : 10 }}>
+            <div style={S.label}>Sending practice</div>
+            <button
+              aria-label={introCollapsed ? "Show intro" : "Hide intro"}
+              style={{ ...S.btn, fontSize: 11, padding: "4px 10px", color: "#8A929C" }}
+              onClick={() => {
+                const next = !introCollapsed;
+                setIntroCollapsed(next);
+                store.save("introKeyCollapsed", next);
+              }}
+            >{introCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
           </div>
+          {!introCollapsed && (
+            <>
+              <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+                Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
+              </p>
+              <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+                <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
+                <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+                  Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
 
+      {/* ---- Category selector: stepper + direct-pick row ---- */}
+      {/* Ladder order is the DRILL_CATEGORIES array order. No gating — free
+          navigation as confirmed: stepper steps and direct-pick both allowed. */}
+      <div style={S.panel}>
+        <div style={{ ...S.label, marginBottom: 8 }}>Drill category — climb as you improve</div>
+
+        {/* Compact stepper: left arrow / current position label / right arrow.
+            pickCat() centralises the "change category" side-effects so the two
+            callers (stepper arrows + direct-pick) stay in sync. */}
+        {(() => {
+          const pickCat = (newIdx) => {
+            setCatIdx(newIdx);
+            setTarget(""); setResult(null); setAnalysis(null); keyer.clear();
+            // Announce to screen readers (C2). The catLive region is always
+            // mounted — setting its text here is a change the AT will speak.
+            setCatLive(`Category ${newIdx + 1} of ${DRILL_CATEGORIES.length} — ${DRILL_CATEGORIES[newIdx].label}`);
+          };
+          return (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <button
+                  aria-label="Previous category"
+                  style={{ ...S.btn, padding: "10px 14px" }}
+                  disabled={catIdx === 0}
+                  onClick={() => pickCat(Math.max(0, catIdx - 1))}
+                >◀</button>
+                <span style={{ flex: 1, textAlign: "center", fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 13, letterSpacing: 1 }}>
+                  {catIdx + 1} / {DRILL_CATEGORIES.length} — {DRILL_CATEGORIES[catIdx].label}
+                </span>
+                <button
+                  aria-label="Next category"
+                  style={{ ...S.btn, padding: "10px 14px" }}
+                  disabled={catIdx === DRILL_CATEGORIES.length - 1}
+                  onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
+                >▶</button>
+              </div>
+
+              {/* Direct-pick row: toggle buttons, one per category, amber border on active */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {DRILL_CATEGORIES.map((cat, i) => (
+                  <button
+                    key={cat.id}
+                    aria-pressed={catIdx === i}
+                    onClick={() => pickCat(i)}
+                    style={{
+                      // E1: pad to ≥40px effective touch target (was 6px 10px — too small on mobile)
+                      ...S.btn, padding: "10px 12px", fontSize: 11,
+                      ...(catIdx === i ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }),
+                    }}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          );
+        })()}
+      </div>
+
+      {/* ---- Target text panel ---- */}
       <div style={S.panel}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           <button style={S.btnAmber} onClick={newTarget}>▶ NEW TEXT</button>
           <button style={S.btn} onClick={() => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq })}>
             🔊 HEAR IT
           </button>
-          <button style={S.btn} onClick={() => { keyer.clear(); setResult(null); }}>✕ CLEAR</button>
+          <button style={S.btn} onClick={() => { keyer.clear(); setResult(null); setAnalysis(null); }}>✕ CLEAR</button>
         </div>
         <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
         <Display>{target || "press NEW TEXT"}</Display>
       </div>
 
+      {/* ---- Keying panel: decoded output + key input + CHECK ---- */}
       <div style={S.panel}>
         <div style={{ ...S.label, marginBottom: 6 }}>
           Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
@@ -1125,10 +1500,130 @@ function KeyTrainer({ player, settings, setSettings }) {
         <div style={{ marginTop: 12 }}>
           <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
         </div>
+
+        {/* ---- Results: CharDiff + Score + Fist panel ---- */}
         {result !== null && (
           <div style={{ marginTop: 12 }}>
             <CharDiff target={target} attempt={keyer.decoded} />
             <Score pct={result} />
+
+            {/* Fist feedback panel — only shown when there is meaningful data.
+                Verdicts are estimates; "straight" mode only gets element spacing
+                since the paddle machine-times those gaps. */}
+            {analysis && analysis.elements > 0 && (
+              <div
+                aria-hidden="true"
+                style={{ marginTop: 14, background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "12px 14px" }}
+              >
+                {/* aria-hidden: announcement comes from the always-mounted scoreLive region
+                    above. The scoreLive text includes the fist summary in plain English so
+                    the screen-reader user gets the full verdict without reading visual ratios. */}
+                {/* D2: gloss "fist" and explain the timing unit "u" at point of use */}
+                <div style={{ ...S.label, color: "#8A929C", marginBottom: 2 }}>
+                  Fist feedback
+                </div>
+                <div style={{ fontSize: 12, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginBottom: 8, lineHeight: 1.5 }}>
+                  Your <em>fist</em> — how your timing reads to another operator.
+                  Spacing ratios are in units of <strong style={{ color: "#8A929C" }}>u</strong> (u = one dit length).
+                </div>
+
+                {/* Estimated WPM vs target (B2) */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                  <span style={{ fontFamily: "system-ui, sans-serif", color: "#C9CDD3", fontSize: 13 }}>
+                    Estimated speed
+                  </span>
+                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 16, letterSpacing: 1 }}>
+                    ~{analysis.estWpm} wpm
+                  </span>
+                </div>
+                {/* B2: WPM delta vs configured key speed — only shown when sample is large enough */}
+                {analysis.lowSample ? (
+                  <div style={{ fontSize: 12, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>
+                    Send a full line for a reliable estimate.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                    <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: 12 }}>
+                      vs target ({settings.keyWpm} wpm)
+                    </span>
+                    <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, fontWeight: 700,
+                      color: analysis.wpmVerdict === "on target" ? "#8FCB9B" : "#F2A93B", letterSpacing: 1 }}>
+                      {analysis.wpmVerdict === "on target"
+                        ? "on target"
+                        : `${analysis.wpmDelta > 0 ? "+" : ""}${analysis.wpmDelta} (${analysis.wpmVerdict})`}
+                    </span>
+                  </div>
+                )}
+
+                {/* Spacing verdicts — three rows */}
+                {[
+                  // Element spacing only meaningful for straight key
+                  ...(settings.keyType === "straight"
+                    ? [["Element gaps", "between elements (ideal 1u)", analysis.spacing.element]]
+                    : []),
+                  ["Letter gaps", "between letters (ideal 3u)", analysis.spacing.character],
+                  ["Word gaps", "between words (ideal 7u)", analysis.spacing.word],
+                ].map(([label, sub, sp]) => (
+                  sp.ratio !== null && (
+                    <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: 12 }}>
+                        {label}
+                        <span style={{ fontSize: 12, display: "block" }}>{sub}</span>
+                      </span>
+                      <span style={{
+                        fontFamily: "ui-monospace, monospace",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: verdictColor(sp.verdict),
+                        letterSpacing: 1,
+                      }}>
+                        {verdictLabel(sp.verdict)}
+                        {sp.ratio !== null && (
+                          <span style={{ fontWeight: 400, fontSize: 12, color: "#8A929C", marginLeft: 6 }}>
+                            {sp.ratio.toFixed(1)}u
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )
+                ))}
+
+                {/* B3: dah weighting — straight key only; suppressed for paddle */}
+                {settings.keyType === "straight" && analysis.weighting.ratio !== null && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: 12 }}>
+                      Dah length
+                      <span style={{ fontSize: 12, display: "block" }}>dahs vs 3× dit (ideal 3u)</span>
+                    </span>
+                    <span style={{
+                      fontFamily: "ui-monospace, monospace",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: verdictColor(analysis.weighting.verdict),
+                      letterSpacing: 1,
+                    }}>
+                      {verdictLabel(analysis.weighting.verdict)}
+                      <span style={{ fontWeight: 400, fontSize: 12, color: "#8A929C", marginLeft: 6 }}>
+                        {analysis.weighting.ratio.toFixed(1)}u
+                      </span>
+                    </span>
+                  </div>
+                )}
+
+                {/* Notes from the analyzer — plain-English feedback strings */}
+                {analysis.notes.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", lineHeight: 1.6 }}>
+                    {analysis.notes.map((n, i) => <div key={i}>· {n}</div>)}
+                  </div>
+                )}
+
+                {settings.keyType === "paddle" && (
+                  <div style={{ fontSize: 12, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
+                    Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1137,9 +1632,63 @@ function KeyTrainer({ player, settings, setSettings }) {
 }
 
 /* ================= QSO SIMULATOR ================= */
-/* buildRagchew, buildPota, buildSota, buildIota, buildQso are in src/cw-core.js */
+/* buildRagchew, buildPota, buildSota, buildIota are in src/cw-core.js.
+   buildQso (the old random picker) has been removed — activity + role are now
+   selected explicitly so the user can practice the contact they want. */
+
+// Maps activity value to its builder function.
+const ACTIVITY_BUILDERS = {
+  ragchew: buildRagchew,
+  pota:    buildPota,
+  sota:    buildSota,
+  iota:    buildIota,
+};
+
+// Display labels for activities shown in the setup panel.
+const ACTIVITY_LABELS = {
+  ragchew: "Ragchew",
+  pota:    "POTA",
+  sota:    "SOTA",
+  iota:    "IOTA",
+};
+
+// D1: one-liner description for each activity, shown as a sub-line under the label.
+// Mirrors the pattern already used by the Conditions buttons (label + gray desc).
+const ACTIVITY_DESCS = {
+  ragchew: "casual back-and-forth — names, QTH, rig",
+  pota:    "Parks on the Air",
+  sota:    "Summits on the Air",
+  iota:    "Islands on the Air",
+};
+
+// D1: role descriptions, keyed by activity + role value.
+// Role terms vary by activity (Activator vs Hunter/Chaser) so descriptions do too.
+const ROLE_DESCS = {
+  ragchew: {
+    call:   "you call CQ and run the exchange",
+    answer: "you answer a station already calling CQ",
+  },
+  pota: {
+    activator: "you're in the park — you call CQ and run the pile",
+    hunter:    "you call the activator and give a report",
+  },
+  sota: {
+    activator: "you're on the summit — you call CQ and run the pile",
+    chaser:    "you call the activator and give a report",
+  },
+  iota: {
+    activator: "you're on the island — you call CQ and run the pile",
+    chaser:    "you call the activator and give a report",
+  },
+};
 
 function QsoSim({ player, settings, setSettings }) {
+  // Activity and role menus (Phase 2/3).
+  // Defaults: ragchew + answering role so the first-run experience is the
+  // same as the old random behavior (which also skewed toward answering).
+  const [activity, setActivity] = useState("ragchew");
+  const [role, setRole] = useState("answer");
+
   const [qso, setQso] = useState(null);
   const [step, setStep] = useState(0);
   const [copyAttempt, setCopyAttempt] = useState("");
@@ -1151,6 +1700,44 @@ function QsoSim({ player, settings, setSettings }) {
   const fillTimer = useRef(null);
   const { countdown, start: startCountdown } = useCountdown();
 
+  // E5: intro paragraph collapsed state — persisted via store so returning users skip it.
+  // Default: expanded (false) on first run; once dismissed, stays collapsed.
+  const [introQsoCollapsed, setIntroQsoCollapsed] = useState(
+    () => store.load("introQsoCollapsed", false)
+  );
+
+  // Phase 4 — pileup sub-state.
+  // Only active when role is activator/call AND difficulty === "real".
+  // pileup:  the { callers } data model from buildPileup
+  // workedCalls: Set<string> — calls already worked this round
+  // pileupPhase: "listening" | null
+  //   "listening" = pileup is playing, waiting for the user to key a call pickup
+  //   null = not in pileup mode
+  const [pileup, setPileup]           = useState(null);
+  const [workedCalls, setWorkedCalls] = useState(new Set());
+  const [pileupPhase, setPileupPhase] = useState(null); // "listening" | null
+  // liveRegionMsg: text for the always-mounted pileup live region (assertive).
+  // Started here so it's in scope before enterPileup / the pileup pickup effect.
+  // Design §0: the region is ALWAYS mounted (not inside the pileupPhase guard) so
+  // the text change is seen by AT even when the pileup transitions away.
+  const [liveRegionMsg, setLiveRegionMsg] = useState("");
+  // stepLive: text for the always-mounted step-transition live region (polite).
+  // Set in advance() when a new DX or "your turn" step begins.
+  const [stepLive, setStepLive] = useState("");
+  // resultLive: text for the always-mounted copy/send result live region (polite).
+  // Set in checkCopy() and checkSend() so AT announces the score + verdict without
+  // relying on Score (which is aria-hidden). The region must be pre-mounted —
+  // a text *change* is what triggers announcement (design §0).
+  const [resultLive, setResultLive] = useState("");
+
+  // Phase 4 (B4) — per-conversation score accumulation for averageScore().
+  // We accumulate copy % and send % across every graded step in a contact so
+  // the done panel can show an aggregate. Arrays reset on start() / new contact.
+  // Never persisted across sessions — deliberate: persistent history is a
+  // separate open product decision (see brief).
+  const [copyScores, setCopyScores] = useState([]);
+  const [sendScores, setSendScores] = useState([]);
+
   const showFill = (msg) => {
     setFillMsg(msg);
     clearTimeout(fillTimer.current);
@@ -1161,7 +1748,8 @@ function QsoSim({ player, settings, setSettings }) {
     keyWpm: settings.keyWpm,
     freq: settings.freq,
     player,
-    enabled: !!qso && step < qso.steps.length,
+    // Keyer is also enabled during pileup listening so the user can key a pickup.
+    enabled: (!!qso && step < qso.steps.length) || pileupPhase === "listening",
     mode: settings.keyType,
     swap: settings.paddleSwap,
     onError: () => { setSendResult(null); showFill("HH — error signal, cleared"); },
@@ -1195,23 +1783,34 @@ function QsoSim({ player, settings, setSettings }) {
   }, [qso, step, difficulty, settings.freq, settings.rxFilter]);
 
   const start = () => {
-    const q = buildQso({
+    const builder = ACTIVITY_BUILDERS[activity];
+    const profile = {
       myCall: settings.myCall,
       myName: settings.myName,
-      myQth: settings.myQth,
-      cut: settings.cutNumbers,
-    });
+      myQth:  settings.myQth,
+      cut:    settings.cutNumbers,
+    };
+    const q = builder(profile, role);
+
     setQso(q); setStep(0); setLog([]);
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
     setFillMsg(null);
     keyer.clear();
+    // Reset pileup state from any previous round
+    setPileup(null); setWorkedCalls(new Set()); setPileupPhase(null);
+    // Reset per-conversation score arrays (B4)
+    setCopyScores([]); setSendScores([]);
+    player.stopMany();
     if (difficulty === "real") player.startNoise(noiseGain(noise), settings.freq, settings.rxFilter);
-    // Countdown before the DX station starts sending — gives the user a moment
-    // to pick up their pencil. The QSO state is already set so the receiving
-    // panel renders immediately; the countdown shows there in place of the
-    // live-text display.
-    startCountdown(() => playDx(q.steps[0].text));
+
+    // First step: if it's a dx step, count down then play.
+    // If it's a "you" step (activator role), go straight to the sending panel.
+    if (q.steps[0].who === "dx") {
+      startCountdown(() => playDx(q.steps[0].text));
+    }
+    // Activator role starts with who:"you" — no countdown needed, the sending
+    // panel shows immediately and the user calls CQ.
   };
 
   const cur = qso?.steps[step];
@@ -1223,12 +1822,104 @@ function QsoSim({ player, settings, setSettings }) {
     setLiveText("");
     setFillMsg(null);
     keyer.clear();
-    setStep(next);
-    if (next < qso.steps.length && qso.steps[next].who === "dx") {
-      // Countdown before each fresh DX transmission so the user has a beat to
-      // reset their ear and pick up their pencil between exchanges.
-      startCountdown(() => playDx(qso.steps[next].text));
+
+    // Phase 4 pileup gate: after the user's CQ (step 0 in activator role, who:"you")
+    // at Real life difficulty, enter the pileup instead of advancing to the next
+    // normal step. The pileup replaces the single answering DX step.
+    const isActivatorCq =
+      difficulty === "real" &&
+      (role === "activator" || role === "call") &&
+      step === 0 &&
+      qso.steps[0].who === "you";
+
+    if (isActivatorCq) {
+      enterPileup();
+      return; // do NOT advance step — pileup handles its own exit into the exchange
     }
+
+    setStep(next);
+    if (next < qso.steps.length) {
+      const nextStep = qso.steps[next];
+      // Announce the step transition to screen readers via the always-mounted
+      // stepLive region (design §0 / C1). "Receiving" for DX steps, "Your turn"
+      // for you-steps. The region is always in the DOM so this is a text change
+      // the AT will speak, not a mount-with-content that would be ignored.
+      setStepLive(
+        nextStep.who === "dx"
+          ? `Receiving from ${qso.dx}, step ${next + 1} of ${qso.steps.length}`
+          : `Your turn, step ${next + 1} of ${qso.steps.length}`
+      );
+      if (nextStep.who === "dx") {
+        // Countdown before each fresh DX transmission so the user has a beat to
+        // reset their ear and pick up their pencil between exchanges.
+        startCountdown(() => playDx(nextStep.text));
+      }
+    }
+  };
+
+  // enterPileup — build the pileup and start playing the overlapping callers.
+  // Called from advance() when the activator just sent their CQ at Real life difficulty.
+  const enterPileup = (existingPileup = null, existingWorked = null) => {
+    const profile = {
+      myCall: settings.myCall,
+      myName: settings.myName,
+      myQth:  settings.myQth,
+      cut:    settings.cutNumbers,
+    };
+    // Reuse the existing pileup object if re-entering after a worked caller (thinning).
+    const pile = existingPileup || buildPileup(profile, activity);
+    const worked = existingWorked || new Set();
+
+    setPileup(pile);
+    setWorkedCalls(worked);
+    setPileupPhase("listening");
+    keyer.clear();
+    setFillMsg(null);
+    setLiveRegionMsg("");
+
+    // Play all remaining (un-worked) callers simultaneously via playMany.
+    // Each caller's call is sent once (realistic pileup: one callsign, then wait).
+    const remaining = pile.callers.filter((c) => !worked.has(c.call));
+    if (remaining.length === 0) {
+      // All callers worked — end the pileup round and complete the QSO.
+      exitPileupDone();
+      return;
+    }
+
+    const items = remaining.map((c) => ({
+      text: c.call,
+      gain: c.signal,
+      offsetMs: c.offsetMs,
+    }));
+
+    player.playMany(items, {
+      charWpm: settings.charWpm,
+      effWpm: settings.effWpm,
+      freq: settings.freq,
+      onDone: () => {
+        // After one pass, the callers go quiet. The user has already heard them;
+        // they key their pickup. No auto-repeat — real pileups don't loop forever.
+        // The user can key "?" to trigger a replay (handled in the pileup keyer effect).
+      },
+    });
+
+    // Announce to screen readers that the pileup is starting
+    setLiveRegionMsg(
+      `Pileup: ${remaining.length} station${remaining.length !== 1 ? "s" : ""} calling. Key a callsign or fragment to pick one.`
+    );
+  };
+
+  // exitPileupDone — called when all pileup callers have been worked.
+  // Ends the pileup and completes the QSO (no further steps after the last exchange).
+  const exitPileupDone = () => {
+    setPileupPhase(null);
+    setPileup(null);
+    player.stopMany();
+    // Mark the QSO complete by advancing past the last step.
+    // The QSO object's steps after index 0 are the exchange steps (DX answers, etc.)
+    // For the pileup route, each worked caller ran through those steps individually,
+    // so we jump to the end to show the "QSO COMPLETE" panel.
+    setStep(qso.steps.length);
   };
 
   // Don't leave the fill-message timer running after unmount
@@ -1236,8 +1927,14 @@ function QsoSim({ player, settings, setSettings }) {
 
   const checkCopy = () => {
     const pct = Math.round(similarity(cur.text, copyAttempt) * 100);
+    const verdict = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
     setCopyResult(pct);
     setRevealed(true);
+    // Accumulate for per-conversation aggregate (B4)
+    setCopyScores((prev) => [...prev, pct]);
+    // Announce to AT via the always-mounted resultLive region (design §0).
+    // Score is aria-hidden; this is the only AT path for the copy result.
+    setResultLive(`Copy: ${pct}% — ${verdict}`);
   };
 
   // Break-in: interpret what the user keys during a DX transmission as
@@ -1249,7 +1946,9 @@ function QsoSim({ player, settings, setSettings }) {
     if (!raw || !(raw.endsWith("?") || raw.endsWith(" "))) return;
     const sent = raw.replace(/\s+/g, "").toUpperCase();
     if (!sent) return;
-    const dxSigned = qso.flavor === "SOTA" ? `${qso.dx}/P` : qso.dx;
+    // dxSigned: how the other station identifies on the air.
+    // Builders set qso.dxSigned when it differs from qso.dx (e.g. SOTA activator signs /P).
+    const dxSigned = qso.dxSigned ?? qso.dx;
 
     const respond = (text, msg, eff) => {
       keyer.clear();
@@ -1277,6 +1976,122 @@ function QsoSim({ player, settings, setSettings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyer.decoded]);
 
+  // Ref to carry pileup context across the exchange so "QRZ?" can re-enter.
+  // Declared before the pileup pickup effect that writes to it.
+  const pileupRef = useRef(null);
+
+  // Phase 4 pileup pickup effect.
+  // Watches keyer.decoded while pileupPhase === "listening".
+  // A "completed thought" is: the decoded string ends with space (word gap timer fired)
+  // or ends with ? (explicit end-of-thought signal the user can use to confirm).
+  useEffect(() => {
+    if (!pileup || pileupPhase !== "listening") return;
+    const raw = keyer.decoded;
+    if (!raw || !(raw.endsWith(" ") || raw.endsWith("?"))) return;
+
+    // Standalone "?" → replay the pileup (the user wants to hear them again).
+    if (raw.trim() === "?") {
+      keyer.clear();
+      const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
+      const items = remaining.map((c) => ({ text: c.call, gain: c.signal, offsetMs: c.offsetMs }));
+      player.playMany(items, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq });
+      setLiveRegionMsg("Replaying pileup.");
+      return;
+    }
+
+    // Strip trailing ? if present (the user may add it as a separator after a callsign).
+    const sent = raw.replace(/\?$/, "").replace(/\s+/g, "").toUpperCase();
+    if (!sent) return;
+
+    // "AGN" or "QRZ" → replay the pileup
+    if (sent === "AGN" || sent === "QRZ") {
+      keyer.clear();
+      const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
+      const items = remaining.map((c) => ({
+        text: c.call,
+        gain: c.signal,
+        offsetMs: c.offsetMs,
+      }));
+      player.playMany(items, {
+        charWpm: settings.charWpm,
+        effWpm: settings.effWpm,
+        freq: settings.freq,
+      });
+      setLiveRegionMsg("Replaying pileup.");
+      return;
+    }
+
+    const result = matchPickup(pileup, sent, workedCalls);
+
+    if (!result) {
+      // No match — prompt them to try again
+      keyer.clear();
+      showFill("QRM — no match, try a call fragment");
+      setLiveRegionMsg("No match. Try again or key a partial callsign.");
+      return;
+    }
+
+    if (result.ambiguous) {
+      // Fragment matches more than one caller — need them to be more specific
+      const calls = result.ambiguous.map((c) => c.call).join(", ");
+      keyer.clear();
+      showFill(`QRM — ambiguous: ${calls}`);
+      setLiveRegionMsg(`Ambiguous. Matches ${calls}. Send more of the call.`);
+      return;
+    }
+
+    // Clean match: pull this caller out and run the normal exchange with them.
+    const picked = result.matched;
+    const newWorked = new Set([...workedCalls, picked.call]);
+
+    // Determine signal strength label for post-pickup feedback
+    const signalLabel =
+      picked.signal >= 0.75 ? "loud" :
+      picked.signal >= 0.45 ? "moderate" : "weak";
+
+    keyer.clear();
+    player.stopMany(); // stop any still-playing callers
+    setPileupPhase(null);
+    setFillMsg(null);
+
+    // Announce pickup
+    setLiveRegionMsg(
+      `Got ${picked.call} — ${signalLabel} signal. Running the exchange.`
+    );
+
+    // Rebuild the QSO with the picked caller's call baked in from the start.
+    // Passing dxCall to the builder means every field — text, suggested,
+    // mustContain, prompt — is constructed with picked.call directly. There is
+    // no regex substitution: the architect flagged that approach as fragile
+    // (missed you-step fields, /P metachar risk, substring collision).
+    const builder = ACTIVITY_BUILDERS[activity];
+    const profile = {
+      myCall: settings.myCall,
+      myName: settings.myName,
+      myQth:  settings.myQth,
+      cut:    settings.cutNumbers,
+    };
+    const freshQso = { ...builder(profile, role, picked.call), pickedSignal: signalLabel };
+
+    // Store the updated worked set and pileup for when this exchange finishes
+    // so we can re-enter the pileup with the remaining callers.
+    setWorkedCalls(newWorked);
+
+    // Advance to step 1: the user's CQ (step 0) is already sent; the exchange
+    // proper starts at step 1 (the DX caller's answer).
+    setQso(freshQso);
+    const nextStep = 1; // after the user's CQ (step 0)
+    setStep(nextStep);
+    if (freshQso.steps[nextStep] && freshQso.steps[nextStep].who === "dx") {
+      startCountdown(() => playDx(freshQso.steps[nextStep].text));
+    }
+
+    // Save the pileup + new worked set for re-entry after this exchange ends.
+    // We store them in a ref so the "done" panel can offer QRZ → next.
+    pileupRef.current = { pileup, worked: newWorked, pickedSignal: signalLabel };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyer.decoded, pileupPhase]);
+
   const checkSend = () => {
     const sent = keyer.decoded.toUpperCase();
     const sim = Math.round(similarity(cur.suggested, sent) * 100);
@@ -1290,24 +2105,107 @@ function QsoSim({ player, settings, setSettings }) {
       forms(m).some((v) => flat.includes(v.replace(/\s+/g, "")))
     );
     setSendResult({ sim, hits, need: cur.mustContain });
+    // Accumulate for per-conversation aggregate (B4)
+    setSendScores((prev) => [...prev, sim]);
+    // Announce to AT via the always-mounted resultLive region (design §0).
+    // Score is aria-hidden and the mustContain checklist is color + glyph only —
+    // this is the only AT path for both the send score and the hit/missing tokens.
+    const verdict = sim >= 90 ? "SOLID COPY" : sim >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
+    const missing = cur.mustContain.filter((m) => !hits.includes(m));
+    let liveMsg = `Send: ${sim}% — ${verdict}. Sent: ${hits.length > 0 ? hits.join(", ") : "none"}`;
+    if (missing.length > 0) liveMsg += `; missing: ${missing.join(", ")}`;
+    liveMsg += ".";
+    setResultLive(liveMsg);
   };
 
   const done = qso && step >= qso.steps.length;
 
   return (
     <div>
+      {/* Always-mounted sr-only live regions (design §0 / C1).
+          These must NOT be inside conditional blocks — they need to be in the DOM
+          continuously so that text changes (set on events) are announced by AT.
+          - liveRegionMsg: pileup pickup results, fills, replays (assertive — time-sensitive)
+          - stepLive:     step transitions in the normal QSO loop (polite)
+          - resultLive:  copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite) */}
+      <div role="alert" aria-live="assertive" aria-atomic="true" style={S.srOnly}>{liveRegionMsg}</div>
+      <div role="status" aria-live="polite"   aria-atomic="true" style={S.srOnly}>{stepLive}</div>
+      <div role="status" aria-live="polite"   aria-atomic="true" style={S.srOnly}>{resultLive}</div>
+
       {!qso && (
         <div style={S.panel}>
-          <div style={{ ...S.label, marginBottom: 10 }}>Simulated contact</div>
-          <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", marginTop: 0 }}>
-            A station calls CQ. You copy by ear, answer with your key, and work the full exchange — RST, name, QTH — through to the sign-off. On each over you can check your copy before continuing to be sure you heard it right, or just answer the way you would on the air — your choice.
-          </p>
+          {/* E5: collapsible intro — same pattern as KeyTrainer. Toggle persists via store. */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introQsoCollapsed ? 10 : 0 }}>
+            <div style={S.label}>Simulated contact</div>
+            <button
+              aria-label={introQsoCollapsed ? "Show intro" : "Hide intro"}
+              style={{ ...S.btn, fontSize: 11, padding: "4px 10px", color: "#8A929C" }}
+              onClick={() => {
+                const next = !introQsoCollapsed;
+                setIntroQsoCollapsed(next);
+                store.save("introQsoCollapsed", next);
+              }}
+            >{introQsoCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
+          </div>
+          {!introQsoCollapsed && (
+            <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", marginTop: 8, marginBottom: 0 }}>
+              Pick your activity and role, then work the full exchange — CQ, RST, name, QTH — through to the sign-off. On each over you can check your copy before continuing, or just answer the way you would on the air.
+            </p>
+          )}
+
+          {/* Activity selector — D1: each button shows a description sub-line matching
+              the Conditions-button pattern ([value, label, desc] rendered left-aligned) */}
+          <div style={{ ...S.label, marginBottom: 8 }}>Activity</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {Object.entries(ACTIVITY_LABELS).map(([v, l]) => (
+              <button
+                key={v}
+                aria-pressed={activity === v}
+                onClick={() => {
+                  setActivity(v);
+                  // Reset role to the default answering role for this activity
+                  setRole(ROLE_TERMS[v][1][0]);
+                }}
+                style={{
+                  ...S.btn, textAlign: "left", padding: "10px 14px",
+                  ...(activity === v ? { borderColor: "#F2A93B" } : {}),
+                }}
+              >
+                <span style={{ color: activity === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 12 }}>{l}</span>
+                <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ACTIVITY_DESCS[v]}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Role selector — D1: same description pattern; labels are program-correct per activity */}
+          <div style={{ ...S.label, marginBottom: 8 }}>Role</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+            {ROLE_TERMS[activity].map(([v, l]) => (
+              <button
+                key={v}
+                aria-pressed={role === v}
+                onClick={() => setRole(v)}
+                style={{
+                  ...S.btn, textAlign: "left", padding: "10px 14px",
+                  ...(role === v ? { borderColor: "#F2A93B" } : {}),
+                }}
+              >
+                <span style={{ color: role === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 12 }}>{l}</span>
+                <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ROLE_DESCS[activity][v]}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Difficulty selector.
+              Internal values ("easy", "normal", "real") are unchanged — the QSB/noise
+              conditionals throughout this component test `difficulty === "real"`.
+              Only the display label for "real" is changed to "Real life". */}
           <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
             {[
-              ["easy", "EASY", "Text appears letter by letter as it's sent — hear it and see it together."],
-              ["normal", "NORMAL", "Clean signal, no help. Copy by ear, check yourself, then continue."],
-              ["real", "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
+              ["easy",   "EASY",      "Text appears letter by letter as it's sent — hear it and see it together."],
+              ["normal", "NORMAL",    "Clean signal, no help. Copy by ear, check yourself, then continue."],
+              ["real",   "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
             ].map(([v, l, desc]) => (
               <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
                 style={{ ...S.btn, textAlign: "left", padding: "10px 14px", ...(difficulty === v ? { borderColor: "#F2A93B" } : {}) }}>
@@ -1320,16 +2218,126 @@ function QsoSim({ player, settings, setSettings }) {
             <div style={{ marginBottom: 6 }}>
               <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
                 onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-              <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6, marginBottom: 12 }}>
                 Adjustable any time during the contact — find the edge of your comfort and sit just past it.
               </div>
             </div>
           )}
-          <button style={S.btnAmber} onClick={start}>📻 LISTEN FOR CQ</button>
+
+          {/* Pileup preview note: visible only when Activator + Real life is selected */}
+          {(role === "activator" || role === "call") && difficulty === "real" && (
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginBottom: 12, lineHeight: 1.6, borderLeft: "2px solid #3A4048", paddingLeft: 10 }}>
+              After your CQ, 2–4 stations will answer at once at different signal strengths. Key a callsign or fragment to pick one — the strongest first is good operating practice. Work them one at a time, then QRZ for the next.
+            </div>
+          )}
+
+          {/* Start button — label adapts: activator starts by calling CQ */}
+          <button style={S.btnAmber} onClick={start}>
+            {role === "activator" || role === "call" ? "📻 CALL CQ" : "📻 LISTEN FOR CQ"}
+          </button>
         </div>
       )}
 
-      {qso && !done && cur.who === "dx" && (
+      {/* Pileup listening panel — replaces the normal DX/you panels during a pileup round.
+          Note: the liveRegionMsg aria-live region is hoisted above (always-mounted),
+          not here — so it survives the listening→exchange transition and keeps announcing. */}
+      {pileupPhase === "listening" && pileup && (
+        <div style={S.panel}>
+          <div style={{ ...S.label, marginBottom: 8 }}>
+            ◉ Pileup — {qso.flavor}
+            <span style={{ color: "#E07A5F", marginLeft: 8 }}>QSB</span>
+          </div>
+
+          {/* Pileup status: how many callers are still waiting */}
+          {(() => {
+            const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
+            return (
+              <div style={{ marginBottom: 10, fontFamily: "system-ui, sans-serif", fontSize: 13, color: "#C9CDD3", lineHeight: 1.6 }}>
+                <span style={{ color: "#F2A93B", fontWeight: 700 }}>{remaining.length}</span>
+                {" station"}{remaining.length !== 1 ? "s" : ""} calling.{" "}
+                {workedCalls.size > 0 && (
+                  <span style={{ color: "#8FCB9B" }}>{workedCalls.size} worked.</span>
+                )}
+              </div>
+            );
+          })()}
+
+          <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+            <div style={{ ...S.label, marginBottom: 6 }}>
+              Key a callsign to pick one{" "}
+              <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
+            </div>
+            <Display cursor>{keyer.decoded}</Display>
+            {fillMsg && (
+              <div style={{ fontFamily: "ui-monospace, monospace", color: "#8FCB9B", fontSize: 13, letterSpacing: 1, marginTop: 8 }}>
+                ◉ {fillMsg}
+              </div>
+            )}
+            <KeyInput
+              keyer={keyer}
+              keyType={settings.keyType}
+              onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
+              swap={settings.paddleSwap}
+              onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+            />
+            {/* E2: ≥12px; D2: gloss QRZ and QRM at point of use */}
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
+              Key the full call or a unique fragment — suffix (ABC) or prefix (W9). End with space or <span style={{ color: "#8A929C" }}>?</span>.{" "}
+              Key <span style={{ color: "#8A929C" }}>QRZ</span> <span style={{ color: "#5A626C" }}>(who's calling?)</span> or <span style={{ color: "#8A929C" }}>AGN</span> to replay.{" "}
+              <span style={{ color: "#5A626C" }}>QRM = interference on the frequency.</span>
+            </div>
+          </div>
+
+          {/* Noise slider stays accessible during the pileup */}
+          <div style={{ marginBottom: 6 }}>
+            <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
+              onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <button style={S.btn} onClick={() => {
+              const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
+              const items = remaining.map((c) => ({ text: c.call, gain: c.signal, offsetMs: c.offsetMs }));
+              player.playMany(items, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq });
+              keyer.clear();
+              setLiveRegionMsg("Replaying pileup.");
+            }}>↻ REPLAY</button>
+            {/* E3: SLOWER mirrors the normal-copy SLOWER — slowing the pileup improves
+                separability, which is the cheapest lever for the pileup-fidelity risk. */}
+            <button
+              aria-label="Replay pileup at reduced speed"
+              style={S.btn}
+              onClick={() => {
+                const remaining = pileup.callers.filter((c) => !workedCalls.has(c.call));
+                const items = remaining.map((c) => ({ text: c.call, gain: c.signal, offsetMs: c.offsetMs }));
+                player.playMany(items, {
+                  charWpm: settings.charWpm,
+                  effWpm: Math.max(4, settings.effWpm - 3),
+                  freq: settings.freq,
+                });
+                keyer.clear();
+                setLiveRegionMsg("Replaying pileup at reduced speed.");
+              }}
+            >🐢 SLOWER</button>
+            <button style={S.btn} onClick={() => { player.stopMany(); keyer.clear(); }}>■ STOP</button>
+          </div>
+          {/* D3: explicit exit so a newcomer isn't trapped in the pileup.
+              Clears all QSO/pileup state and returns to the setup panel (!qso). */}
+          <div style={{ marginTop: 10, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
+            <button
+              aria-label="Leave pileup and return to setup"
+              style={{ ...S.btn, color: "#8A929C" }}
+              onClick={() => {
+                player.stop(); player.stopMany();
+                setQso(null); setPileup(null); setPileupPhase(null);
+                setWorkedCalls(new Set()); keyer.clear();
+              }}
+            >✕ LEAVE PILEUP / back to setup</button>
+          </div>
+        </div>
+      )}
+
+      {qso && !done && pileupPhase === null && cur && cur.who === "dx" && (
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 8 }}>
             {difficulty === "easy"
@@ -1383,7 +2391,7 @@ function QsoSim({ player, settings, setSettings }) {
               </div>
             )}
             <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
-            <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
               <span style={{ color: "#8A929C" }}>?</span> or <span style={{ color: "#8A929C" }}>AGN</span> — repeat the whole transmission · partial call + <span style={{ color: "#8A929C" }}>?</span> (NM0?) — they confirm their full call · <span style={{ color: "#8A929C" }}>QRS</span> — slower please
             </div>
           </div>
@@ -1410,10 +2418,18 @@ function QsoSim({ player, settings, setSettings }) {
               )}
             </>
           )}
+          {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
+          <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
+            <button
+              aria-label="Abandon this contact and return to setup"
+              style={{ ...S.btn, color: "#5A626C", fontSize: 11 }}
+              onClick={() => { player.stop(); setQso(null); keyer.clear(); }}
+            >✕ ABANDON CONTACT / back to setup</button>
+          </div>
         </div>
       )}
 
-      {qso && !done && cur.who === "you" && (
+      {qso && !done && pileupPhase === null && cur && cur.who === "you" && (
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 8 }}>
             ◉ Your turn — step {step + 1} of {qso.steps.length}
@@ -1455,16 +2471,87 @@ function QsoSim({ player, settings, setSettings }) {
               </div>
             </div>
           )}
+          {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
+          <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
+            <button
+              aria-label="Abandon this contact and return to setup"
+              style={{ ...S.btn, color: "#5A626C", fontSize: 11 }}
+              onClick={() => { player.stop(); setQso(null); keyer.clear(); }}
+            >✕ ABANDON CONTACT / back to setup</button>
+          </div>
         </div>
       )}
 
-      {done && (
-        <div style={S.panel}>
-          <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 22, letterSpacing: 3 }}>QSO COMPLETE — 73</div>
-          <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif" }}>{qso.summary}</p>
-          <button style={S.btnAmber} onClick={start}>📻 NEXT CONTACT</button>
-        </div>
-      )}
+      {done && (() => {
+        // Pileup path: after each single-caller exchange, check if there are more
+        // callers left in the pileup. If so, offer QRZ → next caller instead of
+        // treating the whole QSO as complete. The pileupRef carries the pileup
+        // state across the exchange.
+        const pRef = pileupRef.current;
+        const hasMoreCallers =
+          pRef &&
+          pRef.pileup.callers.some((c) => !pRef.worked.has(c.call));
+
+        // Per-conversation aggregate scores (B4). averageScore returns null for
+        // empty arrays so we suppress the line when no graded steps occurred.
+        const avgCopy = averageScore(copyScores);
+        const avgSend = averageScore(sendScores);
+
+        // Shared score summary fragment — shown in both the pileup round-end
+        // and the QSO complete panels so the user sees context either way.
+        const scoreSummary = (avgCopy !== null || avgSend !== null) && (
+          <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: "6px 0 0" }}>
+            {avgCopy !== null && <span>Avg copy: <span style={{ color: "#F2A93B" }}>{avgCopy}%</span></span>}
+            {avgCopy !== null && avgSend !== null && <span style={{ margin: "0 6px" }}>·</span>}
+            {avgSend !== null && <span>Avg send: <span style={{ color: "#F2A93B" }}>{avgSend}%</span></span>}
+          </p>
+        );
+
+        return (
+          <div style={S.panel}>
+            {hasMoreCallers ? (
+              <>
+                <div style={{ fontFamily: "ui-monospace, monospace", color: "#8FCB9B", fontSize: 18, letterSpacing: 2, marginBottom: 6 }}>
+                  ✓ {qso.dx} IN THE LOG
+                  {pRef.pickedSignal && (
+                    <span style={{ fontSize: 13, color: "#8A929C", marginLeft: 8 }}>({pRef.pickedSignal} signal)</span>
+                  )}
+                </div>
+                <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif", marginTop: 0 }}>
+                  {pRef.pileup.callers.filter((c) => !pRef.worked.has(c.call)).length} station{pRef.pileup.callers.filter((c) => !pRef.worked.has(c.call)).length !== 1 ? "s" : ""} still calling. Key QRZ to continue.
+                </p>
+                {scoreSummary}
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button style={S.btnAmber} onClick={() => {
+                    // Re-enter the pileup with the original QSO structure (to call CQ again isn't needed —
+                    // QRZ is the activator's signal that they're ready for the next caller).
+                    // Rebuild the QSO from scratch so the exchange steps have fresh DX call placeholders.
+                    const builder = ACTIVITY_BUILDERS[activity];
+                    const profile = { myCall: settings.myCall, myName: settings.myName, myQth: settings.myQth, cut: settings.cutNumbers };
+                    const freshQso = builder(profile, role);
+                    setQso(freshQso); setStep(0); setLog([]);
+                    setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
+                    setLiveText(""); setFillMsg(null); keyer.clear();
+                    // Re-enter with the existing pileup state (thinned to remaining callers)
+                    enterPileup(pRef.pileup, pRef.worked);
+                    pileupRef.current = null;
+                  }}>
+                    📻 QRZ — NEXT CALLER
+                  </button>
+                  <button style={S.btn} onClick={start}>✕ END ROUND</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 22, letterSpacing: 3 }}>QSO COMPLETE — 73</div>
+                <p style={{ color: "#8A929C", fontSize: 13, fontFamily: "system-ui, sans-serif" }}>{qso.summary}</p>
+                {scoreSummary}
+                <button style={{ ...S.btnAmber, marginTop: 10 }} onClick={start}>📻 NEXT CONTACT</button>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {log.length > 0 && (
         <div style={S.panel}>
