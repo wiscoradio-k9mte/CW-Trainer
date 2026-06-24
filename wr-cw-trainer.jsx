@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
@@ -2658,6 +2658,36 @@ function Splash({ onSkip }) {
   );
 }
 
+/* ================= RESPONSIVE LAYOUT ================= */
+
+// useIsWide — returns true when the viewport is at least 900px wide.
+//
+// Why 900px: at that width, the two-pane grid (110px nav + fluid main + 340px
+// rail + 24px gap + ~30px side padding) still gives the main column breathing
+// room. Below it the single-column layout is the better experience.
+//
+// Implementation notes:
+//   - Initialises from matchMedia().matches so the very first render is correct
+//     (no layout flash on load).
+//   - One hook instance at the root (CWTrainer); do not call it in each tab —
+//     that multiplies listeners and re-renders for no benefit.
+//   - Cleans up the listener on unmount (important in tests where many
+//     CWTrainer instances are mounted and unmounted).
+function useIsWide() {
+  // Create the MediaQueryList once (useMemo with empty deps). matchMedia returns
+  // the same object for the same query string in real browsers, but being
+  // explicit avoids recreating it on every render and keeps the subscription
+  // cleanup unambiguous.
+  const mq = useMemo(() => window.matchMedia("(min-width: 900px)"), []);
+  const [wide, setWide] = useState(mq.matches);
+  useEffect(() => {
+    const handler = (e) => setWide(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [mq]);
+  return wide;
+}
+
 /* ================= APP ================= */
 const DEFAULT_SETTINGS = {
   charWpm: 20,
@@ -2674,6 +2704,7 @@ const DEFAULT_SETTINGS = {
 };
 
 export default function CWTrainer() {
+  const isWide = useIsWide();
   const [tab, setTab] = useState("learn");
   const [showSettings, setShowSettings] = useState(false);
   const [splash, setSplash] = useState(true);
@@ -2736,9 +2767,96 @@ export default function CWTrainer() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#0D0F13", padding: "16px 12px 60px", color: "#E8E2D6" }}>
-      <style>{`@keyframes blink { 50% { opacity: 0; } } @keyframes splashIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } } * { -webkit-tap-highlight-color: transparent; } button { outline: none; } button:focus { outline: none; } button:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; } input[type="text"]:focus, input:not([type]):focus { outline: 1px solid #F2A93B; } input[type="range"]:focus { outline: none; } button:active { transform: translateY(1px); } button:disabled { opacity: 0.4; cursor: default; }`}</style>
-      <div style={{ maxWidth: 560, margin: "0 auto" }}>
-        <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+      {/*
+        The <style> block is the only injected CSS in the app — established
+        precedent for keyframes and focus rings. We extend it with two layout
+        rules for the responsive shell:
+          .wr-shell   — wide default: three-column grid (nav | main | rail)
+          @media      — narrow override: collapses to today's single 560px column
+        One class, one media query, no CSS framework.
+      */}
+      <style>{`
+        @keyframes blink { 50% { opacity: 0; } }
+        @keyframes splashIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+        * { -webkit-tap-highlight-color: transparent; }
+        button { outline: none; }
+        button:focus { outline: none; }
+        button:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
+        input[type="text"]:focus, input:not([type]):focus { outline: 1px solid #F2A93B; }
+        input[type="range"]:focus { outline: none; }
+        button:active { transform: translateY(1px); }
+        button:disabled { opacity: 0.4; cursor: default; }
+
+        /* Responsive shell — wide (≥900px): three-column grid [nav | main | rail] */
+        .wr-shell {
+          display: grid;
+          grid-template-columns: 110px minmax(0, 1fr) 340px;
+          grid-template-rows: auto;
+          gap: 0 24px;
+          max-width: 1180px;
+          margin: 0 auto;
+        }
+        /* Narrow (<900px): collapse to today's single column */
+        @media (max-width: 899px) {
+          .wr-shell {
+            grid-template-columns: 1fr;
+            max-width: 560px;
+            gap: 0;
+          }
+        }
+
+        /* Full-width elements span all three grid columns on wide */
+        .wr-full { grid-column: 1 / -1; }
+
+        /*
+          Nav rail — wide: left column, stacks buttons vertically.
+          Narrow: taken out of grid flow (grid-column:1) and displayed as a
+          horizontal flex row, matching today's top tab bar.
+        */
+        .wr-nav-rail {
+          grid-column: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          padding-top: 4px;
+          align-items: stretch;
+        }
+        @media (max-width: 899px) {
+          .wr-nav-rail {
+            grid-column: 1;
+            flex-direction: row;
+            padding-top: 0;
+            margin-bottom: 14px;
+          }
+        }
+
+        /* Main content area — wide: middle column; narrow: single column */
+        .wr-main { grid-column: 2; }
+        @media (max-width: 899px) {
+          .wr-main { grid-column: 1; }
+        }
+
+        /* Options rail — wide: right column; narrow: not rendered (see JSX) */
+        .wr-rail {
+          grid-column: 3;
+          min-width: 0;
+        }
+        @media (max-width: 899px) {
+          .wr-rail { display: none; }
+        }
+      `}</style>
+
+      {/*
+        .wr-shell is the CSS grid container. On wide it is a three-column grid;
+        on narrow it is a single column capped at 560px (today's layout).
+        DOM order: header → nav → main → rail → footer. Screen readers reach the
+        practice surface (main) before the options rail — matching visual emphasis.
+        On wide, CSS grid places the nav visually left regardless of DOM position.
+      */}
+      <div className="wr-shell">
+
+        {/* Header spans all three columns on wide; naturally full-width on narrow */}
+        <header className="wr-full" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div>
             <div style={{ ...S.label, color: "#8A6A33", letterSpacing: 3 }}>WISCO RADIO LABS</div>
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, letterSpacing: 4, color: "#F2A93B", fontWeight: 700 }}>
@@ -2756,15 +2874,23 @@ export default function CWTrainer() {
           >⚙</button>
         </header>
 
-        {showSettings && <Settings settings={settings} setSettings={setSettings} />}
+        {/* Settings panel: spans full width in both modes (unchanged behavior).
+            Later phases (Phase 4) move this into the rail on wide. */}
+        {showSettings && (
+          <div className="wr-full">
+            <Settings settings={settings} setSettings={setSettings} />
+          </div>
+        )}
 
         {/* C4: one-time W1AW nudge. Shown while the call is still the default
             AND the user hasn't dismissed it (or tapped the gear, which also
             satisfies it). Dismissal persists via store so it shows at most once
             across launches. Changing the call in Settings collapses it via the
-            derived condition without requiring explicit dismissal. */}
+            derived condition without requiring explicit dismissal.
+            Spans full width in both modes — it's transient and shouldn't be
+            trapped in a column. */}
         {settings.myCall === "W1AW" && !nudgeDismissed && (
-          <div role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#191C21", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+          <div className="wr-full" role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#191C21", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
             <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", lineHeight: 1.6, flex: 1 }}>
               <strong style={{ color: "#C9CDD3" }}>W1AW is an example callsign</strong> (the ARRL's station in Newington, CT). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
             </span>
@@ -2777,21 +2903,57 @@ export default function CWTrainer() {
           </div>
         )}
 
-        <nav style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {/*
+          Tab navigation.
+          Wide (≥900px): .wr-nav-rail places this in the left grid column as a
+            vertical stack of buttons — the left nav rail. The aria-pressed
+            pattern and the player.stop() on switch are unchanged.
+          Narrow (<900px): the CSS collapses .wr-nav-rail to a horizontal row,
+            restoring today's top tab bar exactly.
+          No role=tablist conversion — that requires roving tabindex + arrow-key
+          nav and is explicitly out of scope for this phase (see design §3).
+        */}
+        <nav aria-label="Sections" className="wr-nav-rail">
           {tabs.map(([v, l]) => (
             <button key={v} aria-pressed={tab === v} onClick={() => { player.stop(); setTab(v); }}
-              style={{ ...S.btn, flex: 1, ...(tab === v ? { background: "#3A2E18", borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
+              style={{
+                ...S.btn,
+                // Wide: no flex:1 — the buttons are stacked vertically and each
+                // takes its natural width (full nav-rail width via align-items:stretch).
+                // Narrow: flex:1 so each button fills its share of the row (today's behavior).
+                ...(isWide ? {} : { flex: 1 }),
+                // Active tab styling — same amber highlight in both orientations.
+                ...(tab === v ? { background: "#3A2E18", borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}),
+              }}>
               {l}
             </button>
           ))}
         </nav>
 
-        {tab === "learn" && <LearnTab player={player} settings={settings} />}
-        {tab === "copy" && <CopyTrainer player={player} settings={settings} />}
-        {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} />}
-        {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} />}
+        {/*
+          Main practice area — middle grid column on wide, full width on narrow.
+          DOM order: main comes before the rail so screen readers reach the
+          practice surface before the options, matching the visual hierarchy.
+          All tab components render here in full for all phases until their
+          individual rail splits are done (Phases 2–5).
+        */}
+        <main className="wr-main">
+          {tab === "learn" && <LearnTab player={player} settings={settings} />}
+          {tab === "copy" && <CopyTrainer player={player} settings={settings} />}
+          {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} />}
+          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} />}
+        </main>
 
-        <footer style={{ textAlign: "center", marginTop: 24 }}>
+        {/*
+          Right options rail — right grid column on wide, hidden on narrow.
+          Empty shell for Phase 1. Later phases (Phases 2–5) move each tab's
+          setup controls here. Not rendered at all on narrow (CSS display:none)
+          so it contributes no DOM noise on mobile.
+        */}
+        {isWide && <aside className="wr-rail" aria-label="Options" />}
+
+        {/* Footer spans all three columns on wide; naturally full-width on narrow */}
+        <footer className="wr-full" style={{ textAlign: "center", marginTop: 24 }}>
           <div style={{ fontFamily: "ui-monospace, monospace", color: "#5A626C", fontSize: 11, letterSpacing: 3 }}>
             ·−− ·−·&nbsp;&nbsp;WISCO RADIO LABS
           </div>
@@ -2799,6 +2961,7 @@ export default function CWTrainer() {
             made in the Driftless
           </div>
         </footer>
+
       </div>
     </div>
   );
