@@ -872,10 +872,15 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
   );
 }
 
-function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
+// KeyModeControls — the key-type toggle (PADDLE / STRAIGHT KEY) and the dit/dah
+// swap button. Extracted from KeyInput so the rail-split can place these controls
+// in the options rail (wide) while the key surface itself stays in main. Both
+// pieces still drive the same keyer instance held by KeyTrainer — no state moves.
+// QsoSim keeps using the combined KeyInput below and is unaffected by this split.
+function KeyModeControls({ keyType, onKeyType, swap, onSwap }) {
   return (
-    <div>
-      <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 6 }}>
         {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"]].map(([v, l]) => (
           <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
             style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: 11, ...(keyType === v ? { borderColor: "#F2A93B", color: "#F2A93B" } : { color: "#8A929C" }) }}>
@@ -894,14 +899,25 @@ function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
           </button>
         )}
       </div>
-      {keyType === "paddle"
-        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
-        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
       {keyType === "paddle" && (
         <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 6 }}>
           ⇄ button swaps which paddle sends dit vs dah — set it to <span style={{ color: "#8A929C" }}>{swap ? "L for left-handed" : "R for right-handed"}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// KeyInput — combined toggle + swap + key surface. Used by QsoSim, which has not
+// been split (the key is part of the exchange flow there, not a separate pane).
+// KeyTrainer uses KeyModeControls + inlined key surface instead (see Phase 3 split).
+function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
+  return (
+    <div>
+      <KeyModeControls keyType={keyType} onKeyType={onKeyType} swap={swap} onSwap={onSwap} />
+      {keyType === "paddle"
+        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
+        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
     </div>
   );
 }
@@ -1201,7 +1217,18 @@ function CopyTrainer({ player, settings, isWide, railEl }) {
 }
 
 /* ================= KEY TRAINER ================= */
-function KeyTrainer({ player, settings, setSettings }) {
+// Phase 3 of the responsive-layout refactor.
+//   isWide  — from the shell's useIsWide(); determines which layout to use.
+//   railEl  — the DOM element of the <aside class="wr-rail">; null until the
+//             callback ref fires (one frame after first wide render), then a
+//             real DOM node. The portal is skipped when railEl is null.
+//
+// KeyInput split: KeyModeControls (toggle + swap) goes to the rail on wide;
+// the key surface (PaddleKey / TouchKey) stays inline in the keying panel in main.
+// Both still drive the same keyer instance — no state moves. The toggle in the
+// rail changes settings.keyType, which this component re-renders from, so the
+// key surface in main always reflects the current type.
+function KeyTrainer({ player, settings, setSettings, isWide, railEl }) {
   // category: which drill generator is active (index into DRILL_CATEGORIES)
   const [catIdx, setCatIdx] = useState(0);
   const [target, setTarget] = useState("");
@@ -1279,108 +1306,106 @@ function KeyTrainer({ player, settings, setSettings }) {
   const verdictColor = (v) => v === "good" ? "#8FCB9B" : v === "loose" ? "#F2A93B" : "#E07A5F";
   const verdictLabel = (v) => v === "good" ? "GOOD" : v === "loose" ? "LOOSE" : "TIGHT";
 
-  return (
-    <div>
-      {/* Always-mounted sr-only live regions (design §0 / C1 + C2).
-          Two regions, two purposes:
-          - scoreLive: score + fist summary after CHECK (polite, not time-critical)
-          - catLive:   category position when the stepper or direct-pick changes (polite)
-          Both start empty. Their text is set on the event so the AT sees a change. */}
-      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{scoreLive}</div>
-      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{catLive}</div>
+  // pickCat: centralises the "change category" side-effects so the stepper and
+  // direct-pick buttons stay in sync. Shared by both optionsJSX and the inline
+  // narrow panel — extracted here (not inside the JSX) to avoid recreating it.
+  const pickCat = (newIdx) => {
+    setCatIdx(newIdx);
+    setTarget(""); setResult(null); setAnalysis(null); keyer.clear();
+    // Announce to screen readers (C2). The catLive region is always
+    // mounted — setting its text here is a change the AT will speak.
+    setCatLive(`Category ${newIdx + 1} of ${DRILL_CATEGORIES.length} — ${DRILL_CATEGORIES[newIdx].label}`);
+  };
 
-      {/* E5: collapsible intro panel. The toggle is always visible when !target so the
-          user can re-expand it. Collapsed state persists via the store facade (a UI
-          preference, not progress history — within the allowed persistence boundary). */}
-      {!target && (
-        <div style={S.panel}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introCollapsed ? 0 : 10 }}>
-            <div style={S.label}>Sending practice</div>
-            <button
-              aria-label={introCollapsed ? "Show intro" : "Hide intro"}
-              style={{ ...S.btn, fontSize: 11, padding: "4px 10px", color: "#8A929C" }}
-              onClick={() => {
-                const next = !introCollapsed;
-                setIntroCollapsed(next);
-                store.save("introKeyCollapsed", next);
-              }}
-            >{introCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
-          </div>
-          {!introCollapsed && (
-            <>
-              <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-                Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
-              </p>
-              <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
-                <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
-                <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-                  Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ---- Category selector: stepper + direct-pick row ---- */}
-      {/* Ladder order is the DRILL_CATEGORIES array order. No gating — free
-          navigation as confirmed: stepper steps and direct-pick both allowed. */}
-      <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 8 }}>Drill category — climb as you improve</div>
-
-        {/* Compact stepper: left arrow / current position label / right arrow.
-            pickCat() centralises the "change category" side-effects so the two
-            callers (stepper arrows + direct-pick) stay in sync. */}
-        {(() => {
-          const pickCat = (newIdx) => {
-            setCatIdx(newIdx);
-            setTarget(""); setResult(null); setAnalysis(null); keyer.clear();
-            // Announce to screen readers (C2). The catLive region is always
-            // mounted — setting its text here is a change the AT will speak.
-            setCatLive(`Category ${newIdx + 1} of ${DRILL_CATEGORIES.length} — ${DRILL_CATEGORIES[newIdx].label}`);
-          };
-          return (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                <button
-                  aria-label="Previous category"
-                  style={{ ...S.btn, padding: "10px 14px" }}
-                  disabled={catIdx === 0}
-                  onClick={() => pickCat(Math.max(0, catIdx - 1))}
-                >◀</button>
-                <span style={{ flex: 1, textAlign: "center", fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 13, letterSpacing: 1 }}>
-                  {catIdx + 1} / {DRILL_CATEGORIES.length} — {DRILL_CATEGORIES[catIdx].label}
-                </span>
-                <button
-                  aria-label="Next category"
-                  style={{ ...S.btn, padding: "10px 14px" }}
-                  disabled={catIdx === DRILL_CATEGORIES.length - 1}
-                  onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
-                >▶</button>
-              </div>
-
-              {/* Direct-pick row: toggle buttons, one per category, amber border on active */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {DRILL_CATEGORIES.map((cat, i) => (
-                  <button
-                    key={cat.id}
-                    aria-pressed={catIdx === i}
-                    onClick={() => pickCat(i)}
-                    style={{
-                      // E1: pad to ≥40px effective touch target (was 6px 10px — too small on mobile)
-                      ...S.btn, padding: "10px 12px", fontSize: 11,
-                      ...(catIdx === i ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }),
-                    }}
-                  >
-                    {cat.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          );
-        })()}
+  // optionsJSX — category selector (stepper + direct-pick) + key-type controls
+  // (PADDLE / STRAIGHT KEY toggle + swap). On wide these portal into the rail;
+  // on narrow they render inline above the practice panels (today's order).
+  // All handlers close over local state and the keyer — no prop threading needed.
+  const optionsJSX = (
+    <>
+      <div style={{ ...S.label, marginBottom: 8 }}>Drill category — climb as you improve</div>
+      {/* Compact stepper: left arrow / current position label / right arrow */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <button
+          aria-label="Previous category"
+          style={{ ...S.btn, padding: "10px 14px" }}
+          disabled={catIdx === 0}
+          onClick={() => pickCat(Math.max(0, catIdx - 1))}
+        >◀</button>
+        <span style={{ flex: 1, textAlign: "center", fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 13, letterSpacing: 1 }}>
+          {catIdx + 1} / {DRILL_CATEGORIES.length} — {DRILL_CATEGORIES[catIdx].label}
+        </span>
+        <button
+          aria-label="Next category"
+          style={{ ...S.btn, padding: "10px 14px" }}
+          disabled={catIdx === DRILL_CATEGORIES.length - 1}
+          onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
+        >▶</button>
       </div>
+      {/* Direct-pick row: toggle buttons, one per category, amber border on active */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {DRILL_CATEGORIES.map((cat, i) => (
+          <button
+            key={cat.id}
+            aria-pressed={catIdx === i}
+            onClick={() => pickCat(i)}
+            style={{
+              // E1: pad to ≥40px effective touch target (was 6px 10px — too small on mobile)
+              ...S.btn, padding: "10px 12px", fontSize: 11,
+              ...(catIdx === i ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }),
+            }}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
+      {/* Key-type controls: toggle + swap. Same state drives the key surface in main. */}
+      <KeyModeControls
+        keyType={settings.keyType}
+        onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
+        swap={settings.paddleSwap}
+        onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+      />
+    </>
+  );
 
+  // introJSX — sending-practice orientation, shown before the first target.
+  // Always goes in main (wants the wider column; teaching content). Same in both modes.
+  const introJSX = !target && (
+    <div style={S.panel}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introCollapsed ? 0 : 10 }}>
+        <div style={S.label}>Sending practice</div>
+        <button
+          aria-label={introCollapsed ? "Show intro" : "Hide intro"}
+          style={{ ...S.btn, fontSize: 11, padding: "4px 10px", color: "#8A929C" }}
+          onClick={() => {
+            const next = !introCollapsed;
+            setIntroCollapsed(next);
+            store.save("introKeyCollapsed", next);
+          }}
+        >{introCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
+      </div>
+      {!introCollapsed && (
+        <>
+          <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+            Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
+          </p>
+          <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+            <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
+            <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  // practicePanels — target display + keying + results. Always in main.
+  // The key surface (PaddleKey/TouchKey) renders here, reading settings.keyType
+  // which is also what KeyModeControls in the rail writes. One state, two render sites.
+  const practicePanels = (
+    <>
       {/* ---- Target text panel ---- */}
       <div style={S.panel}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
@@ -1394,7 +1419,11 @@ function KeyTrainer({ player, settings, setSettings }) {
         <Display>{target || "press NEW TEXT"}</Display>
       </div>
 
-      {/* ---- Keying panel: decoded output + key input + CHECK ---- */}
+      {/* ---- Keying panel: decoded output + key surface + CHECK ---- */}
+      {/* The key-type toggle (KeyModeControls) is in optionsJSX — it writes
+          settings.keyType via setSettings, which is the same value read here
+          to decide which key surface to render. The keyer mode also follows
+          settings.keyType (passed to useKeyer above). No duplication of state. */}
       <div style={S.panel}>
         <div style={{ ...S.label, marginBottom: 6 }}>
           Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
@@ -1405,7 +1434,12 @@ function KeyTrainer({ player, settings, setSettings }) {
             ◉ HH — ERROR SIGNAL, CLEARED
           </div>
         )}
-        <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
+        {/* Key surface only — toggle/swap are in the rail (wide) or options panel (narrow) */}
+        <div style={{ marginTop: 12 }}>
+          {settings.keyType === "paddle"
+            ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
+            : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
+        </div>
         <div style={{ marginTop: 12 }}>
           <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
         </div>
@@ -1536,6 +1570,41 @@ function KeyTrainer({ player, settings, setSettings }) {
           </div>
         )}
       </div>
+    </>
+  );
+
+  // ---- layout rendering ----
+  //
+  // Wide: intro (if before first target) in main; optionsJSX portals into the
+  //   shell's <aside class="wr-rail">; practicePanels stays in main.
+  //   railEl may be null on the very first paint (before the callback ref fires) —
+  //   the portal is skipped for that one imperceptible frame.
+  //
+  // Narrow: intro (if !target) + options inline above practice — exactly today's
+  //   single-column appearance.
+  //
+  // The always-mounted scoreLive + catLive regions are in the component root,
+  // never gated by isWide, so AT sees changes in both layouts.
+  return (
+    <div>
+      {/* Always-mounted sr-only live regions (design §0 / C1 + C2).
+          Two regions, two purposes:
+          - scoreLive: score + fist summary after CHECK (polite, not time-critical)
+          - catLive:   category position when the stepper or direct-pick changes (polite)
+          Both start empty. Their text is set on the event so the AT sees a change.
+          Not gated by isWide — render in both layouts. */}
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{scoreLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{catLive}</div>
+
+      {/* Wide layout: intro in its own main-column panel; options portaled to rail. */}
+      {isWide && introJSX}
+      {isWide && railEl && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
+      {isWide && practicePanels}
+
+      {/* Narrow layout: intro + options + practice inline — today's single-column order. */}
+      {!isWide && introJSX}
+      {!isWide && <div style={S.panel}>{optionsJSX}</div>}
+      {!isWide && practicePanels}
     </div>
   );
 }
@@ -3039,7 +3108,7 @@ export default function CWTrainer() {
         <main className="wr-main">
           {tab === "learn" && <LearnTab player={player} settings={settings} />}
           {tab === "copy" && <CopyTrainer player={player} settings={settings} isWide={isWide} railEl={railEl} />}
-          {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} />}
+          {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} />}
           {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} />}
         </main>
 
