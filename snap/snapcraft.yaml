@@ -1,10 +1,10 @@
 name: wr-cw-trainer
-title: Wisco Radio CW Trainer
+title: CW Trainer
 base: core22
 version: "1.0.1"
 summary: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
 description: |
-  WISCO RADIO CW Trainer — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.
+  CW Trainer by Wisco Radio Labs — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.
 
   • Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.
 
@@ -18,7 +18,7 @@ description: |
 
   • Reference guides on CW lingo, on-air procedure, and the history of the code.
 
-  Made in the Driftless by Wisco Radio (K9MTE). GPL-3.0 · open source · fully offline.
+  Made in the Driftless by Wisco Radio Labs (K9MTE). GPL-3.0 · open source · fully offline.
 
 license: GPL-3.0-or-later
 grade: stable

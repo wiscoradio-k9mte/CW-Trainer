@@ -775,12 +775,12 @@ function useCountdown() {
 // Structural values (padding, gap, radius, maxWidth) stay in px — they are
 // layout boundaries, not text, and must not grow with font scaling.
 const S = {
-  panel: { background: "#1E2228", border: "1px solid #2E343C", borderRadius: 10, padding: 16, marginBottom: 14 },
+  panel: { background: "#191C21", border: "1px solid #2E343C", borderRadius: 10, padding: 16, marginBottom: 14 },
   label: { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" },
   btn: { background: "#2A313A", border: "1px solid #3A434E", color: "#E8E2D6", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1 },
   btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
-  display: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "14px 16px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.25rem", letterSpacing: 3, minHeight: 56, wordBreak: "break-all", boxShadow: "inset 0 2px 12px rgba(0,0,0,0.6)" },
-  input: { background: "#0E1114", border: "1px solid #3A434E", borderRadius: 8, padding: "12px 14px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem", letterSpacing: 2, width: "100%", boxSizing: "border-box", textTransform: "uppercase" },
+  display: { background: "#080A0D", border: "1px solid #3A434E", borderRadius: 8, padding: "14px 16px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.25rem", letterSpacing: 3, minHeight: 56, wordBreak: "break-all", boxShadow: "inset 0 2px 12px rgba(0,0,0,0.6)" },
+  input: { background: "#080A0D", border: "1px solid #3A434E", borderRadius: 8, padding: "12px 14px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem", letterSpacing: 2, width: "100%", boxSizing: "border-box", textTransform: "uppercase" },
   // sr-only: visually hidden but reachable by screen readers (clip technique, NOT
   // display:none or aria-hidden — those remove the node from the accessibility tree).
   // Used for always-mounted live regions: the region exists empty when idle and its
@@ -1046,7 +1046,7 @@ function CopyTrainer({ player, settings }) {
           <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
             This is where the receiving ear gets built. Start at the top of the ladder — a single character — and climb as each rung gets comfortable: pairs, short groups, real words, callsigns, full phrases. Characters always play at full speed; the Farnsworth spacing gives you thinking room between them. Most ops can send faster than they can copy. This tab closes that gap.
           </p>
-          <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+          <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
             <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>How to practice</div>
             <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
               The goal is instant character recognition — hearing each letter as a single sound and knowing it on the spot, without counting dits and dahs or pausing to decode. To build that reflex, keep a pencil and paper handy: listen to the full transmission, write each character by hand the instant you recognize it, then type your answer once playback ends. Writing as you hear trains the immediate sound-to-letter response that fluent copy depends on, and it keeps you from splitting your focus between listening and typing. It's also how copy is done on the air.
@@ -1267,7 +1267,7 @@ function KeyTrainer({ player, settings, setSettings }) {
               <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
                 Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
               </p>
-              <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+              <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
                 <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
                 <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
                   Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
@@ -1378,7 +1378,7 @@ function KeyTrainer({ player, settings, setSettings }) {
             {analysis && analysis.elements > 0 && (
               <div
                 aria-hidden="true"
-                style={{ marginTop: 14, background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: "12px 14px" }}
+                style={{ marginTop: 14, background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "12px 14px" }}
               >
                 {/* aria-hidden: announcement comes from the always-mounted scoreLive region
                     above. The scoreLive text includes the fist summary in plain English so
@@ -1923,7 +1923,7 @@ function QsoSim({ player, settings, setSettings }) {
             <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
           </div>
 
-          <div style={{ background: "#181C21", border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+          <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
             <div style={{ ...S.label, marginBottom: 6 }}>
               Break in with your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
             </div>
@@ -2425,7 +2425,7 @@ function LearnTab({ player, settings }) {
             {newChars.map((ch) => (
               <button key={ch} onClick={() => playChar(ch)}
                 style={{
-                  flex: 1, background: "#0E1114", border: "1px solid #F2A93B", borderRadius: 10,
+                  flex: 1, background: "#080A0D", border: "1px solid #F2A93B", borderRadius: 10,
                   padding: "18px 0", cursor: "pointer", textAlign: "center",
                 }}>
                 <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 40, color: "#FFD89B", lineHeight: 1 }}>{ch}</div>
@@ -2631,7 +2631,7 @@ function Splash({ onSkip }) {
       onClick={onSkip}
       style={{
         position: "fixed", inset: 0, zIndex: 50, cursor: "pointer",
-        background: "radial-gradient(ellipse at 50% 40%, #1A1D22, #0E1013)",
+        background: "radial-gradient(ellipse at 50% 40%, #14171C, #080A0D)",
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       }}
     >
@@ -2641,7 +2641,7 @@ function Splash({ onSkip }) {
           ·−− ·−·
         </div>
         <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 32, letterSpacing: 9, fontWeight: 700, marginTop: 12, textShadow: "0 0 24px rgba(242,169,59,0.35)" }}>
-          WISCO RADIO
+          WISCO RADIO LABS
         </div>
         <div style={{ fontFamily: "ui-monospace, monospace", color: "#C9CDD3", fontSize: 13, letterSpacing: 8, marginTop: 10 }}>
           CW TRAINER
@@ -2720,8 +2720,8 @@ export default function CWTrainer() {
 
   // Render the splash alone and on top — returned before the app mounts, so no
   // app UI can flash underneath it on launch. Tapping unlocks audio and sends
-  // the Wisco Radio "WR" signature in Morse; the tap is the gesture that lets
-  // the tone play (audio can't autoplay before a user interaction).
+  // the "WR" (Wisco Radio) signature in Morse; the tap is the gesture that
+  // lets the tone play (audio can't autoplay before a user interaction).
   if (splash) {
     return (
       <Splash
@@ -2735,12 +2735,12 @@ export default function CWTrainer() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#14161A", padding: "16px 12px 60px", color: "#E8E2D6" }}>
+    <div style={{ minHeight: "100vh", background: "#0D0F13", padding: "16px 12px 60px", color: "#E8E2D6" }}>
       <style>{`@keyframes blink { 50% { opacity: 0; } } @keyframes splashIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } } * { -webkit-tap-highlight-color: transparent; } button { outline: none; } button:focus { outline: none; } button:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; } input[type="text"]:focus, input:not([type]):focus { outline: 1px solid #F2A93B; } input[type="range"]:focus { outline: none; } button:active { transform: translateY(1px); } button:disabled { opacity: 0.4; cursor: default; }`}</style>
       <div style={{ maxWidth: 560, margin: "0 auto" }}>
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div>
-            <div style={{ ...S.label, color: "#8A6A33", letterSpacing: 3 }}>WISCO RADIO</div>
+            <div style={{ ...S.label, color: "#8A6A33", letterSpacing: 3 }}>WISCO RADIO LABS</div>
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, letterSpacing: 4, color: "#F2A93B", fontWeight: 700 }}>
               CW TRAINER
             </div>
@@ -2764,7 +2764,7 @@ export default function CWTrainer() {
             across launches. Changing the call in Settings collapses it via the
             derived condition without requiring explicit dismissal. */}
         {settings.myCall === "W1AW" && !nudgeDismissed && (
-          <div role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#1E2228", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
+          <div role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#191C21", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
             <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", lineHeight: 1.6, flex: 1 }}>
               <strong style={{ color: "#C9CDD3" }}>W1AW is an example callsign</strong> (the ARRL's station in Newington, CT). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
             </span>
@@ -2793,7 +2793,7 @@ export default function CWTrainer() {
 
         <footer style={{ textAlign: "center", marginTop: 24 }}>
           <div style={{ fontFamily: "ui-monospace, monospace", color: "#5A626C", fontSize: 11, letterSpacing: 3 }}>
-            ·−− ·−·&nbsp;&nbsp;WISCO RADIO
+            ·−− ·−·&nbsp;&nbsp;WISCO RADIO LABS
           </div>
           <div style={{ fontFamily: "system-ui, sans-serif", color: "#3A434E", fontSize: 10, letterSpacing: 1, marginTop: 4 }}>
             made in the Driftless

@@ -1,6 +1,6 @@
 appId: io.github.wiscoradio_k9mte.CWTrainer
-productName: Wisco Radio CW Trainer
-copyright: Copyright © 2026 Travis Engh (K9MTE)
+productName: CW Trainer
+copyright: Copyright © 2026 Wisco Radio Labs (K9MTE)
 
 directories:
   output: release
@@ -17,13 +17,13 @@ files:
 linux:
   category: Education
   # No-space slug for the unpacked binary, so the binary, snap name, and launch
-  # command all read "wr-cw-trainer" (productName "Wisco Radio CW Trainer" would
-  # otherwise put spaces in the executable path). "wr-" = Wisco Radio.
+  # command all read "wr-cw-trainer" (productName "CW Trainer" would otherwise
+  # put spaces in the executable path). "wr-" = Wisco Radio Labs.
   executableName: wr-cw-trainer
   # Keep synopsis under ~78 chars — the Snap store enforces a short summary.
   synopsis: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
   description: |
-    WISCO RADIO CW Trainer — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.
+    CW Trainer by Wisco Radio Labs — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.
 
     • Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.
     • A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.
@@ -32,10 +32,10 @@ linux:
     • Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.
     • Reference guides on CW lingo, on-air procedure, and the history of the code.
 
-    Made in the Driftless by Wisco Radio (K9MTE). GPL-3.0 · open source · fully offline.
+    Made in the Driftless by Wisco Radio Labs (K9MTE). GPL-3.0 · open source · fully offline.
   desktop:
     entry:
-      Name: Wisco Radio CW Trainer
+      Name: CW Trainer
       GenericName: Morse Code Trainer
       Comment: Learn Morse code the Koch way
       Categories: Education;HamRadio;

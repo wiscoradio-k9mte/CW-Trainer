@@ -1,10 +1,11 @@
 <p align="center">
-  <img src="build/screenshots/WiscoRadio-Banner.png" alt="WISCO RADIO CW Trainer" width="100%">
+  <img src="build/screenshots/WiscoRadio-Banner.png" alt="CW Trainer by Wisco Radio Labs" width="100%">
 </p>
 
-<h1 align="center">WISCO RADIO — CW Trainer</h1>
+<h1 align="center">CW Trainer</h1>
 
 <p align="center">
+  <em>by Wisco Radio Labs</em><br><br>
   Learn Morse code the way hams actually use it — from your first two characters to a full on-air contact.<br>
   Koch-method lessons · copy &amp; sending practice · a POTA / SOTA / IOTA / ragchew QSO simulator. <b>Fully offline.</b>
 </p>
@@ -121,7 +122,7 @@ trainers, settings, and the reference guides). The **pure logic** — Morse tabl
 copy grading, the QSO/drill generators, and the Koch gate — is factored into `src/cw-core.js` and
 covered by a unit-test suite. Vite bundles it; Electron wraps it; snapcraft packages it.
 
-- **App ID:** `io.github.wiscoradio_k9mte.CWTrainer` · **License:** GPL-3.0-or-later · **Author:** Travis Engh (K9MTE)
+- **App ID:** `io.github.wiscoradio_k9mte.CWTrainer` · **License:** GPL-3.0-or-later · **Author:** Wisco Radio Labs (K9MTE)
 
 ### Develop & run
 
@@ -178,4 +179,4 @@ snapcraft login && snapcraft upload --release=stable release/wr-cw-trainer_*.sna
 
 ## License
 
-GPL-3.0-or-later © 2026 Travis Engh (K9MTE). See [LICENSE](LICENSE) for the full text.
+GPL-3.0-or-later © 2026 Wisco Radio Labs (K9MTE). See [LICENSE](LICENSE) for the full text.

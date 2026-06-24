@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Wisco Radio CW Trainer
+Name=CW Trainer
 GenericName=Morse Code Trainer
 Comment=Learn Morse code the Koch way
 Exec=wr-cw-trainer

@@ -2,18 +2,18 @@
 <component type="desktop-application">
   <id>io.github.wiscoradio_k9mte.CWTrainer</id>
 
-  <name>Wisco Radio CW Trainer</name>
+  <name>CW Trainer</name>
   <summary>Learn Morse code (CW) the Koch way, with copy practice and a QSO sim</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
   <developer id="io.github.wiscoradio_k9mte">
-    <name>Wisco Radio (K9MTE)</name>
+    <name>Wisco Radio Labs (K9MTE)</name>
   </developer>
 
   <description>
-    <p>WISCO RADIO CW Trainer — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.</p>
+    <p>CW Trainer by Wisco Radio Labs — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.</p>
     <ul>
       <li>Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.</li>
       <li>A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.</li>
@@ -22,7 +22,7 @@
       <li>Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.</li>
       <li>Reference guides on CW lingo, on-air procedure, and the history of the code.</li>
     </ul>
-    <p>Made in the Driftless by Wisco Radio (K9MTE). GPL-3.0 · open source · fully offline.</p>
+    <p>Made in the Driftless by Wisco Radio Labs (K9MTE). GPL-3.0 · open source · fully offline.</p>
   </description>
 
   <launchable type="desktop-id">io.github.wiscoradio_k9mte.CWTrainer.desktop</launchable>

@@ -2,14 +2,14 @@
 <component type="desktop-application">
   <id>io.github.wiscoradio_k9mte.CWTrainer</id>
 
-  <name>Wisco Radio CW Trainer</name>
+  <name>CW Trainer</name>
   <summary>Learn Morse code with the Koch method and a QSO simulator</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
   <developer id="io.github.wiscoradio_k9mte">
-    <name>Wisco Radio (K9MTE)</name>
+    <name>Wisco Radio Labs (K9MTE)</name>
   </developer>
 
   <description>
