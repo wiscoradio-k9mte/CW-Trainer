@@ -1,0 +1,170 @@
+// @vitest-environment jsdom
+//
+// RELOCATION net for COPY Phase 2 (menus → options rail).
+//
+// The baseline copy-learn.dom.test.jsx asserts the COPY controls EXIST by
+// role/text — but that passes whether they render inline or in the rail. This
+// file asserts WHERE they render, which is the actual behavior Phase 2 changed:
+//
+//   WIDE  : the level ladder ("What to copy — climb as you improve" + the six
+//           rungs) and the Conditions (Easy / Normal / Real life) selector live
+//           INSIDE the options rail (<aside aria-label="Options"> →
+//           role=complementary), reached via createPortal into railEl; the
+//           practice surface (▶ NEW / answer input / CHECK / CharDiff / session
+//           score) stays in <main>.
+//   NARROW: the same options render inline (no rail mounted at all).
+//
+// Mutation-meaningful: scoping the wide assertion to within(rail) means it FAILS
+// if the portal stops targeting the rail (options render inline in main, or
+// railEl is dropped). The narrow assertion fails if the rail is mounted or the
+// options vanish from the narrow branch. Together they pin the portal-to-rail
+// wiring — not just "the control is somewhere on the page." Mirrors the QSO
+// reference net (qso-relocation.dom.test.jsx).
+
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { renderApp, gotoTab } from "./helpers.jsx";
+import CWTrainer from "../../wr-cw-trainer.jsx";
+
+describe("COPY relocation — WIDE: options live in the rail, practice in main", () => {
+  // setup.dom.js mocks matchMedia matches:true (wide), so renderApp gives the
+  // wide arrangement directly.
+  it("portals the level ladder + Conditions into the Options rail", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+
+    const rail = screen.getByRole("complementary", { name: "Options" });
+
+    // The COPY setup controls are reachable from WITHIN the rail — proving the
+    // portal targets railEl, not the main column. within() scoping is what makes
+    // this fail if the portal regressed to inline-in-main.
+    expect(within(rail).getByText("What to copy — climb as you improve")).toBeInTheDocument();
+    expect(within(rail).getByText("Conditions")).toBeInTheDocument();
+    // A representative rung and all three conditions live in the rail.
+    expect(within(rail).getByRole("button", { name: /1 character/ })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: /Callsigns/ })).toBeInTheDocument();
+    for (const label of ["EASY", "NORMAL", "REAL LIFE"]) {
+      expect(within(rail).getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+    }
+  });
+
+  it("keeps the COPY setup controls OUT of <main> on wide (they are in the rail)", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+
+    // The level-ladder heading and Conditions must NOT be found inside <main> —
+    // they were relocated to the rail. This is the direct mutation guard: if the
+    // portal failed and options fell back to inline-in-main, this fails.
+    const main = screen.getByRole("main");
+    expect(within(main).queryByText("What to copy — climb as you improve")).not.toBeInTheDocument();
+    expect(within(main).queryByText("Conditions")).not.toBeInTheDocument();
+    expect(within(main).queryByRole("button", { name: /1 character/ })).not.toBeInTheDocument();
+    expect(within(main).queryByRole("button", { name: /REAL LIFE/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the practice surface (CHECK + answer input) in <main>", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+
+    const main = screen.getByRole("main");
+    // The practice cluster stays in main in both layouts (design §5).
+    expect(within(main).getByRole("textbox", { name: "Your copy" })).toBeInTheDocument();
+    expect(within(main).getByRole("button", { name: "CHECK" })).toBeInTheDocument();
+    expect(within(main).getByRole("button", { name: /NEW/ })).toBeInTheDocument();
+    // And the practice surface is NOT in the rail.
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    expect(within(rail).queryByRole("button", { name: "CHECK" })).not.toBeInTheDocument();
+  });
+
+  it("keeps <main> before the Options rail in DOM/reading order", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+
+    const main = screen.getByRole("main");
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    // Practice (main) must precede options (rail) in document order so AT/keyboard
+    // reaches practice before setup (design §6). DOCUMENT_POSITION_FOLLOWING (4)
+    // means rail comes AFTER main.
+    expect(main.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the scoreLive region mounted in main on wide (ungated by isWide)", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+    const main = screen.getByRole("main");
+    // scoreLive is an sr-only role=status region at the CopyTrainer root, which
+    // renders in main. It must be present on wide (never layout-gated).
+    expect(within(main).getAllByRole("status").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("selecting a level from the rail control updates the pressed state", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    // Default source is "single" (1 character).
+    expect(within(rail).getByRole("button", { name: /1 character/ })).toHaveAttribute("aria-pressed", "true");
+    // Click a different rung from inside the rail — the handler closes over local
+    // state, so selection works even though the control is portaled.
+    const groups = within(rail).getByRole("button", { name: /Letter groups/ });
+    await user.click(groups);
+    expect(groups).toHaveAttribute("aria-pressed", "true");
+    expect(within(rail).getByRole("button", { name: /1 character/ })).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
+describe("COPY relocation — NARROW: options render inline, no rail", () => {
+  // Override matchMedia to narrow for this block only; the hook reads matchMedia
+  // once on first render, so the override must precede render() (local renderer).
+  let savedMatchMedia;
+  beforeEach(() => {
+    savedMatchMedia = window.matchMedia;
+    window.matchMedia = (query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent() {
+        return false;
+      },
+    });
+  });
+  afterEach(() => {
+    window.matchMedia = savedMatchMedia;
+  });
+
+  async function renderNarrow() {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    return { user };
+  }
+
+  it("renders the level ladder + Conditions inline with no Options rail", async () => {
+    const { user } = await renderNarrow();
+    await user.click(screen.getByRole("button", { name: "COPY" }));
+
+    // The rail must NOT be mounted on narrow.
+    expect(screen.queryByRole("complementary", { name: "Options" })).not.toBeInTheDocument();
+
+    // The same setup controls are present inline (in the single column / main).
+    expect(screen.getByText("What to copy — climb as you improve")).toBeInTheDocument();
+    expect(screen.getByText("Conditions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /1 character/ })).toBeInTheDocument();
+
+    // And they are inside <main> (inline path), confirming the narrow branch did
+    // not portal them away. This fails if optionsJSX is dropped from the narrow
+    // branch.
+    const main = screen.getByRole("main");
+    expect(within(main).getByText("What to copy — climb as you improve")).toBeInTheDocument();
+    expect(within(main).getByText("Conditions")).toBeInTheDocument();
+    // Practice surface is also inline in main on narrow.
+    expect(within(main).getByRole("textbox", { name: "Your copy" })).toBeInTheDocument();
+    expect(within(main).getByRole("button", { name: "CHECK" })).toBeInTheDocument();
+  });
+});

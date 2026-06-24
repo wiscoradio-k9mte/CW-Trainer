@@ -45,12 +45,12 @@ describe("COPY tab — setup and interaction", () => {
     const { user } = await renderApp();
     await gotoTab(user, "COPY");
 
-    // NOTE: the "Your copy — type what you hear" caption is a sibling <div>, not
-    // an associated <label>, so the input has no accessible name — see the report.
-    // We locate it by its placeholder ("...") instead, which is what's actually in
-    // the DOM today; the test still proves the input accepts and reflects typing.
+    // The answer input now carries aria-label="Your copy" (the a11y fix added in
+    // the COPY-into-rail phase), so we locate it by its accessible name via the
+    // textbox role — cleaner and stronger than the old placeholder lookup, and it
+    // doubles as the guard that the accessible name is present and correct.
     expect(screen.getByText("Your copy — type what you hear")).toBeInTheDocument();
-    const input = screen.getByPlaceholderText("...");
+    const input = screen.getByRole("textbox", { name: "Your copy" });
     await user.type(input, "abc");
     expect(input).toHaveValue("abc");
   });

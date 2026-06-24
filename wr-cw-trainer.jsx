@@ -953,7 +953,12 @@ const COPY_LEVELS = [
   ["phrases", "QSO phrases", "Full exchange fragments, the way they come over the air."],
 ];
 
-function CopyTrainer({ player, settings }) {
+// CopyTrainer — Phase 2 of the responsive-layout refactor.
+//   isWide  — from the shell's useIsWide(); determines which layout to use.
+//   railEl  — the DOM element of the <aside class="wr-rail">; null until the
+//             callback ref fires (one frame after first wide render), then a
+//             real DOM node. The portal is skipped when railEl is null.
+function CopyTrainer({ player, settings, isWide, railEl }) {
   const [source, setSource] = useState("single");
   const [target, setTarget] = useState("");
   const [attempt, setAttempt] = useState("");
@@ -1034,125 +1039,163 @@ function CopyTrainer({ player, settings }) {
 
   const avg = session.length ? Math.round(session.reduce((a, b) => a + b, 0) / session.length) : null;
 
+  // introJSX — orientation paragraph shown before the first target is set.
+  // Goes in main in both modes (per design §5: the intro wants the wide column,
+  // and it's transient — once a target is set it disappears).
+  const introJSX = !target && (
+    <>
+      <div style={{ ...S.label, marginBottom: 10 }}>Copy practice</div>
+      <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+        This is where the receiving ear gets built. Start at the top of the ladder — a single character — and climb as each rung gets comfortable: pairs, short groups, real words, callsigns, full phrases. Characters always play at full speed; the Farnsworth spacing gives you thinking room between them. Most ops can send faster than they can copy. This tab closes that gap.
+      </p>
+      <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+        <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>How to practice</div>
+        <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+          The goal is instant character recognition — hearing each letter as a single sound and knowing it on the spot, without counting dits and dahs or pausing to decode. To build that reflex, keep a pencil and paper handy: listen to the full transmission, write each character by hand the instant you recognize it, then type your answer once playback ends. Writing as you hear trains the immediate sound-to-letter response that fluent copy depends on, and it keeps you from splitting your focus between listening and typing. It's also how copy is done on the air.
+        </p>
+      </div>
+    </>
+  );
+
+  // optionsJSX — level ladder + Conditions selector + noise slider.
+  // On wide these portal into the shell's <aside class="wr-rail">.
+  // On narrow they render inline in the single column (today's layout).
+  // All handlers close over local state — no prop threading needed.
+  const optionsJSX = (
+    <>
+      <div style={{ ...S.label, marginBottom: 8 }}>What to copy — climb as you improve</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+        {COPY_LEVELS.map(([v, l, desc], i) => (
+          <button key={v} aria-pressed={source === v} onClick={() => setSource(v)}
+            style={{ ...S.btn, textAlign: "left", padding: "9px 12px", ...(source === v ? { borderColor: "#F2A93B" } : {}) }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: "#8A929C" }}>{i + 1}</span>
+              <span style={{ color: source === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 13 }}>{l}</span>
+            </div>
+            {source === v && (
+              <div style={{ fontSize: 11.5, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 4, letterSpacing: 0, lineHeight: 1.5 }}>{desc}</div>
+            )}
+          </button>
+        ))}
+      </div>
+      <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {[["easy", "EASY"], ["normal", "NORMAL"], ["real", "REAL LIFE"]].map(([v, l]) => (
+          <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
+            style={{ ...S.btn, flex: 1, padding: "8px 4px", fontSize: 11, ...(difficulty === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {difficulty === "easy" && (
+        <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
+          Text appears letter by letter as it plays — hear it and see it together.
+        </div>
+      )}
+      {difficulty === "real" && (
+        <div style={{ marginTop: 12 }}>
+          <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
+            onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
+          <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6 }}>
+            Noise plus QSB fading on every playback — copy through real band conditions.
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  // practiceJSX — the copy surface: playback controls, answer input, CHECK,
+  // CharDiff result, session average. Always in main in both modes.
+  const practiceJSX = (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <button style={S.btnAmber} onClick={() => startCountdown(() => { const t = newTarget(); playTarget(t); })}>▶ NEW</button>
+        <button style={S.btn} onClick={() => playTarget()} disabled={!target}>↻ REPLAY</button>
+        <button style={S.btn} onClick={() => playTarget(null, { eff: Math.max(4, settings.effWpm - 3) })} disabled={!target}>🐢 SLOWER</button>
+        <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+        <button style={S.btn} onClick={() => setRevealed(true)} disabled={!target}>👁 REVEAL</button>
+      </div>
+
+      {/* Countdown: shown in the Display area (same spot as live text) while
+          the 5-second pre-play beat runs. Suppresses the live-text display so
+          the number always occupies the same visual space. */}
+      {countdown !== null && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ ...S.label, marginBottom: 6 }}>Get ready</div>
+          <Display>
+            <span style={{ fontSize: "2.5rem", fontWeight: 700 }}>{countdown}</span>
+          </Display>
+        </div>
+      )}
+
+      {difficulty === "easy" && target && countdown === null && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
+          <Display cursor={player.playing}>{liveText}</Display>
+        </div>
+      )}
+
+      <div style={{ ...S.label, marginBottom: 6 }}>Your copy — type what you hear</div>
+      <input
+        aria-label="Your copy"
+        style={S.input}
+        value={attempt}
+        onChange={(e) => setAttempt(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") check(); }}
+        placeholder="..."
+        autoCapitalize="characters"
+        autoCorrect="off"
+        spellCheck={false}
+      />
+      <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginTop: 10 }}>
+        <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
+        {avg !== null && (
+          <span style={{ ...S.label, fontSize: 10 }}>
+            session: <span style={{ color: avg >= 90 ? "#8FCB9B" : "#F2A93B", fontFamily: "ui-monospace, monospace", fontSize: 13 }}>{avg}%</span> over {session.length}
+          </span>
+        )}
+      </div>
+
+      {revealed && target && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ ...S.label, marginBottom: 6 }}>Sent</div>
+          {result !== null ? <CharDiff target={target} attempt={attempt} /> : <Display>{target}</Display>}
+          {result !== null && <Score pct={result} />}
+        </div>
+      )}
+    </>
+  );
+
+  // ---- layout rendering ----
+  //
+  // Wide: intro (if before first target) in its own main-column panel; optionsJSX
+  //   portals into the shell's <aside class="wr-rail">; practiceJSX stays in main.
+  //   railEl may be null on the very first paint (before the callback ref fires) —
+  //   in that case the portal is skipped for one imperceptible frame (same behavior
+  //   as the QSO Phase 1 reference implementation).
+  //
+  // Narrow: all three sections render inline in a single column — exactly today's
+  //   appearance (intro panel if !target, setup panel, practice panel).
+  //
+  // The always-mounted scoreLive region is in the component root (never gated by
+  // isWide) so AT can see text changes regardless of layout width.
   return (
     <div>
       {/* Always-mounted sr-only live region for score announcements (design §0 / C1).
           Empty when idle; text set by check(). Being pre-mounted means the AT sees
-          the text change and speaks it — the mount-with-content pattern never fires. */}
+          the text change and speaks it — the mount-with-content pattern never fires.
+          Not gated by isWide — render in both layouts. */}
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{scoreLive}</div>
 
-      {!target && (
-        <div style={S.panel}>
-          <div style={{ ...S.label, marginBottom: 10 }}>Copy practice</div>
-          <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-            This is where the receiving ear gets built. Start at the top of the ladder — a single character — and climb as each rung gets comfortable: pairs, short groups, real words, callsigns, full phrases. Characters always play at full speed; the Farnsworth spacing gives you thinking room between them. Most ops can send faster than they can copy. This tab closes that gap.
-          </p>
-          <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
-            <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>How to practice</div>
-            <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              The goal is instant character recognition — hearing each letter as a single sound and knowing it on the spot, without counting dits and dahs or pausing to decode. To build that reflex, keep a pencil and paper handy: listen to the full transmission, write each character by hand the instant you recognize it, then type your answer once playback ends. Writing as you hear trains the immediate sound-to-letter response that fluent copy depends on, and it keeps you from splitting your focus between listening and typing. It's also how copy is done on the air.
-            </p>
-          </div>
-        </div>
-      )}
+      {/* Wide layout: intro in its own main-column panel; options portaled to rail. */}
+      {isWide && !target && <div style={S.panel}>{introJSX}</div>}
+      {isWide && railEl && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
+      {isWide && <div style={S.panel}>{practiceJSX}</div>}
 
-      <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 8 }}>What to copy — climb as you improve</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-          {COPY_LEVELS.map(([v, l, desc], i) => (
-            <button key={v} aria-pressed={source === v} onClick={() => setSource(v)}
-              style={{ ...S.btn, textAlign: "left", padding: "9px 12px", ...(source === v ? { borderColor: "#F2A93B" } : {}) }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: "#8A929C" }}>{i + 1}</span>
-                <span style={{ color: source === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 13 }}>{l}</span>
-              </div>
-              {source === v && (
-                <div style={{ fontSize: 11.5, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 4, letterSpacing: 0, lineHeight: 1.5 }}>{desc}</div>
-              )}
-            </button>
-          ))}
-        </div>
-        <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {[["easy", "EASY"], ["normal", "NORMAL"], ["real", "REAL LIFE"]].map(([v, l]) => (
-            <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
-              style={{ ...S.btn, flex: 1, padding: "8px 4px", fontSize: 11, ...(difficulty === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
-              {l}
-            </button>
-          ))}
-        </div>
-        {difficulty === "easy" && (
-          <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
-            Text appears letter by letter as it plays — hear it and see it together.
-          </div>
-        )}
-        {difficulty === "real" && (
-          <div style={{ marginTop: 12 }}>
-            <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
-              onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6 }}>
-              Noise plus QSB fading on every playback — copy through real band conditions.
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div style={S.panel}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          <button style={S.btnAmber} onClick={() => startCountdown(() => { const t = newTarget(); playTarget(t); })}>▶ NEW</button>
-          <button style={S.btn} onClick={() => playTarget()} disabled={!target}>↻ REPLAY</button>
-          <button style={S.btn} onClick={() => playTarget(null, { eff: Math.max(4, settings.effWpm - 3) })} disabled={!target}>🐢 SLOWER</button>
-          <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
-          <button style={S.btn} onClick={() => setRevealed(true)} disabled={!target}>👁 REVEAL</button>
-        </div>
-
-        {/* Countdown: shown in the Display area (same spot as live text) while
-            the 5-second pre-play beat runs. Suppresses the live-text display so
-            the number always occupies the same visual space. */}
-        {countdown !== null && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ ...S.label, marginBottom: 6 }}>Get ready</div>
-            <Display>
-              <span style={{ fontSize: "2.5rem", fontWeight: 700 }}>{countdown}</span>
-            </Display>
-          </div>
-        )}
-
-        {difficulty === "easy" && target && countdown === null && (
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
-            <Display cursor={player.playing}>{liveText}</Display>
-          </div>
-        )}
-
-        <div style={{ ...S.label, marginBottom: 6 }}>Your copy — type what you hear</div>
-        <input
-          style={S.input}
-          value={attempt}
-          onChange={(e) => setAttempt(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") check(); }}
-          placeholder="..."
-          autoCapitalize="characters"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginTop: 10 }}>
-          <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
-          {avg !== null && (
-            <span style={{ ...S.label, fontSize: 10 }}>
-              session: <span style={{ color: avg >= 90 ? "#8FCB9B" : "#F2A93B", fontFamily: "ui-monospace, monospace", fontSize: 13 }}>{avg}%</span> over {session.length}
-            </span>
-          )}
-        </div>
-
-        {revealed && target && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ ...S.label, marginBottom: 6 }}>Sent</div>
-            {result !== null ? <CharDiff target={target} attempt={attempt} /> : <Display>{target}</Display>}
-            {result !== null && <Score pct={result} />}
-          </div>
-        )}
-      </div>
+      {/* Narrow layout: three inline panels — today's single-column appearance. */}
+      {!isWide && !target && <div style={S.panel}>{introJSX}</div>}
+      {!isWide && <div style={S.panel}>{optionsJSX}</div>}
+      {!isWide && <div style={S.panel}>{practiceJSX}</div>}
     </div>
   );
 }
@@ -2995,7 +3038,7 @@ export default function CWTrainer() {
         */}
         <main className="wr-main">
           {tab === "learn" && <LearnTab player={player} settings={settings} />}
-          {tab === "copy" && <CopyTrainer player={player} settings={settings} />}
+          {tab === "copy" && <CopyTrainer player={player} settings={settings} isWide={isWide} railEl={railEl} />}
           {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} />}
           {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} />}
         </main>
@@ -3005,8 +3048,8 @@ export default function CWTrainer() {
             display:none would still mount it and add DOM noise).
             ref={setRailEl}: a callback ref, not useRef, because we need a state
             update (re-render) when the node first appears — that's what lets
-            QsoSim's portal attach on the same commit cycle. Other tabs get the
-            rail in later phases. */}
+            QsoSim and CopyTrainer portal their options into it. Later phases
+            will wire KEY and LEARN the same way. */}
         {isWide && <aside className="wr-rail" aria-label="Options" ref={setRailEl} />}
 
         {/* Footer spans all three columns on wide; naturally full-width on narrow */}
