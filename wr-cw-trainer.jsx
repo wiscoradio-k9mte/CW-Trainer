@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
@@ -1547,7 +1548,20 @@ const ROLE_DESCS = {
   },
 };
 
-function QsoSim({ player, settings, setSettings }) {
+// QsoSim — QSO simulator tab.
+//
+// Phase 1 rail split: on wide screens the setup controls (Activity / Role /
+// Conditions / noise / start button) render in the shell's options rail via a
+// React portal; the exchange flow + live regions render in the main column.
+// On narrow screens everything renders inline in the original order (no change
+// to the mobile experience).
+//
+// Props added for the split:
+//   isWide  — from the shell's useIsWide(); determines which layout to use
+//   railEl  — the DOM element of the <aside class="wr-rail">; null until the
+//             rail mounts. QsoSim portals the setup controls into it when wide.
+//             The portal is skipped when railEl is null (first paint or narrow).
+function QsoSim({ player, settings, setSettings, isWide, railEl }) {
   // Activity and role menus (Phase 2/3).
   // Defaults: ragchew + answering role so the first-run experience is the
   // same as the old random behavior (which also skewed toward answering).
@@ -1771,114 +1785,150 @@ function QsoSim({ player, settings, setSettings }) {
 
   const done = qso && step >= qso.steps.length;
 
+  // ---- JSX fragments for the two layout regions ----
+  // Keeping them as variables (not components) so they close over local state
+  // without any prop threading. Both branches share all the same callbacks.
+
+  // introJSX — collapsible orientation paragraph. Goes in main in both modes.
+  // On wide it gets its own panel; on narrow it's folded into the setup panel
+  // below (matching today's single-box appearance on mobile).
+  const introJSX = !qso && (
+    <>
+      {/* E5: collapsible intro — same pattern as KeyTrainer. Toggle persists via store. */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introQsoCollapsed ? 10 : 0 }}>
+        <div style={S.label}>Simulated contact</div>
+        <button
+          aria-label={introQsoCollapsed ? "Show intro" : "Hide intro"}
+          style={{ ...S.btn, fontSize: 11, padding: "4px 10px", color: "#8A929C" }}
+          onClick={() => {
+            const next = !introQsoCollapsed;
+            setIntroQsoCollapsed(next);
+            store.save("introQsoCollapsed", next);
+          }}
+        >{introQsoCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
+      </div>
+      {!introQsoCollapsed && (
+        <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", marginTop: 8, marginBottom: 0 }}>
+          Pick your activity and role, then work the full exchange — CQ, RST, name, QTH — through to the sign-off. On each over you can check your copy before continuing, or just answer the way you would on the air.
+        </p>
+      )}
+    </>
+  );
+
+  // optionsJSX — Activity / Role / Conditions selectors + noise slider + start
+  // button. On wide these go to the rail; on narrow they stay inline below the
+  // intro in a single combined panel (today's layout, no mobile regression).
+  const optionsJSX = !qso && (
+    <>
+      {/* Activity selector — D1: each button shows a description sub-line matching
+          the Conditions-button pattern ([value, label, desc] rendered left-aligned) */}
+      <div style={{ ...S.label, marginBottom: 8 }}>Activity</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+        {Object.entries(ACTIVITY_LABELS).map(([v, l]) => (
+          <button
+            key={v}
+            aria-pressed={activity === v}
+            onClick={() => {
+              setActivity(v);
+              // Reset role to the default answering role for this activity
+              setRole(ROLE_TERMS[v][1][0]);
+            }}
+            style={{
+              ...S.btn, textAlign: "left", padding: "10px 14px",
+              ...(activity === v ? { borderColor: "#F2A93B" } : {}),
+            }}
+          >
+            <span style={{ color: activity === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 12 }}>{l}</span>
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ACTIVITY_DESCS[v]}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Role selector — D1: same description pattern; labels are program-correct per activity */}
+      <div style={{ ...S.label, marginBottom: 8 }}>Role</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+        {ROLE_TERMS[activity].map(([v, l]) => (
+          <button
+            key={v}
+            aria-pressed={role === v}
+            onClick={() => setRole(v)}
+            style={{
+              ...S.btn, textAlign: "left", padding: "10px 14px",
+              ...(role === v ? { borderColor: "#F2A93B" } : {}),
+            }}
+          >
+            <span style={{ color: role === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 12 }}>{l}</span>
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ROLE_DESCS[activity][v]}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* Difficulty selector.
+          Internal values ("easy", "normal", "real") are unchanged — the QSB/noise
+          conditionals throughout this component test `difficulty === "real"`.
+          Only the display label for "real" is changed to "Real life". */}
+      <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+        {[
+          ["easy",   "EASY",      "Text appears letter by letter as it's sent — hear it and see it together."],
+          ["normal", "NORMAL",    "Clean signal, no help. Copy by ear, check yourself, then continue."],
+          ["real",   "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
+        ].map(([v, l, desc]) => (
+          <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
+            style={{ ...S.btn, textAlign: "left", padding: "10px 14px", ...(difficulty === v ? { borderColor: "#F2A93B" } : {}) }}>
+            <span style={{ color: difficulty === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700 }}>{l}</span>
+            <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{desc}</div>
+          </button>
+        ))}
+      </div>
+      {difficulty === "real" && (
+        <div style={{ marginBottom: 6 }}>
+          <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
+            onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
+          <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6, marginBottom: 12 }}>
+            Adjustable any time during the contact — find the edge of your comfort and sit just past it.
+          </div>
+        </div>
+      )}
+
+      {/* Start button — label adapts: activator starts by calling CQ */}
+      <button style={S.btnAmber} onClick={start}>
+        {role === "activator" || role === "call" ? "📻 CALL CQ" : "📻 LISTEN FOR CQ"}
+      </button>
+    </>
+  );
+
+  // ---- layout rendering ----
+  //
+  // Wide: optionsJSX portals into the shell's <aside class="wr-rail">.
+  //   railEl is the <aside> DOM node, set by a callback ref in CWTrainer.
+  //   It may be null on the very first paint (before the ref fires); in that
+  //   case the portal is skipped and optionsJSX falls back to inline for one
+  //   frame — imperceptible in practice and harmless.
+  //   The intro gets its own panel in main (per design §5).
+  //
+  // Narrow: the original combined panel (intro + options in one box) renders
+  //   inline above the exchange flow — no change to the mobile appearance.
+  //
+  // The always-mounted live regions render unconditionally in both layouts
+  // (never gated by isWide) so AT can see text changes regardless of width.
   return (
     <div>
       {/* Always-mounted sr-only live regions (design §0 / C1).
           These must NOT be inside conditional blocks — they need to be in the DOM
           continuously so that text changes (set on events) are announced by AT.
           - stepLive:   step transitions in the normal QSO loop (polite)
-          - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite) */}
-      <div role="status" aria-live="polite"   aria-atomic="true" style={S.srOnly}>{stepLive}</div>
-      <div role="status" aria-live="polite"   aria-atomic="true" style={S.srOnly}>{resultLive}</div>
+          - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite)
+          Not gated by isWide — render in both layouts. */}
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{stepLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{resultLive}</div>
 
-      {!qso && (
-        <div style={S.panel}>
-          {/* E5: collapsible intro — same pattern as KeyTrainer. Toggle persists via store. */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introQsoCollapsed ? 10 : 0 }}>
-            <div style={S.label}>Simulated contact</div>
-            <button
-              aria-label={introQsoCollapsed ? "Show intro" : "Hide intro"}
-              style={{ ...S.btn, fontSize: 11, padding: "4px 10px", color: "#8A929C" }}
-              onClick={() => {
-                const next = !introQsoCollapsed;
-                setIntroQsoCollapsed(next);
-                store.save("introQsoCollapsed", next);
-              }}
-            >{introQsoCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
-          </div>
-          {!introQsoCollapsed && (
-            <p style={{ color: "#C9CDD3", fontSize: 14, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", marginTop: 8, marginBottom: 0 }}>
-              Pick your activity and role, then work the full exchange — CQ, RST, name, QTH — through to the sign-off. On each over you can check your copy before continuing, or just answer the way you would on the air.
-            </p>
-          )}
+      {/* Wide layout: intro in its own main-column panel; options portaled to rail. */}
+      {isWide && !qso && <div style={S.panel}>{introJSX}</div>}
+      {isWide && railEl && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
 
-          {/* Activity selector — D1: each button shows a description sub-line matching
-              the Conditions-button pattern ([value, label, desc] rendered left-aligned) */}
-          <div style={{ ...S.label, marginBottom: 8 }}>Activity</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-            {Object.entries(ACTIVITY_LABELS).map(([v, l]) => (
-              <button
-                key={v}
-                aria-pressed={activity === v}
-                onClick={() => {
-                  setActivity(v);
-                  // Reset role to the default answering role for this activity
-                  setRole(ROLE_TERMS[v][1][0]);
-                }}
-                style={{
-                  ...S.btn, textAlign: "left", padding: "10px 14px",
-                  ...(activity === v ? { borderColor: "#F2A93B" } : {}),
-                }}
-              >
-                <span style={{ color: activity === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 12 }}>{l}</span>
-                <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ACTIVITY_DESCS[v]}</div>
-              </button>
-            ))}
-          </div>
-
-          {/* Role selector — D1: same description pattern; labels are program-correct per activity */}
-          <div style={{ ...S.label, marginBottom: 8 }}>Role</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-            {ROLE_TERMS[activity].map(([v, l]) => (
-              <button
-                key={v}
-                aria-pressed={role === v}
-                onClick={() => setRole(v)}
-                style={{
-                  ...S.btn, textAlign: "left", padding: "10px 14px",
-                  ...(role === v ? { borderColor: "#F2A93B" } : {}),
-                }}
-              >
-                <span style={{ color: role === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: 12 }}>{l}</span>
-                <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ROLE_DESCS[activity][v]}</div>
-              </button>
-            ))}
-          </div>
-
-          {/* Difficulty selector.
-              Internal values ("easy", "normal", "real") are unchanged — the QSB/noise
-              conditionals throughout this component test `difficulty === "real"`.
-              Only the display label for "real" is changed to "Real life". */}
-          <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-            {[
-              ["easy",   "EASY",      "Text appears letter by letter as it's sent — hear it and see it together."],
-              ["normal", "NORMAL",    "Clean signal, no help. Copy by ear, check yourself, then continue."],
-              ["real",   "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
-            ].map(([v, l, desc]) => (
-              <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
-                style={{ ...S.btn, textAlign: "left", padding: "10px 14px", ...(difficulty === v ? { borderColor: "#F2A93B" } : {}) }}>
-                <span style={{ color: difficulty === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700 }}>{l}</span>
-                <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{desc}</div>
-              </button>
-            ))}
-          </div>
-          {difficulty === "real" && (
-            <div style={{ marginBottom: 6 }}>
-              <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
-                onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
-              <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: -6, marginBottom: 12 }}>
-                Adjustable any time during the contact — find the edge of your comfort and sit just past it.
-              </div>
-            </div>
-          )}
-
-          {/* Start button — label adapts: activator starts by calling CQ */}
-          <button style={S.btnAmber} onClick={start}>
-            {role === "activator" || role === "call" ? "📻 CALL CQ" : "📻 LISTEN FOR CQ"}
-          </button>
-        </div>
-      )}
+      {/* Narrow layout: intro + options combined in a single panel (today's appearance). */}
+      {!isWide && !qso && <div style={S.panel}>{introJSX}{optionsJSX}</div>}
 
       {qso && !done && cur && cur.who === "dx" && (
         <div style={S.panel}>
@@ -2706,6 +2756,12 @@ const DEFAULT_SETTINGS = {
 export default function CWTrainer() {
   const isWide = useIsWide();
   const [tab, setTab] = useState("learn");
+  // railEl tracks the DOM node of the options <aside> so QsoSim can portal its
+  // setup controls into it. A callback ref (not useRef) is used here because we
+  // need a state update (re-render) when the node first appears — a plain useRef
+  // would give the node to QsoSim but not trigger the portal to attach. null on
+  // first paint (before the aside mounts); set on the commit that adds the aside.
+  const [railEl, setRailEl] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [splash, setSplash] = useState(true);
   // Generic placeholder identity — the user sets their own in Settings, and it
@@ -2941,16 +2997,17 @@ export default function CWTrainer() {
           {tab === "learn" && <LearnTab player={player} settings={settings} />}
           {tab === "copy" && <CopyTrainer player={player} settings={settings} />}
           {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} />}
-          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} />}
+          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} />}
         </main>
 
-        {/*
-          Right options rail — right grid column on wide, hidden on narrow.
-          Empty shell for Phase 1. Later phases (Phases 2–5) move each tab's
-          setup controls here. Not rendered at all on narrow (CSS display:none)
-          so it contributes no DOM noise on mobile.
-        */}
-        {isWide && <aside className="wr-rail" aria-label="Options" />}
+        {/* Options rail — right grid column on wide, not rendered on narrow.
+            The isWide guard keeps it out of the DOM entirely on mobile (CSS
+            display:none would still mount it and add DOM noise).
+            ref={setRailEl}: a callback ref, not useRef, because we need a state
+            update (re-render) when the node first appears — that's what lets
+            QsoSim's portal attach on the same commit cycle. Other tabs get the
+            rail in later phases. */}
+        {isWide && <aside className="wr-rail" aria-label="Options" ref={setRailEl} />}
 
         {/* Footer spans all three columns on wide; naturally full-width on narrow */}
         <footer className="wr-full" style={{ textAlign: "center", marginTop: 24 }}>
