@@ -264,10 +264,15 @@ export function drillQsoLine(settings) {
 // Reordered in v1.1 UAT pass (B1): previous order had Callsigns first, which was
 // the hardest category — wrong for a first-run learner.  Common words are the
 // gentlest start; callsigns are the hardest (variable length, no common patterns).
+// Item 8 (v2.0): Q-codes & abbrev moved before Prosigns — Q-codes appear far
+// more often on the air than prosigns, so they're the better step up from
+// Common words. Prosigns are less frequent and slightly harder to memorize.
+// catIdx is NOT persisted, so no state migration is needed (useState(0) resets
+// each mount). Tests that pin labels by index are updated in this commit.
 export const DRILL_CATEGORIES = [
   { id: "words",     label: "Common words",        gen: drillCommonWords },
-  { id: "prosigns",  label: "Prosigns",            gen: drillProsigns },
   { id: "qcodes",    label: "Q-codes & abbrev",    gen: drillQCodes },
+  { id: "prosigns",  label: "Prosigns",            gen: drillProsigns },
   { id: "numbers",   label: "Numbers (incl. cut)", gen: drillNumbers },
   { id: "rst",       label: "RST & exchanges",     gen: drillRstExchange },
   { id: "cq",        label: "Calling CQ",          gen: drillCallingCq },
@@ -891,4 +896,127 @@ export function isReadyToAdvance(history) {
   if (attempts < 20) return false;
   const accuracy = Math.round((history.filter(Boolean).length / attempts) * 100);
   return accuracy >= 90;
+}
+
+/* ================= CROSS-SESSION PROGRESS HISTORY (v2.0) ================= */
+//
+// Design: docs/design-v2-batch.md §1
+//
+// One versioned key `wrcw:progress` holds all categories in a single object.
+// That makes reads/writes atomic and leaves a clean seam for QSO history later.
+//
+// RETENTION: keep the last 50 records per category (generous, bounded).
+// 50 × 3 categories × ~200 bytes ≈ 30 KB — trivial for localStorage (5 MB+).
+//
+// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 1.
+// On mismatch migrateProgress() resets to empty — no corrupt blob can crash.
+//
+// QSO SEAM INVARIANT (load-bearing): migrateProgress must preserve unknown
+// keys (e.g. `qso`) it finds in a stored blob. A future build may have written
+// QSO records; an older build reading back must NOT strip them. Document and test.
+
+export const PROGRESS_RETENTION = 50;
+export const PROGRESS_SCHEMA_VERSION = 1;
+
+// Known categories in this schema version.
+const KNOWN_PROGRESS_CATEGORIES = ["learn", "key", "copy"];
+
+// emptyProgress() — canonical empty progress object for this schema version.
+export function emptyProgress() {
+  return {
+    schemaVersion: PROGRESS_SCHEMA_VERSION,
+    learn: [],
+    key:   [],
+    copy:  [],
+    // qso: []  <-- THE SEAM. Not written in v2.0. Key reserved, documented,
+    //            absent until QSO history ships. migrateProgress preserves it
+    //            if present in a blob written by a future build.
+  };
+}
+
+// appendProgress(progress, category, record) → new progress object (no mutation).
+//
+// Pushes record onto the named category array and slices to PROGRESS_RETENTION.
+// Returns a new object (not a mutation) so React state updates cleanly.
+// Throws on an unknown category so a typo fails loudly rather than silently
+// creating an orphan array.
+export function appendProgress(progress, category, record) {
+  if (!KNOWN_PROGRESS_CATEGORIES.includes(category)) {
+    throw new Error(`appendProgress: unknown category "${category}"`);
+  }
+  const existing = progress[category] || [];
+  const next = [...existing.slice(-(PROGRESS_RETENTION - 1)), record];
+  // Spread progress first so any future unknown keys (e.g. qso) are preserved
+  // exactly — same seam invariant as migrateProgress.
+  return { ...progress, [category]: next };
+}
+
+// migrateProgress(raw) → a valid progress object.
+//
+// raw is whatever store.load returned: null, an old shape, or garbage.
+// SEAM INVARIANT: unknown keys in raw (e.g. {qso:[...]}) are preserved
+// untouched so a future build's data survives an older build reading it.
+export function migrateProgress(raw) {
+  if (!raw || typeof raw !== "object") return emptyProgress();
+  if (raw.schemaVersion !== PROGRESS_SCHEMA_VERSION) {
+    // Schema changed in a breaking way — reset to empty.
+    // No partial migration: v1 has no prior shape to carry forward.
+    return emptyProgress();
+  }
+  // Known categories: fill any missing arrays with [].
+  const migrated = { ...raw };
+  for (const cat of KNOWN_PROGRESS_CATEGORIES) {
+    if (!Array.isArray(migrated[cat])) migrated[cat] = [];
+  }
+  return migrated;
+}
+
+// learnTrend(progress) → per-lesson rollup array for the PROGRESS view.
+// Returns [{lesson, lastPct, bestPct, sets, recent}] sorted by lesson number.
+// `recent` is the last N percentage values for a sparkline.
+const TREND_WINDOW = 10;
+export function learnTrend(progress) {
+  const records = progress.learn || [];
+  const byLesson = {};
+  for (const r of records) {
+    if (!byLesson[r.lesson]) byLesson[r.lesson] = [];
+    byLesson[r.lesson].push(r);
+  }
+  return Object.entries(byLesson)
+    .map(([lesson, recs]) => {
+      const pcts = recs.map((r) => r.pct);
+      return {
+        lesson: Number(lesson),
+        lastPct: pcts[pcts.length - 1],
+        bestPct: Math.max(...pcts),
+        sets: recs.length,
+        recent: pcts.slice(-TREND_WINDOW),
+      };
+    })
+    .sort((a, b) => a.lesson - b.lesson);
+}
+
+// keyTrend(progress) → last TREND_WINDOW KeyRecords for the PROGRESS view,
+// plus an estWpm series for the sparkline.
+export function keyTrend(progress) {
+  const records = (progress.key || []).slice(-TREND_WINDOW);
+  return {
+    records,
+    wpmSeries: records.map((r) => r.estWpm),
+  };
+}
+
+// copyTrend(progress) → last TREND_WINDOW CopyRecords grouped by source rung.
+export function copyTrend(progress) {
+  const records = (progress.copy || []).slice(-TREND_WINDOW);
+  const bySource = {};
+  for (const r of records) {
+    if (!bySource[r.source]) bySource[r.source] = [];
+    bySource[r.source].push(r);
+  }
+  return Object.entries(bySource).map(([source, recs]) => ({
+    source,
+    recent: recs.map((r) => r.pct),
+    lastPct: recs[recs.length - 1].pct,
+  }));
 }

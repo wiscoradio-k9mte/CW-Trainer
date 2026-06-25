@@ -219,12 +219,13 @@ describe("Fix 7 — ephemeral session summary on BACK from LEARN drill", () => {
     await user.click(screen.getByRole("button", { name: /START DRILL/ }));
     await user.click(screen.getByRole("button", { name: /← BACK|BACK/ }));
 
-    // Confirm no new key was introduced.
+    // Confirm no new ephemeral-session key was introduced.
     expect(window.localStorage.getItem("wrcw:sessionSummary")).toBeNull();
-    // Also confirm the only keys are the expected ones (kochLesson + settings).
+    // Only the sanctioned persistent keys should appear. "progress" was added in
+    // v2.0 (cross-session history) — it is a legitimate new key, not a leak.
     const keys = Object.keys(window.localStorage);
     for (const key of keys) {
-      expect(key).toMatch(/^wrcw:(kochLesson|settings|introKeyCollapsed|seenCallNudge)$/);
+      expect(key).toMatch(/^wrcw:(kochLesson|settings|introKeyCollapsed|seenCallNudge|progress)$/);
     }
   });
 });

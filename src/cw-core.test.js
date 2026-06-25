@@ -11,6 +11,9 @@ import {
   toCodes,
   averageScore,
   cqCall,
+  PROGRESS_RETENTION, PROGRESS_SCHEMA_VERSION,
+  emptyProgress, appendProgress, migrateProgress,
+  learnTrend, keyTrend, copyTrend,
 } from "./cw-core.js";
 
 // ---------------------------------------------------------------------------
@@ -612,10 +615,19 @@ describe("DRILL_CATEGORIES", () => {
     }
   });
 
-  // B1 (v1.1): ladder order reordered simplest→hardest.
-  // Pin the first and last ids so an inadvertent reorder is caught.
+  // Ladder order: simplest → hardest. Reordered in v2.0 (item 8): Q-codes now
+  // come before Prosigns — Q-codes appear far more frequently on the air.
+  // catIdx is not persisted, so no migration is needed.
   it("first category is 'words' (simplest start — common words)", () => {
     expect(DRILL_CATEGORIES[0].id).toBe("words");
+  });
+
+  it("second category is 'qcodes' (v2.0 reorder — Q-codes before prosigns)", () => {
+    expect(DRILL_CATEGORIES[1].id).toBe("qcodes");
+  });
+
+  it("third category is 'prosigns' (v2.0 reorder — after Q-codes)", () => {
+    expect(DRILL_CATEGORIES[2].id).toBe("prosigns");
   });
 
   it("last category is 'callsigns' (hardest — variable length, no patterns)", () => {
@@ -1630,5 +1642,175 @@ describe("analyzeFist() — bug mode semantics", () => {
     // Paddle suppresses weighting; bug does not.
     expect(paddle.weighting.ratio).toBeNull();
     expect(bug.weighting.ratio).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-session progress history (v2.0 §1)
+// ---------------------------------------------------------------------------
+describe("emptyProgress()", () => {
+  it("returns a fresh object with all three category arrays and correct schemaVersion", () => {
+    const p = emptyProgress();
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+    expect(Array.isArray(p.learn)).toBe(true);
+    expect(Array.isArray(p.key)).toBe(true);
+    expect(Array.isArray(p.copy)).toBe(true);
+    expect(p.learn.length).toBe(0);
+    expect(p.key.length).toBe(0);
+    expect(p.copy.length).toBe(0);
+  });
+});
+
+describe("appendProgress()", () => {
+  const baseRec = { t: Date.now(), lesson: 1, attempts: 10, correct: 9, pct: 90 };
+
+  it("caps at PROGRESS_RETENTION: push 60 records, only last 50 kept", () => {
+    let p = emptyProgress();
+    for (let i = 0; i < 60; i++) {
+      p = appendProgress(p, "learn", { ...baseRec, pct: i });
+    }
+    expect(p.learn.length).toBe(PROGRESS_RETENTION);
+    // Newest record (i=59) must be the last, oldest (i=0..9) dropped
+    expect(p.learn[p.learn.length - 1].pct).toBe(59);
+    expect(p.learn[0].pct).toBe(10); // first 10 dropped
+  });
+
+  it("does NOT mutate its input — returns a new object and the original is unchanged", () => {
+    const p = emptyProgress();
+    const original = p.learn;
+    const next = appendProgress(p, "learn", baseRec);
+    // original array unchanged
+    expect(p.learn).toBe(original);
+    expect(p.learn.length).toBe(0);
+    // returned object is different reference
+    expect(next).not.toBe(p);
+    expect(next.learn.length).toBe(1);
+  });
+
+  it("throws on an unknown category so typos fail loudly", () => {
+    const p = emptyProgress();
+    expect(() => appendProgress(p, "qso", baseRec)).toThrow(/unknown category/);
+    expect(() => appendProgress(p, "typo", baseRec)).toThrow(/unknown category/);
+  });
+
+  it("writes to the correct category array and leaves the others empty", () => {
+    const p = emptyProgress();
+    const next = appendProgress(p, "copy", { t: 1, source: "single", pct: 80 });
+    expect(next.copy.length).toBe(1);
+    expect(next.learn.length).toBe(0);
+    expect(next.key.length).toBe(0);
+  });
+});
+
+describe("migrateProgress()", () => {
+  it("null → emptyProgress() shape", () => {
+    const p = migrateProgress(null);
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+    expect(Array.isArray(p.learn)).toBe(true);
+    expect(p.learn.length).toBe(0);
+  });
+
+  it("undefined → emptyProgress() shape", () => {
+    const p = migrateProgress(undefined);
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  it("wrong schemaVersion → resets to empty (old data is gone)", () => {
+    const stale = {
+      schemaVersion: 99,
+      learn: [{ t: 1, lesson: 1, attempts: 10, correct: 9, pct: 90 }],
+      key:   [],
+      copy:  [],
+    };
+    const p = migrateProgress(stale);
+    // Must reset — not carry the stale data
+    expect(p.learn.length).toBe(0);
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  it("QSO seam: an unknown future key is preserved untouched (forward-compat)", () => {
+    // A future build wrote qso records; an older build should NOT strip them.
+    const futureBlob = {
+      schemaVersion: PROGRESS_SCHEMA_VERSION,
+      learn: [],
+      key:   [],
+      copy:  [],
+      qso:   [{ t: 1, activity: "pota", pct: 95 }],
+    };
+    const p = migrateProgress(futureBlob);
+    // The qso array survives the migration round-trip untouched.
+    expect(Array.isArray(p.qso)).toBe(true);
+    expect(p.qso.length).toBe(1);
+    expect(p.qso[0].activity).toBe("pota");
+  });
+
+  it("fills missing category arrays when blob has correct version but is incomplete", () => {
+    const partial = { schemaVersion: PROGRESS_SCHEMA_VERSION, learn: [{ t: 1, lesson: 1, attempts: 5, correct: 4, pct: 80 }] };
+    const p = migrateProgress(partial);
+    expect(Array.isArray(p.key)).toBe(true);
+    expect(p.key.length).toBe(0);
+    expect(Array.isArray(p.copy)).toBe(true);
+    expect(p.copy.length).toBe(0);
+    // Existing data preserved
+    expect(p.learn.length).toBe(1);
+  });
+});
+
+describe("learnTrend()", () => {
+  it("two sets on lesson 3 → one trend row with correct lastPct/bestPct/sets", () => {
+    const p = {
+      ...emptyProgress(),
+      learn: [
+        { t: 1000, lesson: 3, attempts: 10, correct: 7, pct: 70 },
+        { t: 2000, lesson: 3, attempts: 10, correct: 9, pct: 90 },
+      ],
+    };
+    const trend = learnTrend(p);
+    expect(trend.length).toBe(1);
+    expect(trend[0].lesson).toBe(3);
+    expect(trend[0].lastPct).toBe(90);
+    expect(trend[0].bestPct).toBe(90);
+    expect(trend[0].sets).toBe(2);
+    expect(trend[0].recent).toEqual([70, 90]);
+  });
+
+  it("empty learn array → empty trend", () => {
+    expect(learnTrend(emptyProgress())).toEqual([]);
+  });
+});
+
+describe("keyTrend()", () => {
+  it("returns last TREND_WINDOW records and an estWpm series", () => {
+    let p = emptyProgress();
+    for (let i = 0; i < 15; i++) {
+      p = appendProgress(p, "key", { t: i, category: "words", keyType: "straight",
+        copyPct: 80, estWpm: 18 + i, wpmVerdict: "on target",
+        elementVerdict: "good", letterVerdict: "good", wordVerdict: "good",
+        weightingVerdict: "good", weightingRatio: 3.0 });
+    }
+    const trend = keyTrend(p);
+    // Only last 10 returned
+    expect(trend.records.length).toBe(10);
+    expect(trend.wpmSeries.length).toBe(10);
+    // Newest record has highest estWpm
+    expect(trend.wpmSeries[trend.wpmSeries.length - 1]).toBe(32); // 18+14=32
+  });
+});
+
+describe("copyTrend()", () => {
+  it("groups by source rung and extracts pct series", () => {
+    const p = {
+      ...emptyProgress(),
+      copy: [
+        { t: 1, source: "single", pct: 80 },
+        { t: 2, source: "pairs",  pct: 70 },
+        { t: 3, source: "single", pct: 90 },
+      ],
+    };
+    const trend = copyTrend(p);
+    const singleGroup = trend.find((g) => g.source === "single");
+    expect(singleGroup).toBeDefined();
+    expect(singleGroup.recent).toEqual([80, 90]);
+    expect(singleGroup.lastPct).toBe(90);
   });
 });

@@ -96,6 +96,27 @@ describe("QSO relocation — WIDE: options live in the rail, exchange in main", 
     // The two always-mounted live regions remain in the DOM in the live flow.
     expect(screen.getAllByRole("status").length).toBeGreaterThanOrEqual(2);
   });
+
+  // v2.0 §3: when a contact is active, the rail shows context (In contact / DX /
+  // Difficulty / Step) instead of the setup options. The blank-rail bug fix.
+  it("shows context panel in the rail once a QSO starts (v2.0 §3)", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    await user.click(within(rail).getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+
+    // Rail must now show context headings — NOT the setup options
+    expect(within(rail).getByText("In contact")).toBeInTheDocument();
+    expect(within(rail).getByText("DX")).toBeInTheDocument();
+    expect(within(rail).getByText("Difficulty")).toBeInTheDocument();
+    expect(within(rail).getByText("Step")).toBeInTheDocument();
+
+    // Setup controls must be gone from the rail
+    expect(within(rail).queryByText("Activity")).not.toBeInTheDocument();
+    expect(within(rail).queryByText("Role")).not.toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ })).not.toBeInTheDocument();
+  });
 });
 
 describe("QSO relocation — NARROW: options render inline, no rail", () => {

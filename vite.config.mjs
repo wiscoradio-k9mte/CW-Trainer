@@ -1,5 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+// Read the version once at build time. Exposed as __APP_VERSION__ so the
+// component can display it without a network fetch or a hardcoded string.
+// The 2.0.0 bump is Travis's call — the define just tracks whatever package.json
+// has, so the display stays accurate on every future bump too.
+const pkg = require("./package.json");
 
 // base: "./" is essential. The packaged Electron app loads the production
 // build off the filesystem (file://), so every asset URL must be RELATIVE.
@@ -11,6 +19,11 @@ export default defineConfig({
   plugins: [react()],
   server: { port: 5173, strictPort: true },
   build: { outDir: "dist", emptyOutDir: true },
+  // Inject build-time constants. __APP_VERSION__ is a string literal baked in
+  // at bundle time — no runtime lookup needed.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   // vitest reads this block automatically — no separate vitest.config needed.
   test: {
     // Default stays "node": the cw-core suite (src/cw-core.test.js) is pure logic
