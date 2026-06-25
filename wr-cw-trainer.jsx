@@ -59,12 +59,16 @@ const LINGO = [
   },
   {
     cat: "Prosigns",
-    blurb: "Procedure signals that steer the contact. On the air the two letters run together as one sound.",
+    // BT, AR, SK, KN are fused prosigns — their two letters key run-together as
+    // one continuous sound, no inter-character gap.  BK is NOT one of these:
+    // on the air BK is sent as two separate letters (B then K) with a normal
+    // inter-character gap.  The items below mark that distinction explicitly.
+    blurb: "Procedure signals that steer the contact. BT, AR, SK, and KN are sent as a single run-together sound (no gap between the letters). BK is two normal letters with a standard gap.",
     items: [
-      ["=", "BT — pause / new thought. Hear it between RST, name, and QTH in an exchange"],
-      ["+", "AR — end of message, used when first answering a station"],
-      ["SK", "End of contact — the QSO is over, usually followed by dit dit"],
-      ["BK", "Break — quick turnover without callsigns, like 'over' on voice"],
+      ["=", "BT — pause / new thought. Sent as one run-together sound. Hear it between RST, name, and QTH in an exchange"],
+      ["+", "AR — end of message, used when first answering a station. Sent run-together."],
+      ["SK", "End of contact — the QSO is over, usually followed by dit dit. Sent run-together."],
+      ["BK", "Break — quick turnover without callsigns, like 'over' on voice. Two separate letters (B then K), standard spacing — NOT a fused prosign."],
       ["AS", "Wait / stand by"],
       ["HH", "Error / start over — a string of eight dits. Erases the botched word; the corrected version follows. Send eight dits here and the key screen clears."],
     ],
@@ -2108,6 +2112,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
               <div style={{ ...S.label, marginBottom: 6 }}>Your copy (optional — check it or just answer)</div>
               <input style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") checkCopy(); }}
+                aria-label="Your copy of what you heard"
                 placeholder="type what you hear..." autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                 <button style={S.btn} onClick={checkCopy} disabled={!copyAttempt.trim()}>CHECK COPY</button>
@@ -2435,6 +2440,10 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
   const [drilling, setDrilling] = useState(false);
   const [history, setHistory] = useState([]); // last 25 results
   const [flash, setFlash] = useState(null); // { ok, char }
+  // sessionSummary: ephemeral one-liner shown when the user backs out of a drill.
+  // Set on BACK; cleared when a new drill starts.  Never persisted — intentionally
+  // ephemeral (see brief: persistent cross-session history is a deferred product decision).
+  const [sessionSummary, setSessionSummary] = useState(null);
   // On wide the chart lives in the rail as a reference panel — default it expanded
   // there. On narrow it remains a collapsible panel in main — default collapsed.
   const [showRef, setShowRef] = useState(() => isWide);
@@ -2474,6 +2483,7 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
   const startDrill = () => {
     setHistory([]);
     setFlash(null);
+    setSessionSummary(null); // clear any previous session summary
     lockRef.current = false;
     setDrilling(true);
     nextDrill();
@@ -2545,6 +2555,15 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
   // The drill flow (accuracy display, answer grid) stays in mainJSX always.
   const optionsJSX = !drilling && section === "chars" ? (
     <>
+      {/* Session summary — shown once after the user backs out of an active drill.
+          Ephemeral: stored in component state only, never written to localStorage.
+          Cleared when the next drill starts so it never shows a stale result. */}
+      {sessionSummary && (
+        <div role="status" style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontFamily: "system-ui, sans-serif", fontSize: 13, color: "#C9CDD3", lineHeight: 1.5 }}>
+          {sessionSummary}
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
         <span style={S.label}>Lesson {lesson} of {maxLesson}</span>
         <span style={{ display: "flex", gap: 6 }}>
@@ -2603,10 +2622,17 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
         {pool.join(" ")}
       </div>
 
+      {/* Onboarding nudge: prompt first-timers to tap each character card above
+          before starting the drill so they hear the sound before they're tested
+          on it.  Short, gray, below the pool list, above the button. */}
+      <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: "0 0 10px", lineHeight: 1.5 }}>
+        New here? Tap each character card above to hear it before you start the drill.
+      </p>
+
       <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0" }} onClick={startDrill}>▶ START DRILL</button>
 
       <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
-        This is the Koch method: every character plays at full speed ({settings.charWpm} wpm — words per minute, the standard measure of how fast code is sent) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
+        This app uses the Koch method — a training approach where every character plays at full speed ({settings.charWpm} wpm — words per minute, the standard measure of how fast code is sent) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
         {settings.effWpm < settings.charWpm && (
           <> The gaps between characters are stretched (Farnsworth spacing — characters stay fast, pauses give you time to think). Raise effective speed in Settings to close the gap as you improve.</>
         )}
@@ -2707,7 +2733,19 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
 
             <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
               <button style={S.btn} onClick={() => currentRef.current && playChar(currentRef.current)}>↻ REPLAY</button>
-              <button style={S.btn} onClick={() => { setDrilling(false); player.stop(); clearTimeout(timerRef.current); }}>← BACK</button>
+              <button style={S.btn} onClick={() => {
+                // Capture the session result before clearing state so the summary
+                // can be shown on the setup screen.  Only set it when there were
+                // attempts — no-op BACK with zero answers produces no summary.
+                if (history.length > 0) {
+                  const correct = history.filter(Boolean).length;
+                  const pct = Math.round((correct / history.length) * 100);
+                  setSessionSummary(`You answered ${correct} of ${history.length} correctly — ${pct}% this set.`);
+                }
+                setDrilling(false);
+                player.stop();
+                clearTimeout(timerRef.current);
+              }}>← BACK</button>
             </div>
 
             <div style={{ fontSize: 14, color: "#C9CDD3", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>Tap or type the letter you heard</div>
@@ -2766,17 +2804,40 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
 }
 
 /* ================= SETTINGS ================= */
-function Settings({ settings, setSettings }) {
+// onClose: optional callback — when provided, a "Done" button is shown that
+// invokes it.  Passed on wide layout (where Settings lives in the rail and
+// there's no obvious way to close it); omitted on narrow (inline panel, just
+// tap the gear again — that's still discoverable because the gear is right there).
+function Settings({ settings, setSettings, onClose }) {
   const set = (k) => (v) => setSettings((s) => ({ ...s, [k]: v, ...(k === "charWpm" && s.effWpm > v ? { effWpm: v } : {}) }));
   return (
     <div style={S.panel}>
+      {/* Close control — only shown on wide where Settings is in the right rail.
+          On narrow the gear button above the settings panel is the toggle. */}
+      {onClose && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          <button
+            aria-label="Close settings"
+            onClick={onClose}
+            style={{ ...S.btn, padding: "5px 14px", fontSize: 12, color: "#F2A93B", borderColor: "#F2A93B" }}>
+            ✕ Done
+          </button>
+        </div>
+      )}
+
+      {/* Speed sliders are divided into two groups:
+          LISTENING speeds affect how the app plays Morse for you to copy.
+          SENDING speed is your target when keying — only relevant in the KEY tab. */}
+      <div style={{ ...S.label, color: "#8A929C", fontSize: 10, letterSpacing: 2, marginBottom: 6 }}>LISTENING SPEED</div>
       <Slider label="Character speed" value={settings.charWpm} min={10} max={35} step={1} suffix=" wpm" onChange={set("charWpm")} />
       <Slider label="Effective speed (Farnsworth)" value={settings.effWpm} min={4} max={settings.charWpm} step={1} suffix=" wpm" onChange={set("effWpm")} />
       {/* C3: Farnsworth gloss at point of use — the deeper paragraph below covers
           the full story; this one-liner is for first-glance context at the slider. */}
-      <p style={{ color: "#8A929C", fontSize: 11, fontFamily: "system-ui, sans-serif", margin: "-8px 0 10px", lineHeight: 1.5 }}>
+      <p style={{ color: "#8A929C", fontSize: 11, fontFamily: "system-ui, sans-serif", margin: "-8px 0 16px", lineHeight: 1.5 }}>
         Farnsworth: characters stay at full speed; the pauses between them stretch so you have time to think. Close the gap by raising this toward character speed as you improve.
       </p>
+
+      <div style={{ ...S.label, color: "#8A929C", fontSize: 10, letterSpacing: 2, marginBottom: 6 }}>SENDING SPEED</div>
       <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={35} step={1} suffix=" wpm" onChange={set("keyWpm")} />
       <Slider label="Sidetone" value={settings.freq} min={400} max={900} step={10} suffix=" Hz" onChange={set("freq")} />
       <div style={{ marginBottom: 14 }}>
@@ -2795,7 +2856,7 @@ function Settings({ settings, setSettings }) {
       </div>
       <div style={{ ...S.label, color: "#F2A93B", marginTop: 4, marginBottom: 8 }}>Your station</div>
       <div style={{ fontSize: 11, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginBottom: 10, lineHeight: 1.5 }}>
-        These start as an example (W1AW, the ARRL's station). Set them to your own call, name, and location — they personalize your practice contacts and are saved automatically.
+        These start as an example (W1AW is a well-known example callsign). Set them to your own call, name, and location — they personalize your practice contacts and are saved automatically.
       </div>
       <div>
         <div style={{ ...S.label, marginBottom: 4 }}>Your callsign</div>
@@ -2845,7 +2906,11 @@ function Settings({ settings, setSettings }) {
 function Splash({ onSkip }) {
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label="Enter CW Trainer"
       onClick={onSkip}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSkip(); } }}
       style={{
         position: "fixed", inset: 0, zIndex: 50, cursor: "pointer",
         background: "radial-gradient(ellipse at 50% 40%, #14171C, #080A0D)",
@@ -3123,7 +3188,7 @@ export default function CWTrainer() {
         {settings.myCall === "W1AW" && !nudgeDismissed && (
           <div className="wr-full" role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#191C21", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
             <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", lineHeight: 1.6, flex: 1 }}>
-              <strong style={{ color: "#C9CDD3" }}>W1AW is an example callsign</strong> (the ARRL's station in Newington, CT). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
+              <strong style={{ color: "#C9CDD3" }}>W1AW is an example callsign</strong> (a well-known example used by default). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
             </span>
             <button
               aria-label="Dismiss callsign notice"
@@ -3187,7 +3252,7 @@ export default function CWTrainer() {
             the rail at a time. */}
         {isWide && <aside className="wr-rail" aria-label="Options" ref={setRailEl} />}
         {railShowsSettings && railEl && createPortal(
-          <Settings settings={settings} setSettings={setSettings} />,
+          <Settings settings={settings} setSettings={setSettings} onClose={() => setShowSettings(false)} />,
           railEl
         )}
 

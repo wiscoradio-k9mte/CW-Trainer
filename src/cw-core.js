@@ -489,7 +489,10 @@ export function cqCall(activity, call, suffix = "") {
   const v = Math.floor(Math.random() * 3); // 0, 1, or 2
   if (v === 0) return `CQ CQ CQ${tagStr} DE ${call} ${call} ${call}${suffixStr} K`;
   if (v === 1) return `CQ CQ CQ${tagStr} DE ${call} ${call}${suffixStr} K`;
-  return            `CQ${tagStr} DE ${call}${suffixStr} K`;
+  // Terse variant: two CQs, one call — a quick call on a busy band.  A bare single
+  // "CQ DE {call} K" is not a real on-air call (one CQ isn't enough to get tuned in);
+  // two CQs is the minimum that's actually done in practice.
+  return             `CQ CQ${tagStr} DE ${call}${suffixStr} K`;
 }
 
 /* ================= QSO SIMULATOR ================= */

@@ -947,6 +947,20 @@ describe("cqCall()", () => {
     expect(counts.has(1)).toBe(true); // terse variant
   });
 
+  // Fix 3 (v1.3): terse variant now emits "CQ CQ DE {call} K" (two CQs minimum).
+  // A bare single-CQ call is not real on-air practice — two CQs is the minimum
+  // that gives a listener time to tune in.  This test ensures none of the 3 variants
+  // ever drops to a single leading CQ token.
+  it("every emitted CQ string has at least 2 CQ tokens (no bare single CQ)", () => {
+    for (const act of ACTIVITIES) {
+      for (let i = 0; i < RUNS; i++) {
+        const cq = cqCall(act, CALL);
+        const cqCount = cq.split(/\s+/).filter((tok) => tok === "CQ").length;
+        expect(cqCount).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
   it("mustContain invariant holds for SOTA: callsign and SOTA both appear", () => {
     // The builder sets mustContain: [myCall] for the CQ step. Since cqCall always
     // includes the call, that invariant is always satisfied.
