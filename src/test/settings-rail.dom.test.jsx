@@ -1,23 +1,24 @@
 // @vitest-environment jsdom
 //
-// SETTINGS RAIL-TAKEOVER net (Phase 4 / Phase 5).
+// SETTINGS RAIL-TAKEOVER net (Phase 4 / Phase 5, revised v1.2).
 //
 // When the ⚙ Settings button is toggled:
 //
 //   WIDE  : Settings must appear INSIDE the options rail (role=complementary,
-//           "Options"). The active tab's setup options must NOT simultaneously be
-//           in the rail — Settings takes it over exclusively (one thing in the
-//           rail at a time). Closing Settings restores the tab's options to the
-//           rail. These are the "portal hygiene" invariants for the Settings path.
+//           "Options"). The active tab's rail content (e.g. LEARN's character
+//           chart) must NOT simultaneously be in the rail — Settings takes it
+//           over exclusively (one thing in the rail at a time). Closing Settings
+//           restores the tab's rail content. These are the "portal hygiene"
+//           invariants for the Settings path.
 //
 //   NARROW: Settings appears as the inline full-width panel it always was (today's
 //           unchanged behavior). The Options rail aside is not mounted on narrow,
 //           so there is no portal involved.
 //
 // These are mutation-meaningful: within(rail) scoping fails if Settings renders
-// outside the rail; the mutual-exclusion test fails if both Settings AND the tab's
-// options appear in the rail together. The narrow test fails if the inline panel
-// regresses.
+// outside the rail; the mutual-exclusion test fails if both Settings AND the
+// LEARN chart appear in the rail together. The narrow test fails if the inline
+// panel regresses.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
@@ -32,7 +33,7 @@ describe("Settings rail-takeover — WIDE", () => {
   it("portals Settings into the Options rail when the gear is toggled on wide", async () => {
     const { user } = await renderApp();
 
-    // Settings is closed on load — the rail holds the LEARN setup.
+    // Settings is closed on load — the rail holds the LEARN chart.
     const rail = screen.getByRole("complementary", { name: "Options" });
     expect(within(rail).queryByRole("slider", { name: /Character speed/ })).not.toBeInTheDocument();
 
@@ -43,23 +44,26 @@ describe("Settings rail-takeover — WIDE", () => {
     expect(within(rail).getByRole("slider", { name: /Character speed/ })).toBeInTheDocument();
   });
 
-  it("removes the active tab's options from the rail while Settings is open (mutual exclusion)", async () => {
+  it("removes the active tab's chart from the rail while Settings is open (mutual exclusion)", async () => {
     const { user } = await renderApp();
 
-    // Before opening Settings, LEARN setup is in the rail.
+    // Before opening Settings, the LEARN chart is in the rail (expanded on wide).
     const rail = screen.getByRole("complementary", { name: "Options" });
-    expect(within(rail).getByText("Characters in play")).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).toBeInTheDocument();
 
-    // Open Settings — LEARN setup must leave the rail.
+    // Open Settings — chart must leave the rail.
     await user.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(within(rail).getByRole("slider", { name: /Character speed/ })).toBeInTheDocument();
-    // The tab's options must NOT be simultaneously in the rail.
+    // The chart must NOT be simultaneously in the rail.
+    expect(within(rail).queryByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).not.toBeInTheDocument();
+    // Setup is in main (not the rail), so these are vacuously true now —
+    // included to guard against regression if setup ever moves back to the rail.
     expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
     expect(within(rail).queryByRole("button", { name: /START DRILL/ })).not.toBeInTheDocument();
   });
 
-  it("restores the tab's options to the rail after closing Settings on wide", async () => {
+  it("restores the chart to the rail after closing Settings on wide", async () => {
     const { user } = await renderApp();
 
     const rail = screen.getByRole("complementary", { name: "Options" });
@@ -70,10 +74,12 @@ describe("Settings rail-takeover — WIDE", () => {
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
 
-    // Settings is gone; the tab's options are back in the rail.
+    // Settings is gone; the chart is back in the rail.
     expect(within(rail).queryByRole("slider", { name: /Character speed/ })).not.toBeInTheDocument();
-    expect(within(rail).getByText("Characters in play")).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /START DRILL/ })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).toBeInTheDocument();
+    // Setup stays in main (not the rail) — still a useful guard:
+    expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: /START DRILL/ })).not.toBeInTheDocument();
   });
 
   it("works the same way on QSO tab — Settings takes over the rail, options suppressed", async () => {
@@ -101,14 +107,17 @@ describe("Settings rail-takeover — WIDE", () => {
     const rail = screen.getByRole("complementary", { name: "Options" });
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(within(rail).getByRole("slider", { name: /Character speed/ })).toBeInTheDocument();
+    // Chart is suppressed while Settings is open.
+    expect(within(rail).queryByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).not.toBeInTheDocument();
     expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
 
     // Switch to QSO WITHOUT closing Settings — showSettings is shell-level state
     // and persists across the tab switch. The rail must STILL be Settings-only:
-    // neither the LEARN setup nor the QSO setup may leak in (suppressRail holds
+    // neither the LEARN chart nor the QSO setup may leak in (suppressRail holds
     // for the newly-active tab too).
     await user.click(screen.getByRole("button", { name: "QSO" }));
     expect(within(rail).getByRole("slider", { name: /Character speed/ })).toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).not.toBeInTheDocument();
     expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
     expect(within(rail).queryByText("Activity")).not.toBeInTheDocument();
 
@@ -117,6 +126,7 @@ describe("Settings rail-takeover — WIDE", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(within(rail).queryByRole("slider", { name: /Character speed/ })).not.toBeInTheDocument();
     expect(within(rail).getByText("Activity")).toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).not.toBeInTheDocument();
     expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
   });
 

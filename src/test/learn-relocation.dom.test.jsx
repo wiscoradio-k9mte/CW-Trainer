@@ -1,25 +1,27 @@
 // @vitest-environment jsdom
 //
-// RELOCATION net for LEARN Phase 4 (lesson-setup → options rail).
+// RELOCATION net for LEARN Phase 4 (revised v1.2): chart → rail, setup → main.
 //
-// The baseline copy-learn.dom.test.jsx asserts the LEARN controls EXIST by
-// role/text — but that passes whether they render inline or in the rail. This
-// file asserts WHERE they render, which is the actual behavior Phase 4 changed:
+// The OLD arrangement (Phase 4 original) portaled lesson SETUP into the rail.
+// Travis found that backwards: the rail should hold the reference (chart), not
+// the active learning content. This file asserts the NEW arrangement:
 //
-//   WIDE  : the CHARS lesson-setup cluster ("Characters in play", Jump to lesson,
-//           START DRILL) lives INSIDE the options rail (<aside aria-label="Options">
+//   WIDE  : the full character chart ("FULL CHARACTER CHART" / "HIDE" toggle +
+//           the Morse grid) lives INSIDE the options rail (<aside aria-label="Options">
 //           → role=complementary), reached via createPortal into railEl; the
-//           sub-nav and drill flow stay in <main>.
-//   NARROW: the same setup renders inline (no rail mounted at all).
+//           lesson setup ("Characters in play", Jump to lesson, START DRILL) and
+//           the drill flow stay in <main>.
+//   NARROW: chart stays as a collapsible panel inline in <main>; setup also
+//           inline in <main>; no rail mounted at all.
 //
-// Mutation-meaningful: scoping the wide assertion to within(rail) means it FAILS
-// if the portal stops targeting the rail (options render inline in main, or
-// railEl is dropped). The narrow assertion fails if the rail is mounted or the
-// options vanish from the narrow branch. Together they pin the portal-to-rail
-// wiring, not just "the control is somewhere on the page."
+// Mutation-meaningful: scoping the wide chart assertion to within(rail) means
+// it FAILS if the chart portal stops targeting the rail. The setup-in-main
+// assertion fails if setup is portaled away. The narrow tests fail if the rail
+// appears or if controls vanish from the inline path. Together they pin the
+// new portal-to-rail wiring, not just "the control is somewhere on the page."
 //
 // Also covers the suppressRail path: when Settings is open on wide the LEARN
-// options must NOT appear in the rail (Settings takes it over exclusively).
+// chart must NOT appear in the rail (Settings takes it over exclusively).
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
@@ -27,39 +29,55 @@ import userEvent from "@testing-library/user-event";
 import { renderApp } from "./helpers.jsx";
 import CWTrainer from "../../wr-cw-trainer.jsx";
 
-describe("LEARN relocation — WIDE: setup lives in the rail, sub-nav + drill in main", () => {
+describe("LEARN relocation — WIDE: chart in rail, setup + drill in main", () => {
   // setup.dom.js mocks matchMedia matches:true (wide), so renderApp gives the
   // wide arrangement directly. LEARN is the default opening tab.
 
-  it("portals the CHARS lesson-setup into the Options rail", async () => {
+  it("portals the full character chart into the Options rail on wide", async () => {
     await renderApp();
 
     const rail = screen.getByRole("complementary", { name: "Options" });
 
-    // The LEARN setup controls are reachable from WITHIN the rail — proving the
-    // portal targets railEl, not the main column.
-    expect(within(rail).getByText("Characters in play")).toBeInTheDocument();
-    expect(within(rail).getByRole("spinbutton", { name: "Jump to lesson" })).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /START DRILL/ })).toBeInTheDocument();
+    // On wide the chart defaults expanded, so the toggle reads "▲ HIDE". The
+    // chart's toggle button lives INSIDE the rail — proving the portal targets
+    // railEl, not the main column.
+    expect(within(rail).getByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).toBeInTheDocument();
   });
 
-  it("keeps the CHARS setup OUT of <main> on wide (it is in the rail)", async () => {
+  it("keeps the chart toggle OUT of <main> on wide (it is in the rail)", async () => {
     await renderApp();
 
-    // The setup cluster must NOT be found inside <main> — it was relocated to the
-    // rail. If the portal failed and options fell back to inline-in-main, this fails.
+    // The chart toggle must NOT be found inside <main> on wide. If the portal
+    // failed and the chart fell back to inline-in-main, this fails.
     const main = screen.getByRole("main");
-    expect(within(main).queryByText("Characters in play")).not.toBeInTheDocument();
-    expect(within(main).queryByRole("spinbutton", { name: "Jump to lesson" })).not.toBeInTheDocument();
-    expect(within(main).queryByRole("button", { name: /START DRILL/ })).not.toBeInTheDocument();
+    expect(within(main).queryByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the lesson setup (Characters in play, Jump to lesson, START DRILL) in <main> on wide", async () => {
+    await renderApp();
+
+    // Setup is now in main (not portaled to the rail).
+    const main = screen.getByRole("main");
+    expect(within(main).getByText("Characters in play")).toBeInTheDocument();
+    expect(within(main).getByRole("spinbutton", { name: "Jump to lesson" })).toBeInTheDocument();
+    expect(within(main).getByRole("button", { name: /START DRILL/ })).toBeInTheDocument();
+  });
+
+  it("keeps the lesson setup OUT of the rail on wide (it is in main)", async () => {
+    await renderApp();
+
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    // Setup lives in main now — it must NOT appear inside the rail.
+    expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
+    expect(within(rail).queryByRole("spinbutton", { name: "Jump to lesson" })).not.toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: /START DRILL/ })).not.toBeInTheDocument();
   });
 
   it("keeps the sub-nav (CHARS/LINGO/ON AIR/HISTORY) in <main>", async () => {
     await renderApp();
 
     const main = screen.getByRole("main");
-    // The sub-nav buttons are content navigation within LEARN — they stay in main
-    // in both layouts (design §5).
+    // Sub-nav stays in main in both layouts (design §5).
     expect(within(main).getByRole("button", { name: "CHARS" })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "LINGO" })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "ON AIR" })).toBeInTheDocument();
@@ -80,25 +98,26 @@ describe("LEARN relocation — WIDE: setup lives in the rail, sub-nav + drill in
     expect(main.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("clears the rail (no orphan) when drilling starts on wide", async () => {
+  it("chart stays in the rail while drilling on wide (useful reference during drill)", async () => {
     const { user } = await renderApp();
 
     const rail = screen.getByRole("complementary", { name: "Options" });
-    // Setup is in the rail before the drill starts.
-    expect(within(rail).getByRole("button", { name: /START DRILL/ })).toBeInTheDocument();
+    // Chart is in rail before drill (expanded on wide → toggle reads "▲ HIDE").
+    expect(within(rail).getByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /START DRILL/ }));
 
-    // Once drilling, optionsJSX is null so nothing portals — the rail must be empty.
-    expect(within(rail).queryByRole("button", { name: /START DRILL/ })).not.toBeInTheDocument();
-    expect(within(rail).queryByText("Characters in play")).not.toBeInTheDocument();
-    // The drill view (LISTEN + REPLAY) appears in main, not in the rail.
+    // Chart must still be in the rail during the drill (reference stays available).
+    expect(within(rail).getByRole("button", { name: /HIDE|FULL CHARACTER CHART/i })).toBeInTheDocument();
+    // The drill view (LISTEN + REPLAY) appears in main.
     const main = screen.getByRole("main");
     expect(within(main).getByRole("button", { name: /REPLAY/ })).toBeInTheDocument();
+    // Setup controls (START DRILL) are gone once drilling.
+    expect(within(main).queryByRole("button", { name: /START DRILL/ })).not.toBeInTheDocument();
   });
 });
 
-describe("LEARN relocation — NARROW: setup renders inline, no rail", () => {
+describe("LEARN relocation — NARROW: setup + chart both inline, no rail", () => {
   let savedMatchMedia;
   beforeEach(() => {
     savedMatchMedia = window.matchMedia;
@@ -139,5 +158,13 @@ describe("LEARN relocation — NARROW: setup renders inline, no rail", () => {
     // And they are inside <main> (inline path), not portaled away.
     const main = screen.getByRole("main");
     expect(within(main).getByText("Characters in play")).toBeInTheDocument();
+  });
+
+  it("renders the chart inline in <main> on narrow", async () => {
+    await renderNarrow();
+
+    // No rail on narrow — chart must be in main as the collapsible panel.
+    const main = screen.getByRole("main");
+    expect(within(main).getByRole("button", { name: /FULL CHARACTER CHART/i })).toBeInTheDocument();
   });
 });

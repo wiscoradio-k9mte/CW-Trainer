@@ -2435,7 +2435,9 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
   const [drilling, setDrilling] = useState(false);
   const [history, setHistory] = useState([]); // last 25 results
   const [flash, setFlash] = useState(null); // { ok, char }
-  const [showRef, setShowRef] = useState(false);
+  // On wide the chart lives in the rail as a reference panel — default it expanded
+  // there. On narrow it remains a collapsible panel in main — default collapsed.
+  const [showRef, setShowRef] = useState(() => isWide);
   const timerRef = useRef(null);
   const currentRef = useRef(null);
   const lockRef = useRef(false);
@@ -2534,17 +2536,13 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
 
   // optionsJSX — the lesson-setup controls.
   //
-  // On wide these portal into the shell's <aside class="wr-rail">.
-  //   railEl is the <aside> DOM node, set by a callback ref in CWTrainer.
-  //   On the very first paint railEl is null (aside not yet mounted), so the
-  //   portal is skipped for that one frame and the options render inline; it is
-  //   imperceptible.
-  // On narrow these render inline as today.
+  // These always render inline in mainJSX (both wide and narrow). On wide the
+  // *chart* moves to the rail (see chartJSX below), while the setup stays in
+  // main alongside the drill — that's the arrangement the user found natural:
+  // "active learning content in the middle, reference in the rail."
   //
-  // IMPORTANT: the drilling flag hides the setup panel while a drill is active —
-  // on wide the rail shows the setup controls only when not drilling, otherwise
-  // it is empty (rail still mounted but nothing portaled in). The drill flow
-  // (accuracy display, answer grid) stays in mainJSX in both layouts, always.
+  // IMPORTANT: the drilling flag hides the setup panel while a drill is active.
+  // The drill flow (accuracy display, answer grid) stays in mainJSX always.
   const optionsJSX = !drilling && section === "chars" ? (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
@@ -2616,6 +2614,33 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
     </>
   ) : null;
 
+  // chartJSX — the full character reference chart.
+  //
+  // On wide this portals into the rail so it sits alongside the practice area as
+  // a persistent reference (expanded by default). On narrow it stays inline in
+  // main as a collapsible panel, exactly as before.
+  //
+  // The chart is always shown during a drill on wide (useful reference), and is
+  // only suppressed when Settings takes over the rail (suppressRail).
+  const chartJSX = (
+    <div style={S.panel}>
+      <button style={{ ...S.btn, width: "100%" }} onClick={() => setShowRef((v) => !v)}>
+        {showRef ? "▲ HIDE" : "▼ FULL CHARACTER CHART"}
+      </button>
+      {showRef && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 8, marginTop: 12 }}>
+          {Object.keys(MORSE).map((ch) => (
+            <button key={ch} onClick={() => playChar(ch)}
+              style={{ ...S.btn, padding: "10px 0", textAlign: "center" }}>
+              <div style={{ fontSize: 18, color: "#FFD89B" }}>{ch}</div>
+              <div style={{ fontSize: 11, color: "#F2A93B", marginTop: 3, letterSpacing: 1 }}>{glyphs(MORSE[ch])}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   // mainJSX — the sub-nav, the drill flow, and the reference guides.
   //
   // Everything here stays in the main column in both wide and narrow layouts.
@@ -2643,8 +2668,8 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
       {section === "history" && <HistoryGuide player={player} settings={settings} />}
 
       {section === "chars" && (<>
-        {/* Narrow only: inline setup panel (wide shows it in the rail above) */}
-        {!isWide && !drilling && <div style={S.panel}>{optionsJSX}</div>}
+        {/* Setup panel — inline in main on both wide and narrow (chart is in the rail on wide) */}
+        {!drilling && <div style={S.panel}>{optionsJSX}</div>}
 
         {drilling && (
           <div style={S.panel}>
@@ -2722,23 +2747,9 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
           </div>
         )}
 
-        {/* Full character chart — reference surface; stays in main (wants width) */}
-        <div style={S.panel}>
-          <button style={{ ...S.btn, width: "100%" }} onClick={() => setShowRef((v) => !v)}>
-            {showRef ? "▲ HIDE" : "▼ FULL CHARACTER CHART"}
-          </button>
-          {showRef && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 8, marginTop: 12 }}>
-              {Object.keys(MORSE).map((ch) => (
-                <button key={ch} onClick={() => playChar(ch)}
-                  style={{ ...S.btn, padding: "10px 0", textAlign: "center" }}>
-                  <div style={{ fontSize: 18, color: "#FFD89B" }}>{ch}</div>
-                  <div style={{ fontSize: 11, color: "#F2A93B", marginTop: 3, letterSpacing: 1 }}>{glyphs(MORSE[ch])}</div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Narrow only: chart stays inline in main as a collapsible panel.
+            On wide it portals into the rail (see chartJSX portal below). */}
+        {!isWide && chartJSX}
       </>)}
     </>
   );
@@ -2746,13 +2757,10 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
   return (
     <div>
       {mainJSX}
-      {/* Wide: portal the setup controls into the rail when not drilling and
-          railEl is ready. When drilling, nothing portals (rail is empty and the
-          drill flow is visible in main). */}
-      {isWide && railEl && optionsJSX && !suppressRail && createPortal(
-        <div style={S.panel}>{optionsJSX}</div>,
-        railEl
-      )}
+      {/* Wide: portal the full character chart into the rail. It stays there
+          during the drill too (useful reference). Yields to Settings when
+          suppressRail is set (Settings takes over the rail exclusively). */}
+      {isWide && railEl && !suppressRail && createPortal(chartJSX, railEl)}
     </div>
   );
 }
