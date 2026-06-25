@@ -23,12 +23,17 @@ const DEV_URL = process.env.VITE_DEV_SERVER_URL;
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 600,
-    height: 940,
+    // Open at a desktop size so the responsive layout starts in two-pane mode
+    // (the app switches to the single-column mobile layout below 900px width).
+    // minWidth stays low so the window can still be dragged narrow to preview
+    // the mobile layout; on actual mobile (Capacitor) the device viewport is
+    // narrow, so it starts mobile automatically.
+    width: 1200,
+    height: 820,
     minWidth: 380,
     minHeight: 620,
-    backgroundColor: "#14161A",
-    title: "WISCO RADIO — CW Trainer",
+    backgroundColor: "#0D0F13",
+    title: "CW Trainer",
     autoHideMenuBar: true,
     webPreferences: {
       // The renderer is a plain offline web app — no Node access needed, and
