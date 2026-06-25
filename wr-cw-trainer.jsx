@@ -974,7 +974,7 @@ const COPY_LEVELS = [
 //   railEl  — the DOM element of the <aside class="wr-rail">; null until the
 //             callback ref fires (one frame after first wide render), then a
 //             real DOM node. The portal is skipped when railEl is null.
-function CopyTrainer({ player, settings, isWide, railEl }) {
+function CopyTrainer({ player, settings, isWide, railEl, suppressRail }) {
   const [source, setSource] = useState("single");
   const [target, setTarget] = useState("");
   const [attempt, setAttempt] = useState("");
@@ -1205,7 +1205,7 @@ function CopyTrainer({ player, settings, isWide, railEl }) {
 
       {/* Wide layout: intro in its own main-column panel; options portaled to rail. */}
       {isWide && !target && <div style={S.panel}>{introJSX}</div>}
-      {isWide && railEl && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
+      {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
       {isWide && <div style={S.panel}>{practiceJSX}</div>}
 
       {/* Narrow layout: three inline panels — today's single-column appearance. */}
@@ -1228,7 +1228,7 @@ function CopyTrainer({ player, settings, isWide, railEl }) {
 // Both still drive the same keyer instance — no state moves. The toggle in the
 // rail changes settings.keyType, which this component re-renders from, so the
 // key surface in main always reflects the current type.
-function KeyTrainer({ player, settings, setSettings, isWide, railEl }) {
+function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRail }) {
   // category: which drill generator is active (index into DRILL_CATEGORIES)
   const [catIdx, setCatIdx] = useState(0);
   const [target, setTarget] = useState("");
@@ -1598,7 +1598,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl }) {
 
       {/* Wide layout: intro in its own main-column panel; options portaled to rail. */}
       {isWide && introJSX}
-      {isWide && railEl && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
+      {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
       {isWide && practicePanels}
 
       {/* Narrow layout: intro + options + practice inline — today's single-column order. */}
@@ -1673,7 +1673,7 @@ const ROLE_DESCS = {
 //   railEl  — the DOM element of the <aside class="wr-rail">; null until the
 //             rail mounts. QsoSim portals the setup controls into it when wide.
 //             The portal is skipped when railEl is null (first paint or narrow).
-function QsoSim({ player, settings, setSettings, isWide, railEl }) {
+function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail }) {
   // Activity and role menus (Phase 2/3).
   // Defaults: ragchew + answering role so the first-run experience is the
   // same as the old random behavior (which also skewed toward answering).
@@ -2037,7 +2037,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl }) {
 
       {/* Wide layout: intro in its own main-column panel; options portaled to rail. */}
       {isWide && !qso && <div style={S.panel}>{introJSX}</div>}
-      {isWide && railEl && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
+      {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
 
       {/* Narrow layout: intro + options combined in a single panel (today's appearance). */}
       {!isWide && !qso && <div style={S.panel}>{introJSX}{optionsJSX}</div>}
@@ -2423,7 +2423,13 @@ function HistoryGuide({ player, settings }) {
 }
 
 /* ================= LEARN (KOCH METHOD) ================= */
-function LearnTab({ player, settings }) {
+// LearnTab — Phase 4 rail split.
+//
+//   isWide  — from the shell's useIsWide(); determines which layout to use.
+//   railEl  — the DOM element of the <aside class="wr-rail">; null until the
+//             callback ref fires (first paint) or on narrow (aside not mounted).
+//             The portal is skipped when railEl is null (first paint or narrow).
+function LearnTab({ player, settings, isWide, railEl, suppressRail }) {
   const [section, setSection] = useState("chars");
   const [lesson, setLesson] = useState(() => store.load("kochLesson", 1)); // lesson n = first n+1 Koch chars
   const [drilling, setDrilling] = useState(false);
@@ -2526,8 +2532,103 @@ function LearnTab({ player, settings }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [drilling]);
 
-  return (
-    <div>
+  // optionsJSX — the lesson-setup controls.
+  //
+  // On wide these portal into the shell's <aside class="wr-rail">.
+  //   railEl is the <aside> DOM node, set by a callback ref in CWTrainer.
+  //   On the very first paint railEl is null (aside not yet mounted), so the
+  //   portal is skipped for that one frame and the options render inline; it is
+  //   imperceptible.
+  // On narrow these render inline as today.
+  //
+  // IMPORTANT: the drilling flag hides the setup panel while a drill is active —
+  // on wide the rail shows the setup controls only when not drilling, otherwise
+  // it is empty (rail still mounted but nothing portaled in). The drill flow
+  // (accuracy display, answer grid) stays in mainJSX in both layouts, always.
+  const optionsJSX = !drilling && section === "chars" ? (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+        <span style={S.label}>Lesson {lesson} of {maxLesson}</span>
+        <span style={{ display: "flex", gap: 6 }}>
+          <button aria-label="Previous lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson <= 1}
+            onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
+          <button aria-label="Next lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson >= maxLesson}
+            onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
+        </span>
+      </div>
+
+      {/* C2: jump-to-lesson input + skip-ahead affordance.
+          Clearing history on jump mirrors what the arrows do — no special case.
+          Clamped to [1, maxLesson] so an out-of-range value is silently
+          corrected rather than blowing up downstream. The gentle note about
+          Koch method is shown on any jump > 1 step to set honest expectations
+          without blocking the user (product decision: note, not confirm). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", flex: 1 }}>
+          Already know some? Skip ahead:
+        </span>
+        <input
+          type="number"
+          aria-label="Jump to lesson"
+          min={1}
+          max={maxLesson}
+          value={lesson}
+          onChange={(e) => {
+            const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
+            setLesson(v);
+            setHistory([]);
+          }}
+          style={{ ...S.input, width: 62, padding: "6px 10px", fontSize: 14, textTransform: "none", letterSpacing: 0 }}
+        />
+      </div>
+      <p style={{ color: "#8A929C", fontSize: 11, fontFamily: "system-ui, sans-serif", margin: "0 0 10px", lineHeight: 1.5 }}>
+        The Koch method assumes you've mastered earlier characters — each lesson builds on the ones before it.
+      </p>
+
+      <div style={{ ...S.label, marginBottom: 6 }}>{lesson === 1 ? "Meet your first two characters" : "New character"}</div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+        {newChars.map((ch) => (
+          <button key={ch} onClick={() => playChar(ch)}
+            style={{
+              flex: 1, background: "#080A0D", border: "1px solid #F2A93B", borderRadius: 10,
+              padding: "18px 0", cursor: "pointer", textAlign: "center",
+            }}>
+            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 40, color: "#FFD89B", lineHeight: 1 }}>{ch}</div>
+            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, color: "#F2A93B", marginTop: 8, letterSpacing: 2 }}>{glyphs(MORSE[ch])}</div>
+            <div style={{ ...S.label, fontSize: 9, marginTop: 8 }}>tap to hear</div>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ ...S.label, marginBottom: 4 }}>Characters in play</div>
+      <div style={{ fontFamily: "ui-monospace, monospace", color: "#8A929C", fontSize: 16, letterSpacing: 4, marginBottom: 14, wordBreak: "break-all" }}>
+        {pool.join(" ")}
+      </div>
+
+      <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0" }} onClick={startDrill}>▶ START DRILL</button>
+
+      <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
+        This is the Koch method: every character plays at full speed ({settings.charWpm} wpm — words per minute, the standard measure of how fast code is sent) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
+        {settings.effWpm < settings.charWpm && (
+          <> The gaps between characters are stretched (Farnsworth spacing — characters stay fast, pauses give you time to think). Raise effective speed in Settings to close the gap as you improve.</>
+        )}
+      </p>
+    </>
+  ) : null;
+
+  // mainJSX — the sub-nav, the drill flow, and the reference guides.
+  //
+  // Everything here stays in the main column in both wide and narrow layouts.
+  // The sub-nav is content navigation within LEARN, not setup — it belongs in
+  // main because LINGO/ON AIR/HISTORY are reading views that want the main column
+  // width (design §5). The drill panel stays in main so the keyboard answer handler
+  // and the answer grid remain together (no logic change needed).
+  //
+  // The aria-live regions (accuracy span + drill display) are always in mainJSX —
+  // never gated by isWide — so AT sees text changes in both layouts.
+  const mainJSX = (
+    <>
+      {/* Sub-navigation: CHARS / LINGO / ON AIR / HISTORY — always in main */}
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
         {[["chars", "CHARS"], ["lingo", "LINGO"], ["onair", "ON AIR"], ["history", "HISTORY"]].map(([v, l]) => (
           <button key={v} aria-pressed={section === v} onClick={() => { player.stop(); setSection(v); }}
@@ -2542,170 +2643,116 @@ function LearnTab({ player, settings }) {
       {section === "history" && <HistoryGuide player={player} settings={settings} />}
 
       {section === "chars" && (<>
-      {!drilling && (
-        <div style={S.panel}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-            <span style={S.label}>Lesson {lesson} of {maxLesson}</span>
-            <span style={{ display: "flex", gap: 6 }}>
-              <button aria-label="Previous lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson <= 1}
-                onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
-              <button aria-label="Next lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: 13 }} disabled={lesson >= maxLesson}
-                onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
-            </span>
-          </div>
+        {/* Narrow only: inline setup panel (wide shows it in the rail above) */}
+        {!isWide && !drilling && <div style={S.panel}>{optionsJSX}</div>}
 
-          {/* C2: jump-to-lesson input + skip-ahead affordance.
-              Clearing history on jump mirrors what the arrows do — no special case.
-              Clamped to [1, maxLesson] so an out-of-range value is silently
-              corrected rather than blowing up downstream. The gentle note about
-              Koch method is shown on any jump > 1 step to set honest expectations
-              without blocking the user (product decision: note, not confirm). */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <span style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", flex: 1 }}>
-              Already know some? Skip ahead:
-            </span>
-            <input
-              type="number"
-              aria-label="Jump to lesson"
-              min={1}
-              max={maxLesson}
-              value={lesson}
-              onChange={(e) => {
-                const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
-                setLesson(v);
-                setHistory([]);
-              }}
-              style={{ ...S.input, width: 62, padding: "6px 10px", fontSize: 14, textTransform: "none", letterSpacing: 0 }}
-            />
-          </div>
-          <p style={{ color: "#8A929C", fontSize: 11, fontFamily: "system-ui, sans-serif", margin: "0 0 10px", lineHeight: 1.5 }}>
-            The Koch method assumes you've mastered earlier characters — each lesson builds on the ones before it.
-          </p>
-
-          <div style={{ ...S.label, marginBottom: 6 }}>{lesson === 1 ? "Meet your first two characters" : "New character"}</div>
-          <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-            {newChars.map((ch) => (
-              <button key={ch} onClick={() => playChar(ch)}
-                style={{
-                  flex: 1, background: "#080A0D", border: "1px solid #F2A93B", borderRadius: 10,
-                  padding: "18px 0", cursor: "pointer", textAlign: "center",
-                }}>
-                <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 40, color: "#FFD89B", lineHeight: 1 }}>{ch}</div>
-                <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, color: "#F2A93B", marginTop: 8, letterSpacing: 2 }}>{glyphs(MORSE[ch])}</div>
-                <div style={{ ...S.label, fontSize: 9, marginTop: 8 }}>tap to hear</div>
-              </button>
-            ))}
-          </div>
-
-          <div style={{ ...S.label, marginBottom: 4 }}>Characters in play</div>
-          <div style={{ fontFamily: "ui-monospace, monospace", color: "#8A929C", fontSize: 16, letterSpacing: 4, marginBottom: 14, wordBreak: "break-all" }}>
-            {pool.join(" ")}
-          </div>
-
-          <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0" }} onClick={startDrill}>▶ START DRILL</button>
-
-          <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
-            This is the Koch method: every character plays at full speed ({settings.charWpm} wpm — words per minute, the standard measure of how fast code is sent) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
-            {settings.effWpm < settings.charWpm && (
-              <> The gaps between characters are stretched (Farnsworth spacing — characters stay fast, pauses give you time to think). Raise effective speed in Settings to close the gap as you improve.</>
-            )}
-          </p>
-        </div>
-      )}
-
-      {drilling && (
-        <div style={S.panel}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-            <span style={S.label}>Lesson {lesson} · {pool.length} chars</span>
-            {/* aria-live so the accuracy updates are announced as they change.
-                aria-label gives a natural reading ("90 percent, 18 of 20")
-                instead of the terse "90% · 18/20" the visual text shows. */}
-            <span
-              aria-live="polite"
-              aria-label={`${accuracy} percent, ${attempts} of 20`}
-              style={{ fontFamily: "ui-monospace, monospace", fontSize: 15, color: ready ? "#8FCB9B" : accuracy >= 90 ? "#F2A93B" : "#8A929C" }}
-            >
-              {accuracy}% · {attempts}/20
-            </span>
-          </div>
-
-          {/* aria-live="polite" + aria-atomic: screen reader announces each drill result
-              as it flips (correct/incorrect/waiting). "polite" queues behind the user's
-              own input rather than interrupting. aria-atomic reads the whole region, not
-              just the changed node, so the full result string is announced. */}
-          <div
-            aria-live="polite"
-            aria-atomic="true"
-            style={{ ...S.display, textAlign: "center", fontSize: "2.125rem", minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}
-          >
-            {flash ? (
-              <span style={{ color: flash.ok ? "#8FCB9B" : "#E07A5F" }}>
-                {flash.ok ? "✓" : `✗  ${flash.char}  ${glyphs(MORSE[flash.char])}`}
+        {drilling && (
+          <div style={S.panel}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+              <span style={S.label}>Lesson {lesson} · {pool.length} chars</span>
+              {/* aria-live so the accuracy updates are announced as they change.
+                  aria-label gives a natural reading ("90 percent, 18 of 20")
+                  instead of the terse "90% · 18/20" the visual text shows. */}
+              <span
+                aria-live="polite"
+                aria-label={`${accuracy} percent, ${attempts} of 20`}
+                style={{ fontFamily: "ui-monospace, monospace", fontSize: 15, color: ready ? "#8FCB9B" : accuracy >= 90 ? "#F2A93B" : "#8A929C" }}
+              >
+                {accuracy}% · {attempts}/20
               </span>
-            ) : (
-              <span style={{ color: "#8A929C", fontSize: "1rem", letterSpacing: 3 }}>LISTEN...</span>
+            </div>
+
+            {/* aria-live="polite" + aria-atomic: screen reader announces each drill
+                result as it flips (correct/incorrect/waiting). "polite" queues
+                behind the user's own input rather than interrupting. aria-atomic
+                reads the whole region so the full result string is announced. */}
+            <div
+              aria-live="polite"
+              aria-atomic="true"
+              style={{ ...S.display, textAlign: "center", fontSize: "2.125rem", minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              {flash ? (
+                <span style={{ color: flash.ok ? "#8FCB9B" : "#E07A5F" }}>
+                  {flash.ok ? "✓" : `✗  ${flash.char}  ${glyphs(MORSE[flash.char])}`}
+                </span>
+              ) : (
+                <span style={{ color: "#8A929C", fontSize: "1rem", letterSpacing: 3 }}>LISTEN...</span>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
+              <button style={S.btn} onClick={() => currentRef.current && playChar(currentRef.current)}>↻ REPLAY</button>
+              <button style={S.btn} onClick={() => { setDrilling(false); player.stop(); clearTimeout(timerRef.current); }}>← BACK</button>
+            </div>
+
+            <div style={{ fontSize: 14, color: "#C9CDD3", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>Tap or type the letter you heard</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))", gap: 8 }}>
+              {pool.map((ch) => (
+                <button key={ch} onClick={() => answer(ch)}
+                  style={{ ...S.btn, padding: "14px 0", fontSize: 20, textAlign: "center" }}>
+                  {ch}
+                </button>
+              ))}
+            </div>
+
+            {ready && (
+              <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0", marginTop: 14 }} onClick={nextLesson}>
+                ★ 90% SOLID — NEXT LESSON
+              </button>
+            )}
+
+            {/* C1: cliff panel — shown when the learner has done ≥20 reps but is
+                still below 90%. The drill already loops silently; this makes the
+                situation legible and names the path forward without adding a
+                "drop back" shortcut (product decision: keep drilling). Threshold
+                is delegated to isReadyToAdvance so it stays single-sourced. */}
+            {attempts >= 20 && !ready && (
+              <div style={{ marginTop: 14, padding: "14px 16px", background: "#1A2118", border: "1px solid #3A4A3A", borderRadius: 8 }}>
+                <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, color: "#F2A93B", marginBottom: 6 }}>
+                  {accuracy}%
+                </div>
+                <p style={{ color: "#C9CDD3", fontSize: 13, fontFamily: "system-ui, sans-serif", margin: "0 0 8px", lineHeight: 1.6 }}>
+                  Good effort — you're building the pattern. Keep drilling and your rolling accuracy will climb.
+                </p>
+                <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+                  {accuracy}% over your last set — reach 90% to unlock the next character. Each correct answer shifts the window forward, so a good run now counts right away.
+                </p>
+              </div>
             )}
           </div>
+        )}
 
-          <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
-            <button style={S.btn} onClick={() => currentRef.current && playChar(currentRef.current)}>↻ REPLAY</button>
-            <button style={S.btn} onClick={() => { setDrilling(false); player.stop(); clearTimeout(timerRef.current); }}>← BACK</button>
-          </div>
-
-          <div style={{ fontSize: 14, color: "#C9CDD3", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>Tap or type the letter you heard</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(52px, 1fr))", gap: 8 }}>
-            {pool.map((ch) => (
-              <button key={ch} onClick={() => answer(ch)}
-                style={{ ...S.btn, padding: "14px 0", fontSize: 20, textAlign: "center" }}>
-                {ch}
-              </button>
-            ))}
-          </div>
-
-          {ready && (
-            <button style={{ ...S.btnAmber, width: "100%", padding: "14px 0", marginTop: 14 }} onClick={nextLesson}>
-              ★ 90% SOLID — NEXT LESSON
-            </button>
-          )}
-
-          {/* C1: cliff panel — shown when the learner has done ≥20 reps but is
-              still below 90%. The drill already loops silently; this makes the
-              situation legible and names the path forward without adding a
-              "drop back" shortcut (product decision: keep drilling). Threshold
-              is delegated to isReadyToAdvance so it stays single-sourced. */}
-          {attempts >= 20 && !ready && (
-            <div style={{ marginTop: 14, padding: "14px 16px", background: "#1A2118", border: "1px solid #3A4A3A", borderRadius: 8 }}>
-              <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, color: "#F2A93B", marginBottom: 6 }}>
-                {accuracy}%
-              </div>
-              <p style={{ color: "#C9CDD3", fontSize: 13, fontFamily: "system-ui, sans-serif", margin: "0 0 8px", lineHeight: 1.6 }}>
-                Good effort — you're building the pattern. Keep drilling and your rolling accuracy will climb.
-              </p>
-              <p style={{ color: "#8A929C", fontSize: 12, fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
-                {accuracy}% over your last set — reach 90% to unlock the next character. Each correct answer shifts the window forward, so a good run now counts right away.
-              </p>
+        {/* Full character chart — reference surface; stays in main (wants width) */}
+        <div style={S.panel}>
+          <button style={{ ...S.btn, width: "100%" }} onClick={() => setShowRef((v) => !v)}>
+            {showRef ? "▲ HIDE" : "▼ FULL CHARACTER CHART"}
+          </button>
+          {showRef && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 8, marginTop: 12 }}>
+              {Object.keys(MORSE).map((ch) => (
+                <button key={ch} onClick={() => playChar(ch)}
+                  style={{ ...S.btn, padding: "10px 0", textAlign: "center" }}>
+                  <div style={{ fontSize: 18, color: "#FFD89B" }}>{ch}</div>
+                  <div style={{ fontSize: 11, color: "#F2A93B", marginTop: 3, letterSpacing: 1 }}>{glyphs(MORSE[ch])}</div>
+                </button>
+              ))}
             </div>
           )}
         </div>
-      )}
-
-      <div style={S.panel}>
-        <button style={{ ...S.btn, width: "100%" }} onClick={() => setShowRef((v) => !v)}>
-          {showRef ? "▲ HIDE" : "▼ FULL CHARACTER CHART"}
-        </button>
-        {showRef && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 8, marginTop: 12 }}>
-            {Object.keys(MORSE).map((ch) => (
-              <button key={ch} onClick={() => playChar(ch)}
-                style={{ ...S.btn, padding: "10px 0", textAlign: "center" }}>
-                <div style={{ fontSize: 18, color: "#FFD89B" }}>{ch}</div>
-                <div style={{ fontSize: 11, color: "#F2A93B", marginTop: 3, letterSpacing: 1 }}>{glyphs(MORSE[ch])}</div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
       </>)}
+    </>
+  );
+
+  return (
+    <div>
+      {mainJSX}
+      {/* Wide: portal the setup controls into the rail when not drilling and
+          railEl is ready. When drilling, nothing portals (rail is empty and the
+          drill flow is visible in main). */}
+      {isWide && railEl && optionsJSX && !suppressRail && createPortal(
+        <div style={S.panel}>{optionsJSX}</div>,
+        railEl
+      )}
     </div>
   );
 }
@@ -2875,6 +2922,10 @@ export default function CWTrainer() {
   // first paint (before the aside mounts); set on the commit that adds the aside.
   const [railEl, setRailEl] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  // When Settings is open on wide it takes over the right rail entirely, so the
+  // active tab's options are NOT simultaneously in the rail (only one thing at a
+  // time). On narrow there is no rail — Settings renders inline as always.
+  const railShowsSettings = isWide && showSettings;
   const [splash, setSplash] = useState(true);
   // Generic placeholder identity — the user sets their own in Settings, and it
   // persists from there. W1AW (the ARRL's station, in Newington CT) is the
@@ -3042,9 +3093,13 @@ export default function CWTrainer() {
           >⚙</button>
         </header>
 
-        {/* Settings panel: spans full width in both modes (unchanged behavior).
-            Later phases (Phase 4) move this into the rail on wide. */}
-        {showSettings && (
+        {/* Settings panel.
+            Narrow: inline full-width panel below the header, as before.
+            Wide:   portaled into the right rail (see the aside block below).
+                    The active tab's options are suppressed from the rail while
+                    Settings is open (railShowsSettings → suppressRail on tabs),
+                    so only one thing occupies the rail at a time. */}
+        {showSettings && !isWide && (
           <div className="wr-full">
             <Settings settings={settings} setSettings={setSettings} />
           </div>
@@ -3106,10 +3161,10 @@ export default function CWTrainer() {
           individual rail splits are done (Phases 2–5).
         */}
         <main className="wr-main">
-          {tab === "learn" && <LearnTab player={player} settings={settings} />}
-          {tab === "copy" && <CopyTrainer player={player} settings={settings} isWide={isWide} railEl={railEl} />}
-          {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} />}
-          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} />}
+          {tab === "learn" && <LearnTab player={player} settings={settings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} />}
+          {tab === "copy" && <CopyTrainer player={player} settings={settings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} />}
+          {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} />}
+          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} />}
         </main>
 
         {/* Options rail — right grid column on wide, not rendered on narrow.
@@ -3117,9 +3172,16 @@ export default function CWTrainer() {
             display:none would still mount it and add DOM noise).
             ref={setRailEl}: a callback ref, not useRef, because we need a state
             update (re-render) when the node first appears — that's what lets
-            QsoSim and CopyTrainer portal their options into it. Later phases
-            will wire KEY and LEARN the same way. */}
+            each tab portal its setup controls into it.
+            When Settings is open on wide (railShowsSettings), the Settings
+            component is portaled into this same aside, and each tab's options
+            are suppressed (suppressRail=true) so only one thing occupies
+            the rail at a time. */}
         {isWide && <aside className="wr-rail" aria-label="Options" ref={setRailEl} />}
+        {railShowsSettings && railEl && createPortal(
+          <Settings settings={settings} setSettings={setSettings} />,
+          railEl
+        )}
 
         {/* Footer spans all three columns on wide; naturally full-width on narrow */}
         <footer className="wr-full" style={{ textAlign: "center", marginTop: 24 }}>
