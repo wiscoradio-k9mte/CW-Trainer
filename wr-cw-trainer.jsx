@@ -467,6 +467,14 @@ function useMorsePlayer() {
   return { play, stop, playing, keyDownTone, keyUpTone, beep, startNoise, setNoiseLevel, stopNoise, unlock };
 }
 
+// Bug dit keep-alive duration (ms).
+// Must be longer than both the VBand inter-keydown gap (~30–60ms) and one dit
+// period at the slowest supported WPM, but short enough that lever release feels
+// immediate. We use max(160, 2u) computed at render time (see bugDitDown).
+// This constant is the hardware-tunable floor — adjust if your VBand adapter's
+// machine-gun rate or a very low WPM causes stutter or premature stop.
+const BUG_DIT_KEEPALIVE_MS = 160;
+
 /* ================= KEY DECODER ================= */
 function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
   const [decoded, setDecoded] = useState("");
@@ -560,6 +568,14 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     setBuffer(bufRef.current);
   };
 
+  /* --- bug dit keep-alive refs --- */
+  // bugDitAliveTimer: the debounced-release timer that owns when the dit stream stops.
+  // Rearmed on every incoming keydown so a VBand machine-gun stream keeps it alive.
+  const bugDitAliveTimer = useRef(null);
+  // bugDitTouchHeld: true while a touch/pointer is down on the on-screen DIT zone.
+  // Touch gives clean down/up (no machine-gun), so it bypasses the keep-alive entirely.
+  const bugDitTouchHeld = useRef(false);
+
   /* --- straight key: you time the elements --- */
   const downAt = useRef(null);
   const straightDown = useCallback(() => {
@@ -568,13 +584,20 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     downAt.current = performance.now();
     player.keyDownTone(freqRef.current);
   }, [player]);
-  const straightUp = useCallback(() => {
+  // straightUp: end a manually-timed key press.
+  // forceEl: if provided ("." or "-"), overrides the duration-based dit/dah
+  // classification. Bug dahs use forceEl:"-" so a short Space tap is still
+  // recorded as a dah (the only element the Space bar ever produces on a bug).
+  // The measured durMs is preserved — classification forced, timing authentic.
+  // FRAGILITY NOTE: any refactor of the classify step must preserve this override;
+  // a short bug-dah silently becoming a dit breaks the dah-weighting feature.
+  const straightUp = useCallback(({ forceEl } = {}) => {
     if (downAt.current === null) return;
     const now = performance.now();
     const durMs = now - downAt.current;
     downAt.current = null;
     player.keyUpTone();
-    const el = durMs < unitRef.current * 2 ? "." : "-";
+    const el = forceEl ?? (durMs < unitRef.current * 2 ? "." : "-");
     // Record timing event: gapBeforeMs is time from last key-up to this key-down.
     // We approximate: key-down was at (now - durMs), last key-up was lastUpAtRef.
     const gapBeforeMs = lastUpAtRef.current !== null
@@ -649,6 +672,44 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     else dahHeld.current = false;
   }, []);
 
+  // bugDitDown: called on each keyboard dit keydown (VBand machine-gun stream) or
+  // on pointer-down on the on-screen DIT zone.
+  //
+  // Keyboard path: each arriving keydown re-arms a keep-alive timer (BUG_DIT_KEEPALIVE_MS,
+  // at least 2u). The timer owns release — a stray keyup mid-stream is ignored.
+  // This keeps the dit stream flowing through a VBand machine-gun input without stutter.
+  //
+  // Pointer path (fromTouch=true): pointer gives clean down/up events so we skip the
+  // keep-alive entirely; bugDitTouchHeld is the release authority instead.
+  const bugDitDown = useCallback((fromTouch = false) => {
+    if (!enabledRef.current) return;
+    if (fromTouch) {
+      bugDitTouchHeld.current = true;
+    } else {
+      // Keyboard: re-arm the keep-alive. Effective timeout = max(floor, 2 dit units).
+      const keepAliveMs = Math.max(BUG_DIT_KEEPALIVE_MS, 2 * unitRef.current);
+      clearTimeout(bugDitAliveTimer.current);
+      bugDitAliveTimer.current = setTimeout(() => {
+        ditHeld.current = false;
+        bugDitTouchHeld.current = false;
+      }, keepAliveMs);
+    }
+    // Start the paddle dit engine if it's not already running.
+    if (!ditHeld.current) {
+      ditHeld.current = true;
+      if (!sending.current) sendNext();
+    }
+  }, [sendNext]);
+
+  // bugDitUp: called on pointer-up on the DIT zone (touch path only).
+  // Keyboard keyups are ignored — the keep-alive timer is the authority there.
+  const bugDitUp = useCallback(() => {
+    bugDitTouchHeld.current = false;
+    ditHeld.current = false;
+    // Clear the timer so a fresh keyboard dit can arm it cleanly later.
+    clearTimeout(bugDitAliveTimer.current);
+  }, []);
+
   const clear = useCallback(() => {
     bufRef.current = "";
     setBuffer("");
@@ -658,10 +719,12 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     paddleLastUpAtRef.current = null;
     clearGapTimers();
     clearTimeout(loopTimer.current);
+    clearTimeout(bugDitAliveTimer.current); // also stop any pending bug keep-alive
     sending.current = false;
     memory.current = null;
     ditHeld.current = false;
     dahHeld.current = false;
+    bugDitTouchHeld.current = false;
     downAt.current = null;
     ditRun.current = 0;
     player.keyUpTone(); // release a held sidetone — no-op if none is sounding
@@ -673,10 +736,24 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
       const t = e.target;
       return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
     };
+    // Resolve which key code is the bug/paddle dit lever given current swap state.
+    // Swap flips the lever side only; on a bug the dah is always Space.
+    const bugDitCode = () => swapRef.current ? "BracketRight" : "BracketLeft";
+    // Secondary VBand bracket codes also trigger the dit (mirrors paddle handling).
+    const bugDitCodes = () => swapRef.current
+      ? ["BracketRight", "KeyX", "ArrowRight"]
+      : ["BracketLeft",  "KeyZ", "ArrowLeft"];
+
     const dn = (e) => {
       if (e.repeat || inField(e)) return;
       if (modeRef.current === "straight") {
         if (e.code === "Space") { e.preventDefault(); straightDown(); }
+      } else if (modeRef.current === "bug") {
+        // Bug dit lever: bracket keys (+ Z/X/arrows for VBand compatibility) → auto dits.
+        // Bug dah: Space bar → manual element, always forced to "-".
+        // e.repeat is already false here (top guard). VBand sends distinct keydowns.
+        if (bugDitCodes().includes(e.code)) { e.preventDefault(); bugDitDown(false); }
+        else if (e.code === "Space") { e.preventDefault(); straightDown(); }
       } else {
         const left = swapRef.current ? "-" : ".";
         const right = swapRef.current ? "." : "-";
@@ -688,6 +765,11 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
       if (inField(e)) return;
       if (modeRef.current === "straight") {
         if (e.code === "Space") { e.preventDefault(); straightUp(); }
+      } else if (modeRef.current === "bug") {
+        // Bug dit keyup: ignored — the keep-alive timer owns release for keyboard input.
+        // Bug dah keyup: end the manual element (forced classification to "-").
+        if (e.code === "Space") { e.preventDefault(); straightUp({ forceEl: "-" }); }
+        // Dit keyup intentionally a no-op for keyboard path (timer-driven release).
       } else {
         const left = swapRef.current ? "-" : ".";
         const right = swapRef.current ? "." : "-";
@@ -700,18 +782,20 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError }) {
     return () => {
       window.removeEventListener("keydown", dn);
       window.removeEventListener("keyup", up);
-      // Switching away mid-key must not leave a sidetone ringing or a paddle looping
+      // Switching away mid-key must not leave a sidetone ringing or a paddle/bug looping
       clearTimeout(loopTimer.current);
+      clearTimeout(bugDitAliveTimer.current);
+      ditHeld.current = false;
       downAt.current = null;
       sending.current = false;
       player.keyUpTone();
     };
-  }, [enabled, straightDown, straightUp, paddleDown, paddleUp, player]);
+  }, [enabled, straightDown, straightUp, paddleDown, paddleUp, bugDitDown, player]);
 
   // events is the ref array — consumers read eventsRef.current directly.
   // We expose it as a stable object ref so KeyTrainer can pass it to analyzeFist
   // without triggering re-renders.
-  return { decoded, buffer, eventsRef, straightDown, straightUp, paddleDown, paddleUp, clear };
+  return { decoded, buffer, eventsRef, straightDown, straightUp, paddleDown, paddleUp, bugDitDown, bugDitUp, clear };
 }
 
 /* similarity() is in src/cw-core.js */
@@ -876,38 +960,106 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
   );
 }
 
-// KeyModeControls — the key-type toggle (PADDLE / STRAIGHT KEY) and the dit/dah
-// swap button. Extracted from KeyInput so the rail-split can place these controls
+// BugKey — on-screen key surface for bug (semiautomatic) mode.
+// Two zones: DIT (pointer-down = auto dits via keep-alive-free touch path)
+// and DAH (pointer-down = manual element, forced to "-" by straightUp).
+// Styled identically to PaddleKey using the same zone helper.
+function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
+  const zone = (label, glyph, sub, ariaLabel, onDown, onUp) => (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      onPointerDown={(e) => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); onDown(); }}
+      onPointerUp={(e) => { e.preventDefault(); onUp(); }}
+      onPointerCancel={onUp}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        flex: 1, userSelect: "none", touchAction: "none", WebkitUserSelect: "none",
+        background: "radial-gradient(ellipse at 50% 30%, #3A3128, #241F18)",
+        border: "2px solid #6B5837", borderRadius: 16, padding: "34px 0",
+        textAlign: "center", color: "#F2A93B", fontFamily: "ui-monospace, monospace",
+        cursor: "pointer",
+        boxShadow: "0 4px 0 #15110C, inset 0 1px 0 rgba(255,200,120,0.15)",
+      }}
+    >
+      <div style={{ fontSize: 26, lineHeight: 1 }}>{glyph}</div>
+      <div style={{ fontSize: 14, letterSpacing: 3, marginTop: 6 }}>{label}</div>
+      <div style={{ fontSize: 12, color: "#8A6A33", marginTop: 4, letterSpacing: 1 }}>{sub}</div>
+    </div>
+  );
+
+  const ditZone = zone(
+    "DIT", "·", "hold = auto dits",
+    "Bug dit lever — press and hold for automatic dits (bracket key or this control)",
+    () => bugDitDown(true),  // fromTouch=true: pointer gives clean up/down, skip keep-alive
+    bugDitUp,
+  );
+  const dahZone = zone(
+    "DAH", "—", "hold = one dah, you time it",
+    "Bug dah — press and hold to send a hand-timed dah (Space or this control)",
+    dahDown,
+    dahUp,
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+        {/* Swap flips the dit lever side; Space (dah) is always on the right of the on-screen layout */}
+        {swap ? <>{dahZone}{ditZone}</> : <>{ditZone}{dahZone}</>}
+      </div>
+      <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+        {swap
+          ? "Keyboard: ] / X / → is dit lever · Space is dah — you time the dahs"
+          : "Keyboard: [ / Z / ← is dit lever · Space is dah — you time the dahs"}
+      </div>
+    </div>
+  );
+}
+
+// SwapToggle — standalone swap button rendered above the key/paddle surface.
+// Extracted from KeyModeControls so it can sit in main (adjacent to the key)
+// rather than in the options rail. Visible for paddle and bug; hidden for straight.
+// This placement means swap travels with the surface in both wide and narrow layouts.
+function SwapToggle({ swap, onSwap, keyType }) {
+  if (keyType !== "paddle" && keyType !== "bug") return null;
+  const helpText = keyType === "bug"
+    ? `swaps which bracket is the dit lever — Space is always the dah`
+    : `swaps which paddle sends dit vs dah — set it to ${swap ? "L for left-handed" : "R for right-handed"}`;
+  return (
+    <div style={{ textAlign: "center", marginTop: 10 }}>
+      <button
+        onClick={() => onSwap(!swap)}
+        title="Swap dit/dah for left-handed keying"
+        aria-label={`Swap dit and dah paddles — currently ${swap ? "left-handed" : "right-handed"}`}
+        style={{ ...S.btn, padding: "7px 12px", fontSize: 12, color: swap ? "#F2A93B" : "#8A929C", ...(swap ? { borderColor: "#F2A93B" } : {}) }}>
+        ⇄ {swap ? "L" : "R"}
+      </button>
+      <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 6 }}>
+        ⇄ {helpText}
+      </div>
+    </div>
+  );
+}
+
+// KeyModeControls — the key-type toggle (PADDLE / STRAIGHT KEY / BUG).
+// Extracted from KeyInput so the rail-split can place these controls
 // in the options rail (wide) while the key surface itself stays in main. Both
 // pieces still drive the same keyer instance held by KeyTrainer — no state moves.
 // QsoSim keeps using the combined KeyInput below and is unaffected by this split.
-function KeyModeControls({ keyType, onKeyType, swap, onSwap }) {
+// The swap button has been REMOVED from this component — it now lives in SwapToggle,
+// placed directly above the key surface in main so it stays adjacent to what it controls.
+function KeyModeControls({ keyType, onKeyType }) {
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ display: "flex", gap: 6 }}>
-        {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"]].map(([v, l]) => (
+        {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"], ["bug", "BUG"]].map(([v, l]) => (
           <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
             style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: 11, ...(keyType === v ? { borderColor: "#F2A93B", color: "#F2A93B" } : { color: "#8A929C" }) }}>
             {l}
           </button>
         ))}
-        {keyType === "paddle" && (
-          // aria-label is the accessible name; title is visible on hover for sighted users.
-          // Screen readers ignore title when aria-label is present, so both serve their audience.
-          <button
-            onClick={() => onSwap(!swap)}
-            title="Swap dit/dah for left-handed keying"
-            aria-label={`Swap dit and dah paddles — currently ${swap ? "left-handed" : "right-handed"}`}
-            style={{ ...S.btn, padding: "7px 12px", fontSize: 12, color: swap ? "#F2A93B" : "#8A929C", ...(swap ? { borderColor: "#F2A93B" } : {}) }}>
-            ⇄ {swap ? "L" : "R"}
-          </button>
-        )}
       </div>
-      {keyType === "paddle" && (
-        <div style={{ fontSize: 12, color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 6 }}>
-          ⇄ button swaps which paddle sends dit vs dah — set it to <span style={{ color: "#8A929C" }}>{swap ? "L for left-handed" : "R for right-handed"}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -915,12 +1067,18 @@ function KeyModeControls({ keyType, onKeyType, swap, onSwap }) {
 // KeyInput — combined toggle + swap + key surface. Used by QsoSim, which has not
 // been split (the key is part of the exchange flow there, not a separate pane).
 // KeyTrainer uses KeyModeControls + inlined key surface instead (see Phase 3 split).
+// SwapToggle is now rendered inline here so it appears above the surface in QsoSim too.
 function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
   return (
     <div>
-      <KeyModeControls keyType={keyType} onKeyType={onKeyType} swap={swap} onSwap={onSwap} />
+      <KeyModeControls keyType={keyType} onKeyType={onKeyType} />
+      <SwapToggle swap={swap} onSwap={onSwap} keyType={keyType} />
       {keyType === "paddle"
         ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
+        : keyType === "bug"
+        ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
+            dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
+            swap={swap} />
         : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
     </div>
   );
@@ -1363,12 +1521,12 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
           </button>
         ))}
       </div>
-      {/* Key-type controls: toggle + swap. Same state drives the key surface in main. */}
+      {/* Key-type toggle (PADDLE / STRAIGHT KEY / BUG). The swap toggle is NOT here —
+          it lives above the key surface in main (SwapToggle) so it travels with the key
+          in both wide and narrow layouts rather than going to the rail. */}
       <KeyModeControls
         keyType={settings.keyType}
         onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
-        swap={settings.paddleSwap}
-        onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
       />
     </>
   );
@@ -1397,7 +1555,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
           <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
             <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
             <p style={{ color: "#C9CDD3", fontSize: 13, lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the dit/dah swap toggle if your levers come out reversed. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
+              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle above the key if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
             </p>
           </div>
         </>
@@ -1438,10 +1596,23 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
             ◉ HH — ERROR SIGNAL, CLEARED
           </div>
         )}
-        {/* Key surface only — toggle/swap are in the rail (wide) or options panel (narrow) */}
-        <div style={{ marginTop: 12 }}>
+        {/* SwapToggle sits above the key surface in main (both wide and narrow layouts),
+            so it is always adjacent to what it controls regardless of rail presence.
+            Visible for paddle and bug; hidden for straight key. */}
+        <SwapToggle
+          swap={settings.paddleSwap}
+          onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+          keyType={settings.keyType}
+        />
+        {/* Key surface — toggle is in the rail (wide) or options panel (narrow).
+            Swap is above (SwapToggle). Surface picks the correct component for each mode. */}
+        <div style={{ marginTop: 4 }}>
           {settings.keyType === "paddle"
             ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
+            : settings.keyType === "bug"
+            ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
+                dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
+                swap={settings.paddleSwap} />
             : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
         </div>
         <div style={{ marginTop: 12 }}>
@@ -1502,9 +1673,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Spacing verdicts — three rows */}
+                {/* Spacing verdicts — three rows.
+                    Element spacing: straight key only (paddle and bug machine-time dits).
+                    Letter/word gaps: all modes (operator controls inter-character timing). */}
                 {[
-                  // Element spacing only meaningful for straight key
+                  // Element spacing: meaningful for straight key only; suppressed for paddle + bug
                   ...(settings.keyType === "straight"
                     ? [["Element gaps", "between elements (ideal 1u)", analysis.spacing.element]]
                     : []),
@@ -1535,8 +1708,10 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   )
                 ))}
 
-                {/* B3: dah weighting — straight key only; suppressed for paddle */}
-                {settings.keyType === "straight" && analysis.weighting.ratio !== null && (
+                {/* B3: dah weighting — straight key and bug; suppressed for paddle.
+                    Bug dahs are hand-timed (the point of bug practice), so weighting
+                    feedback is shown. The header text adapts for bug mode. */}
+                {(settings.keyType === "straight" || settings.keyType === "bug") && analysis.weighting.ratio !== null && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: 12 }}>
                       Dah length
@@ -1564,9 +1739,12 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {settings.keyType === "paddle" && (
+                {/* Footnote: machine-timed dit spacing (paddle and bug both machine-time dits) */}
+                {(settings.keyType === "paddle" || settings.keyType === "bug") && (
                   <div style={{ fontSize: 12, color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
-                    Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only.
+                    {settings.keyType === "bug"
+                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only. Your dah length is graded above."
+                      : "Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only."}
                   </div>
                 )}
               </div>

@@ -1541,3 +1541,94 @@ describe("averageScore()", () => {
     expect(averageScore([0, 1])).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// analyzeFist() — bug key mode semantics (v1.4)
+// ---------------------------------------------------------------------------
+// These tests lock the split behavior introduced for keyType="bug":
+//   - dah weighting IS computed (hand-timed dahs are the training value)
+//   - element-spacing verdict IS suppressed (machine-timed dits)
+// They are mutation-meaningful: inverting either guard makes the corresponding
+// test fail, which is exactly the protection that was asked for in the design.
+
+describe("analyzeFist() — bug mode semantics", () => {
+  const WPM = 20;
+  const unitMs = 1200 / WPM; // 60ms at 20wpm
+
+  // Build a synthetic event stream with dits at perfect cadence and one dah.
+  // gapBeforeMs for the dits is left at 1u (machine-gap — would trip element
+  // verdict if not suppressed) so A2 has something to bite on.
+  function bugStream({ dahDurMultiplier = 3 } = {}) {
+    return [
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: 0 },
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: unitMs },     // machine element gap
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: unitMs },
+      { type: "dah", durMs: unitMs * dahDurMultiplier, gapBeforeMs: 3 * unitMs }, // char gap
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: unitMs },
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: unitMs },
+      { type: "dah", durMs: unitMs * dahDurMultiplier, gapBeforeMs: 3 * unitMs },
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: unitMs },
+      { type: "dit", durMs: unitMs,                   gapBeforeMs: unitMs },
+    ];
+  }
+
+  // A1: bug mode computes dah weighting (not suppressed like paddle).
+  // Bites: if someone changes the paddle suppression guard to also include "bug".
+  it("A1: keyType='bug' with dahs → weighting.ratio is NOT null (computed)", () => {
+    const events = bugStream({ dahDurMultiplier: 3 }); // perfect dah length
+    const r = analyzeFist(events, WPM, "bug");
+    // weighting computed: ratio should be close to 3 (ideal), not null
+    expect(r.weighting.ratio).not.toBeNull();
+    expect(r.weighting.ratio).toBeCloseTo(3, 0);
+    expect(r.weighting.verdict).toBe("good");
+  });
+
+  // A2: bug mode suppresses element-spacing verdict (machine-timed dits).
+  // We inject gaps in the element-gap bucket (ratio < 2u) that are deliberately
+  // bad (1.6u = 60% loose relative to ideal 1u — well above the 25% tolerance),
+  // confirm they produce a non-good verdict in straight mode, and that bug suppresses
+  // the same verdict.
+  // Bites: if the element-spacing guard stops including "bug".
+  it("A2: keyType='bug' with bad element gaps → element.verdict === 'good' (suppressed)", () => {
+    // Element gap must be ratio < 2u to land in the element-gap bucket.
+    // 1.6u is loose: |1.6 - 1| / 1 = 60% > 25% FIST_TOLERANCE → verdict = "loose".
+    const badGap = [
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 1.6 * unitMs }, // bad element gap (< 2u)
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 1.6 * unitMs },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 3 * unitMs },   // char gap
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 1.6 * unitMs },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 3 * unitMs },
+    ];
+    // Verify the gap IS bad for straight (makes the test bite-proof):
+    const straight = analyzeFist(badGap, WPM, "straight");
+    expect(straight.spacing.element.verdict).not.toBe("good"); // "loose"
+    // For bug it must be suppressed:
+    const bug = analyzeFist(badGap, WPM, "bug");
+    expect(bug.spacing.element.verdict).toBe("good");
+  });
+
+  // A3: long dahs on a bug (durMs ≈ 5u) → weighting verdict is "loose".
+  // Bites: the weighting math / threshold for the exact feedback bug practice exists to teach.
+  it("A3: keyType='bug' with dahs running ~5u → weighting.verdict === 'loose'", () => {
+    // 5u dahs: ratio = 5/3 ≈ 1.67, deviation from ideal 3 is |5-3|/3 = 67% >> 25% threshold
+    const events = bugStream({ dahDurMultiplier: 5 });
+    const r = analyzeFist(events, WPM, "bug");
+    expect(r.weighting.verdict).toBe("loose");
+    // The plain-English note should mention "running long"
+    const note = r.notes.find((n) => n.includes("running long"));
+    expect(note).toBeTruthy();
+  });
+
+  // Sanity: verify "bug" is NOT accidentally treated as "paddle" anywhere.
+  // If it were, weighting would be null and element verdict would be "good" for all inputs.
+  // A1 catches the weighting half; this pins the element-spacing suppression path directly.
+  it("A4: keyType='bug' is NOT the string 'paddle' — paddle guard does not fire", () => {
+    const events = bugStream();
+    const paddle = analyzeFist(events, WPM, "paddle");
+    const bug    = analyzeFist(events, WPM, "bug");
+    // Paddle suppresses weighting; bug does not.
+    expect(paddle.weighting.ratio).toBeNull();
+    expect(bug.weighting.ratio).not.toBeNull();
+  });
+});

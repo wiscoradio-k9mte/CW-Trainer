@@ -400,14 +400,15 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   const charRatio  = median(charGaps);     // ideal 3u
   const wordRatio  = median(wordGaps);     // ideal 7u
 
-  // Paddle keyers machine-time intra-character spacing — only the operator
-  // controls when to start the next character or word. So the element-gap
-  // verdict is not meaningful for paddle mode and is suppressed.
-  const elementVerdict = keyType === "paddle" ? "good" : verdict(elemRatio, 1);
+  // Paddle and bug keyers machine-time intra-character dit spacing — only the
+  // operator controls when to start the next character or word. So the
+  // element-gap verdict is not meaningful and is suppressed for both modes.
+  const elementVerdict = (keyType === "paddle" || keyType === "bug") ? "good" : verdict(elemRatio, 1);
 
   // B3: dah weighting — median dah vs 3×unit.
-  // Straight key only: for paddle, dahs are machine-timed 3u so the verdict is
-  // meaningless and is suppressed (returned as { ratio: null, verdict: "good" }).
+  // Suppressed for paddle (dahs machine-timed 3u; verdict is meaningless).
+  // Bug dahs are hand-timed (the point of bug practice) so weighting IS computed —
+  // "bug" must NOT match the paddle suppression check here.
   const dahs = events.filter((e) => e.type === "dah").map((e) => e.durMs);
   let weighting;
   if (keyType === "paddle" || unitMs <= 0) {
@@ -427,7 +428,8 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   }
 
   const notes = [];
-  if (keyType !== "paddle" && elemRatio !== null && verdict(elemRatio, 1) !== "good") {
+  // Element-spacing note suppressed for paddle and bug (machine-timed dits in both).
+  if (keyType !== "paddle" && keyType !== "bug" && elemRatio !== null && verdict(elemRatio, 1) !== "good") {
     notes.push(`element spacing ${verdict(elemRatio, 1)} (measured ${elemRatio.toFixed(1)}u, ideal 1u)`);
   }
   if (charRatio !== null && verdict(charRatio, 3) !== "good") {
@@ -438,7 +440,7 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
     const dir = verdict(wordRatio, 7) === "loose" ? "too long" : "too short";
     notes.push(`word spacing is ${dir} (${wordRatio.toFixed(1)}u, ideal 7u)`);
   }
-  // B3: plain-English weighting note
+  // B3: plain-English weighting note — bug mode keeps this (hand-timed dahs).
   if (keyType !== "paddle" && weighting.verdict !== "good" && weighting.ratio !== null) {
     const dir = weighting.verdict === "loose" ? "running long" : "running short";
     notes.push(`your dahs are ${dir} relative to your dits (${weighting.ratio.toFixed(1)}u, ideal 3u)`);
