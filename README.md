@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="build/screenshots/WiscoRadio-Banner.png" alt="CW Trainer by Wisco Radio Labs" width="100%">
+  <img src="build/screenshots/WiscoRadioLabs-Banner.png" alt="CW Trainer by Wisco Radio Labs" width="100%">
 </p>
 
 <h1 align="center">CW Trainer</h1>
@@ -38,9 +38,9 @@ all the way from recognizing your first two characters to running a complete on-
 
 |  |  |
 |:--:|:--:|
-| <img src="build/screenshots/WiscoRadio-Learn.png" width="100%"><br>**Learn** — Koch-method character lessons | <img src="build/screenshots/WiscoRadio-Copy.png" width="100%"><br>**Copy** — the six-rung copy ladder |
-| <img src="build/screenshots/WiscoRadio-Key.png" width="100%"><br>**Key** — sending practice with a live decoder | <img src="build/screenshots/WiscoRadio-QSO.png" width="100%"><br>**QSO** — work a simulated contact |
-| <img src="build/screenshots/WiscoRadio-Settings.png" width="100%"><br>**Settings** — speed, Farnsworth, sidetone, band conditions | |
+| <img src="build/screenshots/WiscoRadioLabs-Learn.png" width="100%"><br>**Learn** — Koch-method character lessons | <img src="build/screenshots/WiscoRadioLabs-Copy.png" width="100%"><br>**Copy** — the six-rung copy ladder |
+| <img src="build/screenshots/WiscoRadioLabs-Key.png" width="100%"><br>**Key** — sending practice with a live decoder | <img src="build/screenshots/WiscoRadioLabs-QSO.png" width="100%"><br>**QSO** — work a simulated contact |
+| <img src="build/screenshots/WiscoRadioLabs-Progress-Settings.png" width="100%"><br>**Progress &amp; Settings** — track your sessions; tune speed, Farnsworth, sidetone, band conditions | |
 
 ---
 
