@@ -49,6 +49,10 @@ describe("KEY relocation — WIDE: options live in the rail, practice in main", 
     // ("Dit paddle" / "Dah paddle") which also have role=button via aria-label.
     expect(within(rail).getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "STRAIGHT KEY" })).toBeInTheDocument();
+
+    // SwapToggle must be in the rail on wide — it travels with the type selector
+    // into optionsJSX. Default is paddle, so swap is visible.
+    expect(within(rail).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
   });
 
   it("keeps the category selector + key-type controls OUT of <main> on wide (they are in the rail)", async () => {
@@ -65,6 +69,8 @@ describe("KEY relocation — WIDE: options live in the rail, practice in main", 
     // Exact text match to avoid false positives from PaddleKey's "Dit paddle" aria-labels.
     expect(within(main).queryByRole("button", { name: "PADDLE" })).not.toBeInTheDocument();
     expect(within(main).queryByRole("button", { name: "STRAIGHT KEY" })).not.toBeInTheDocument();
+    // SwapToggle also travels with the type selector into the rail — must not be in main.
+    expect(within(main).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
   });
 
   it("keeps the practice surface (NEW TEXT + CHECK) in <main>", async () => {
@@ -153,8 +159,9 @@ describe("KEY relocation — WIDE: options live in the rail, practice in main", 
     expect(within(main).queryByRole("button", { name: /Dit paddle/ })).not.toBeInTheDocument();
     expect(within(main).queryByRole("button", { name: /Dah paddle/ })).not.toBeInTheDocument();
 
-    // And the rail's paddle-only swap affordance is gone (the original check, kept).
-    expect(within(main).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
+    // SwapToggle is now in the rail (travels with optionsJSX). Straight key hides it
+    // (SwapToggle returns null for straight), so it must be absent from the rail too.
+    expect(within(rail).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
 
     // Toggle back to paddle — surface flips again (proves it tracks state both ways).
     await user.click(within(rail).getByRole("button", { name: "PADDLE" }));
@@ -216,6 +223,9 @@ describe("KEY relocation — NARROW: options render inline, no rail", () => {
     const main = screen.getByRole("main");
     expect(within(main).getByRole("button", { name: "Previous category" })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
+    // SwapToggle travels with optionsJSX — on narrow it is inline in main alongside
+    // the type selector (default is paddle, so swap is visible).
+    expect(within(main).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
     // Practice controls also in main.
     expect(within(main).getByRole("button", { name: /NEW TEXT/ })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "CHECK" })).toBeInTheDocument();

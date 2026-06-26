@@ -2,14 +2,19 @@
 //
 // Bug key (v1.4) behavior tests.
 //
-// Covers:
-//   F — UI presence + swap reposition (toggle, BugKey zones, SwapToggle DOM order)
-//   C — bug manual dah from Space (forced-dah classification path, repeat guard,
-//         preventDefault)
-//   D — inField guard (Space and dit lever suppressed while typing)
-//   E — swap in bug mode (flips dit side only; Space always the dah)
-//   B — bug dit keep-alive (machine-gun stream resilience)
-//   A  — analyzeFist bug semantics moved to cw-core.test.js (pure node tests)
+// BUG_KEY_ENABLED is currently false (shelved 2026-06-25 pending research —
+// see docs/design-bug-key.md + the brief).  Tests are grouped accordingly:
+//
+//   HIDDEN-STATE tests (run now, BUG_KEY_ENABLED=false):
+//     F1-hidden  — BUG is NOT offered in the selector; only PADDLE + STRAIGHT KEY
+//     F4-hidden  — persisted keyType:"bug" falls back to PADDLE; no BugKey surface
+//
+//   DORMANT-PATH tests (skipped while BUG_KEY_ENABLED=false; re-enable by
+//   removing .skip when the flag is flipped back to true):
+//     F2, F3, C, D, E, B — test behavior that requires selecting BUG in the UI
+//
+// The pure/hook-level bug-behavior tests (analyzeFist bug semantics, the bug
+// keyer element tests) live in cw-core.test.js and run green as dormant coverage.
 //
 // Tests that need fake timers call vi.useFakeTimers() locally and clean up in
 // afterEach.  Tests that do NOT need fake timers use real timers (renderApp /
@@ -48,13 +53,26 @@ afterEach(() => {
   vi.useRealTimers(); // always restore real timers — no-op if already real
 });
 
-// Navigate to KEY tab and select BUG; uses whatever matchMedia is currently set.
+// Navigate to KEY tab. When BUG_KEY_ENABLED=true also select BUG; used by
+// the dormant tests below.
 async function gotoKeyBug(user) {
   await user.click(screen.getByRole("button", { name: "KEY" }));
   await user.click(screen.getByRole("button", { name: "BUG" }));
 }
 
-// Full render + splash dismiss + KEY + BUG, using real timers (no vi.useFakeTimers).
+// Full render + splash dismiss + KEY, wide layout. Used by hidden-state tests.
+async function renderKeyWide() {
+  setMatchMedia(true);
+  window.localStorage.clear();
+  const user = userEvent.setup();
+  render(<CWTrainer />);
+  await user.click(screen.getByText("tap to skip"));
+  await user.click(screen.getByRole("button", { name: "KEY" }));
+  return { user };
+}
+
+// Full render + splash dismiss + KEY + BUG (dormant path), wide layout.
+// Only valid when BUG_KEY_ENABLED is true.
 async function renderBugWide() {
   setMatchMedia(true);
   window.localStorage.clear();
@@ -75,39 +93,112 @@ async function renderBugNarrow() {
   return { user };
 }
 
+// ===========================================================================
+// HIDDEN-STATE TESTS (active while BUG_KEY_ENABLED=false)
+//
+// These are the "biting" tests: they FAIL if BUG reappears in the selector
+// while the flag is false, and they verify the persisted-bug fallback.
+// ===========================================================================
+
 // ---------------------------------------------------------------------------
-// F1: BUG appears as a selectable key type.
-// Bites: type toggle missing the third option.
+// F1-hidden: BUG is NOT offered in the key-type selector.
+// Bites: if BUG_KEY_ENABLED is accidentally flipped true, these fail.
 // ---------------------------------------------------------------------------
-describe("F1 — BUG type toggle present", () => {
-  it("BUG button is rendered alongside PADDLE and STRAIGHT KEY", async () => {
+describe("F1-hidden — BUG absent from selector (BUG_KEY_ENABLED=false)", () => {
+  it("key-type selector offers PADDLE and STRAIGHT KEY but NOT BUG", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
-    expect(screen.getByRole("button", { name: "BUG" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "STRAIGHT KEY" })).toBeInTheDocument();
+    // BUG must not be reachable — this is the bite that guards the hidden state.
+    expect(screen.queryByRole("button", { name: "BUG" })).not.toBeInTheDocument();
   });
 
-  it("selecting BUG marks it pressed and deselects PADDLE", async () => {
+  it("PADDLE starts pressed and STRAIGHT KEY is visible (selector works without BUG)", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
-    const bug = screen.getByRole("button", { name: "BUG" });
-    const paddle = screen.getByRole("button", { name: "PADDLE" });
-
-    expect(paddle).toHaveAttribute("aria-pressed", "true");
-    expect(bug).toHaveAttribute("aria-pressed", "false");
-
-    await user.click(bug);
-    expect(bug).toHaveAttribute("aria-pressed", "true");
-    expect(paddle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "PADDLE" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "STRAIGHT KEY" })).toHaveAttribute("aria-pressed", "false");
+    // Switching to STRAIGHT KEY works normally — two-option selector is functional.
+    await user.click(screen.getByRole("button", { name: "STRAIGHT KEY" }));
+    expect(screen.getByRole("button", { name: "STRAIGHT KEY" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "PADDLE" })).toHaveAttribute("aria-pressed", "false");
   });
 });
+
+// ---------------------------------------------------------------------------
+// F4-hidden: persisted keyType:"bug" falls back to "paddle" at load time;
+// the BugKey surface is never rendered.
+// Bites: if the coercion is missing, a returning user with stored "bug" would
+// find the app in an unreachable mode (no selector option, no key surface).
+// ---------------------------------------------------------------------------
+describe("F4-hidden — persisted keyType:\"bug\" falls back to PADDLE (BUG_KEY_ENABLED=false)", () => {
+  it("a stored keyType:\"bug\" lands the user on PADDLE, not BUG", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "bug" }));
+    setMatchMedia(true);
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await user.click(screen.getByRole("button", { name: "KEY" }));
+
+    // PADDLE must be selected (the coercion ran); BUG must not appear at all.
+    expect(screen.getByRole("button", { name: "PADDLE" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "BUG" })).not.toBeInTheDocument();
+  });
+
+  it("a stored keyType:\"bug\" does NOT render the BugKey surface (no DIT/DAH zones)", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "bug" }));
+    setMatchMedia(true);
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await user.click(screen.getByRole("button", { name: "KEY" }));
+
+    // The BugKey zones must not be in the DOM — the paddle surface is shown instead.
+    expect(screen.queryByRole("button", { name: /Bug dit lever/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Bug dah/ })).not.toBeInTheDocument();
+    // The paddle surface renders.
+    const main = screen.getByRole("main");
+    expect(within(main).getByRole("button", { name: /Dit paddle/ })).toBeInTheDocument();
+  });
+
+  it("coercion does not corrupt other persisted settings (keyWpm stays at stored value)", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "wrcw:settings",
+      JSON.stringify({ keyType: "bug", keyWpm: 18 })
+    );
+    setMatchMedia(true);
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    // Open Settings so the keyWpm slider renders; the amber value display shows
+    // the live value as "{value}{suffix}" text (e.g. "18 wpm").
+    await user.click(screen.getByRole("button", { name: /Settings/ }));
+    // The slider group renders "18 wpm" next to the keying-speed label.
+    expect(screen.getByText("18 wpm")).toBeInTheDocument();
+  });
+});
+
+// ===========================================================================
+// DORMANT-PATH TESTS — skipped while BUG_KEY_ENABLED=false.
+//
+// These tests exercise behavior that requires the BUG option in the selector.
+// They are preserved so re-enabling is trivial: remove the .skip when
+// BUG_KEY_ENABLED is set back to true.  The underlying keyer and cw-core logic
+// they cover is green in cw-core.test.js already (hook/pure-function level).
+// ===========================================================================
 
 // ---------------------------------------------------------------------------
 // F2: selecting BUG renders BugKey (DIT + DAH zones), not TouchKey or PaddleKey.
 // Bites: surface wiring (wrong component rendered for bug mode).
 // ---------------------------------------------------------------------------
-describe("F2 — BugKey surface renders for BUG mode", () => {
+describe.skip("F2 — BugKey surface renders for BUG mode [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("BUG mode shows a DIT zone and a DAH zone in main", async () => {
     await renderBugWide();
     const main = screen.getByRole("main");
@@ -125,7 +216,6 @@ describe("F2 — BugKey surface renders for BUG mode", () => {
 
   it("switching from BUG back to PADDLE restores the paddle surface", async () => {
     const { user } = await renderBugWide();
-    // Currently in BUG — switch back to PADDLE (toggle is in rail on wide).
     const rail = screen.getByRole("complementary", { name: "Options" });
     await user.click(within(rail).getByRole("button", { name: "PADDLE" }));
     const main = screen.getByRole("main");
@@ -138,23 +228,24 @@ describe("F2 — BugKey surface renders for BUG mode", () => {
 // F3: SwapToggle above key surface in main; absent for straight key.
 // Bites: the reposition (req 6) and the visibility condition.
 // ---------------------------------------------------------------------------
-describe("F3 — SwapToggle position and visibility", () => {
-  it("swap button appears in main (above the key surface) in wide layout", async () => {
+// NOTE (updated 2026-06-25): SwapToggle was moved from above the key surface in
+// main into optionsJSX (alongside KeyModeControls), matching QSO's KeyInput pattern.
+// On wide it portals into the rail with the type selector; on narrow it is inline in
+// main with the type selector. Tests below are updated to match the new placement.
+describe.skip("F3 — SwapToggle position and visibility [DORMANT: BUG_KEY_ENABLED=false]", () => {
+  it("swap button appears in the Options rail in wide layout (travels with type selector)", async () => {
     await renderBugWide();
-    const main = screen.getByRole("main");
-    expect(within(main).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    expect(within(rail).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
   });
 
-  it("swap button precedes the BugKey DIT zone in DOM order (is above it)", async () => {
+  it("swap button is absent from main on wide (it is in the rail with optionsJSX)", async () => {
     await renderBugWide();
     const main = screen.getByRole("main");
-    const swapBtn = within(main).getByRole("button", { name: /Swap dit and dah/ });
-    const ditZone = within(main).getByRole("button", { name: /Bug dit lever/ });
-    // DOCUMENT_POSITION_FOLLOWING (4): ditZone comes AFTER swapBtn in DOM order.
-    expect(swapBtn.compareDocumentPosition(ditZone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(main).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
   });
 
-  it("swap button is present in main on narrow layout (travels with key, not in rail)", async () => {
+  it("swap button is present in main on narrow layout (inline with type selector, no rail)", async () => {
     await renderBugNarrow();
     const main = screen.getByRole("main");
     expect(within(main).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
@@ -167,33 +258,20 @@ describe("F3 — SwapToggle position and visibility", () => {
     expect(screen.queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
   });
 
-  it("swap button is present for paddle mode (not broken by BUG addition)", async () => {
+  it("swap button is present for paddle mode in the rail on wide (not broken by BUG addition)", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
-    // Default is paddle — swap should be visible in main.
-    const main = screen.getByRole("main");
-    expect(within(main).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
-  });
-
-  it("swap button is NOT in the Options rail (it lives in main)", async () => {
-    await renderBugWide();
     const rail = screen.getByRole("complementary", { name: "Options" });
-    // The type toggle (BUG etc.) is in the rail; the swap control must not be.
-    expect(within(rail).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();
   });
 });
 
 // ---------------------------------------------------------------------------
 // F4: keyType "bug" persists through the store (not the string "paddle").
-// Bites: persistence (req 1) — also confirms "bug" !== "paddle" at store level.
-//
-// Pre-seed localStorage with keyType:"bug" before the render so the app starts
-// with bug already selected.  This is exactly what happens on a real return visit.
+// [DORMANT — tests that require clicking BUG in the selector]
 // ---------------------------------------------------------------------------
-describe("F4 — keyType persistence", () => {
+describe.skip("F4 — keyType bug stores as \"bug\" not \"paddle\" [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("'bug' from stored settings shows BUG selected on load", async () => {
-    // Seed localStorage BEFORE rendering so the settings initializer reads it.
-    // The store uses the "wrcw:" prefix (e.g. wrcw:settings).
     window.localStorage.clear();
     window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "bug" }));
     setMatchMedia(true);
@@ -203,15 +281,11 @@ describe("F4 — keyType persistence", () => {
     await user.click(screen.getByText("tap to skip"));
     await user.click(screen.getByRole("button", { name: "KEY" }));
 
-    // BUG should be pressed (loaded from store) — PADDLE should not be.
     expect(screen.getByRole("button", { name: "BUG" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "PADDLE" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("'bug' is not stored as the string 'paddle' (acceptance criterion 1)", async () => {
-    // The "bug" string must NOT equal "paddle" — analyzeFist suppresses dah-weighting
-    // on "paddle" and we need bug to get weighting.  This test verifies the stored
-    // value by reading it directly from localStorage after the user selects BUG.
     window.localStorage.clear();
     setMatchMedia(true);
 
@@ -221,7 +295,6 @@ describe("F4 — keyType persistence", () => {
     await user.click(screen.getByRole("button", { name: "KEY" }));
     await user.click(screen.getByRole("button", { name: "BUG" }));
 
-    // The store uses "wrcw:" prefix.
     const stored = JSON.parse(window.localStorage.getItem("wrcw:settings") ?? "{}");
     expect(stored.keyType).toBe("bug");
     expect(stored.keyType).not.toBe("paddle");
@@ -229,19 +302,9 @@ describe("F4 — keyType persistence", () => {
 });
 
 // ---------------------------------------------------------------------------
-// C, D, E, B: keyboard-dispatch tests
-//
-// These use fireEvent on window (synchronous) instead of userEvent so we can
-// control exactly which events are sent without async infrastructure.
-// The render itself uses real timers (no vi.useFakeTimers in the F tests above).
-//
-// Pattern for groups that need fake timers:
-//   vi.useFakeTimers() inside the test or setup helper; afterEach restores via
-//   vi.useRealTimers().
+// C, D, E, B: keyboard-dispatch tests (all dormant — require BUG mode active)
 // ---------------------------------------------------------------------------
 
-// Shared sync helper: render, dismiss splash, go to KEY+BUG, click NEW TEXT.
-// Uses real timers (no fake timers needed for the setup itself).
 async function setupKeyboard({ wide = true, swapped = false } = {}) {
   setMatchMedia(wide);
   window.localStorage.clear();
@@ -251,10 +314,10 @@ async function setupKeyboard({ wide = true, swapped = false } = {}) {
   await user.click(screen.getByRole("button", { name: "KEY" }));
   await user.click(screen.getByRole("button", { name: "BUG" }));
   if (swapped) {
-    const main = screen.getByRole("main");
-    await user.click(within(main).getByRole("button", { name: /Swap dit and dah/ }));
+    // SwapToggle is now in the rail on wide (travels with optionsJSX).
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    await user.click(within(rail).getByRole("button", { name: /Swap dit and dah/ }));
   }
-  // Get a target so the keyer is enabled.
   await user.click(screen.getByRole("button", { name: /NEW TEXT/ }));
 }
 
@@ -265,37 +328,24 @@ function kup(code) {
   return new KeyboardEvent("keyup", { code, bubbles: true, cancelable: true });
 }
 
-// ---------------------------------------------------------------------------
-// C — Bug manual dah from Space
-// ---------------------------------------------------------------------------
-describe("C — Bug dah from Space (keyboard)", () => {
-  // C4: Space keydown in bug mode calls preventDefault.
-  // Bites: page-scroll regression (missing preventDefault on Space in bug mode).
+describe.skip("C — Bug dah from Space (keyboard) [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("C4: Space keydown in bug mode sets defaultPrevented", async () => {
     await setupKeyboard();
     const ev = kdn("Space");
     window.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
-    window.dispatchEvent(kup("Space")); // release cleanly
+    window.dispatchEvent(kup("Space"));
   });
 
-  // C3: Space with repeat:true is ignored (existing global guard; not re-added).
-  // Bites: if the top e.repeat guard is removed or bypassed for bug mode.
   it("C3: Space with repeat:true is NOT claimed (global repeat guard fires first)", async () => {
     await setupKeyboard();
     const ev = kdn("Space", { repeat: true });
     window.dispatchEvent(ev);
-    // The global guard returns before preventDefault — event is not claimed.
     expect(ev.defaultPrevented).toBe(false);
   });
 });
 
-// ---------------------------------------------------------------------------
-// D — inField guard
-// ---------------------------------------------------------------------------
-describe("D — inField guard in bug mode", () => {
-  // D1: Space while INPUT focused → no dah.
-  // Bites: the guard being skipped in the new bug arm.
+describe.skip("D — inField guard in bug mode [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("D1: Space dispatched from INPUT target is not claimed (inField)", async () => {
     await setupKeyboard();
     const inp = document.createElement("input");
@@ -303,13 +353,10 @@ describe("D — inField guard in bug mode", () => {
     inp.focus();
     const ev = new KeyboardEvent("keydown", { code: "Space", bubbles: true, cancelable: true });
     inp.dispatchEvent(ev);
-    // inField fires before any mode branch; preventDefault never called.
     expect(ev.defaultPrevented).toBe(false);
     document.body.removeChild(inp);
   });
 
-  // D2: dit lever while INPUT focused → no dits.
-  // Bites: dit lever firing during text entry.
   it("D2: BracketLeft dispatched from INPUT target is not claimed (inField)", async () => {
     await setupKeyboard();
     const inp = document.createElement("input");
@@ -317,25 +364,17 @@ describe("D — inField guard in bug mode", () => {
     inp.focus();
     const ev = new KeyboardEvent("keydown", { code: "BracketLeft", bubbles: true, cancelable: true });
     inp.dispatchEvent(ev);
-    // Bracket key in no mode calls preventDefault today, so the test asserts the
-    // guard fires before any branch gets a chance to claim it.
     expect(ev.defaultPrevented).toBe(false);
     document.body.removeChild(inp);
   });
 });
 
-// ---------------------------------------------------------------------------
-// E — Swap in bug mode
-// ---------------------------------------------------------------------------
-describe("E — Swap in bug mode", () => {
-  // E1: swap=false → BracketLeft is dit (claimed); BracketRight is not.
-  // Bites: swap not applied / applied to the wrong side.
+describe.skip("E — Swap in bug mode [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("E1 (no swap): BracketLeft gets preventDefault (dit lever)", async () => {
     await setupKeyboard({ swapped: false });
     const ev = kdn("BracketLeft");
     window.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);
-    // Stop the timer-driven dit stream.
     vi.useFakeTimers();
     vi.advanceTimersByTime(500);
     vi.useRealTimers();
@@ -365,8 +404,6 @@ describe("E — Swap in bug mode", () => {
     expect(ev.defaultPrevented).toBe(false);
   });
 
-  // E2: Space is always the dah regardless of swap state.
-  // Bites: if swap wrongly affects the dah binding.
   it("E2: Space claimed as dah with swap=false", async () => {
     await setupKeyboard({ swapped: false });
     const ev = kdn("Space");
@@ -384,58 +421,22 @@ describe("E — Swap in bug mode", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// B — Bug dit keep-alive (keyboard path)
-//
-// B1: multiple machine-gun BracketLeft keydowns each claim the event.
-// B2: stray keyup mid-stream does NOT stop the NEXT keydown from being claimed.
-//
-// These two properties verify the keep-alive architecture — the keyboard dit
-// stream is driven by timed keydowns, not by keyup/keydown pairs.  Each test
-// uses vi.useFakeTimers() only to advance the keep-alive expiry at the end
-// (so the dit loop does not bleed into later tests).
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// C-record / E-record / B-record — element RECORDING tests (gate-added).
-//
-// The C/D/E/B tests above assert only event.defaultPrevented (the event was
-// *claimed*).  They do NOT assert which ELEMENT was recorded.  The single named
-// point of fragility in design §8 — straightUp({forceEl:"-"}) forcing a short
-// Space tap to a DAH — is invisible to a defaultPrevented-only check: removing
-// the force makes zero of those tests fail.  These tests close that gap by
-// reading the live decode buffer (the "Decoded from your key …" span), which
-// shows "." for a dit and "-" for a dah.  The buffer is read synchronously
-// after the keyup, before the 2.5u char-finalize timer fires.
-//
-// keyWpm defaults to 20 → u = 60ms → dit threshold is durMs < 120ms.  A
-// keydown→keyup pair in jsdom takes a few ms, well under 120ms, so WITHOUT the
-// force a Space tap classifies as a dit (".").  WITH the force it is a dah ("-").
-// ---------------------------------------------------------------------------
-
-// Read the current decode-buffer string (the amber span after the static label).
 function readKeyBuffer() {
   const label = screen.getByText(/Decoded from your key/);
-  // The buffer is the last child span's text content.
   const span = label.querySelector("span");
   return span ? span.textContent : "";
 }
 
-describe("C-record — Space records a DAH element (forced classification)", () => {
-  // C2 (the design's headline bite): a SHORT Space tap must be recorded as a
-  // DAH, not reclassified as a dit by its (short) duration.
-  // Bites: removing forceEl:"-" in the bug keyup arm — without this test that
-  // mutation passes the entire suite.
+describe.skip("C-record — Space records a DAH element [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("C2: a short Space tap is recorded as a DAH ('-'), not a dit ('.')", async () => {
     await setupKeyboard();
     act(() => {
       window.dispatchEvent(kdn("Space"));
-      window.dispatchEvent(kup("Space")); // immediate release → very short durMs
+      window.dispatchEvent(kup("Space"));
     });
-    // Buffer must hold a dah, not a dit.
     expect(readKeyBuffer()).toBe("-");
   });
 
-  // C1: a normal Space hold also records exactly one DAH (sanity for the path).
   it("C1: a Space keydown+keyup records exactly one DAH element", async () => {
     await setupKeyboard();
     act(() => {
@@ -444,67 +445,47 @@ describe("C-record — Space records a DAH element (forced classification)", () 
     });
     const buf = readKeyBuffer();
     expect(buf).toBe("-");
-    expect(buf.length).toBe(1); // exactly one element recorded
+    expect(buf.length).toBe(1);
   });
 });
 
-describe("B-record / E-record — dit lever records DIT elements", () => {
-  // The dit lever must record DITS (".") in the buffer, and Space stays a DAH
-  // regardless of swap.  These confirm the keyboard arm actually drives the
-  // dit engine and the dah path — not just that the events are claimed.
+describe.skip("B-record / E-record — dit lever records DIT elements [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("B-record: holding the dit lever records dits ('.') in the buffer", async () => {
     vi.useRealTimers();
     await setupKeyboard();
     vi.useFakeTimers();
     act(() => {
       window.dispatchEvent(kdn("BracketLeft"));
-      // Let the auto-dit loop emit a couple of dits.
       vi.advanceTimersByTime(150);
     });
-    // Stop the stream cleanly.
     vi.advanceTimersByTime(500);
     const buf = readKeyBuffer();
-    // At least one dit landed and the buffer is all dits (no dah).
     expect(buf.length).toBeGreaterThanOrEqual(1);
     expect(/^\.+$/.test(buf)).toBe(true);
   });
 
-  // B2-record: the keep-alive timer (design §8 fragility #2) must OWN release.
-  // A stray keyup mid-stream must NOT stop the dit loop — dits keep accumulating
-  // across the keyup, driven only by the keep-alive timer.
-  // Bites: if the keyboard dit keyup is wired to honor release (e.g. calls
-  // bugDitUp) — that mutation stops the loop and the buffer stops growing.
   it("B2-record: a stray keyup is ignored — a dit still fires from keep-alive alone", async () => {
-    // The keep-alive timer owns release.  After a single keydown the loop is
-    // running and the keep-alive is armed for max(160ms, 2u).  A stray keyup
-    // arrives, then the loop's NEXT dit-cycle fires with NO intervening keydown.
-    // With the keep-alive owning release (ditHeld still true), that dit lands.
-    // Under the honor-keyup mutation the keyup clears ditHeld immediately, so the
-    // next cycle sees no held lever and emits nothing — the buffer stops growing.
-    // keyWpm=20 → dit cadence is durMs+u = 120ms; keep-alive floor 160ms.
     vi.useRealTimers();
     await setupKeyboard();
     vi.useFakeTimers();
     act(() => {
-      window.dispatchEvent(kdn("BracketLeft")); // t=0: loop starts, dit #1 fires
-      vi.advanceTimersByTime(40);               // t=40: before dit #2 (due ~t=120)
+      window.dispatchEvent(kdn("BracketLeft"));
+      vi.advanceTimersByTime(40);
     });
-    const before = readKeyBuffer().length;     // 1 dit so far
+    const before = readKeyBuffer().length;
     expect(before).toBeGreaterThanOrEqual(1);
     act(() => {
-      window.dispatchEvent(kup("BracketLeft")); // STRAY keyup at t=40 — must be ignored
-      vi.advanceTimersByTime(120);              // t=160: dit #2 cycle fires (no new keydown)
+      window.dispatchEvent(kup("BracketLeft"));
+      vi.advanceTimersByTime(120);
     });
     const after = readKeyBuffer().length;
-    // With keep-alive owning release, dit #2 landed despite the stray keyup.
     expect(after).toBeGreaterThan(before);
-    vi.advanceTimersByTime(600);               // keep-alive expires, loop stops cleanly
+    vi.advanceTimersByTime(600);
   });
 
   it("E-record: Space is a DAH and the swapped dit lever is a DIT (swap=true)", async () => {
     vi.useRealTimers();
     await setupKeyboard({ swapped: true });
-    // Space → dah regardless of swap.
     act(() => {
       window.dispatchEvent(kdn("Space"));
       window.dispatchEvent(kup("Space"));
@@ -513,12 +494,8 @@ describe("B-record / E-record — dit lever records DIT elements", () => {
   });
 });
 
-describe("B — Bug dit keep-alive (keyboard)", () => {
+describe.skip("B — Bug dit keep-alive (keyboard) [DORMANT: BUG_KEY_ENABLED=false]", () => {
   it("B1: machine-gun BracketLeft keydowns are each claimed (preventDefault)", async () => {
-    vi.useFakeTimers();
-    // Render with real async infrastructure before fake timers take over the loop.
-    // We need real timers for the render itself, but here we start them right away.
-    // The render helpers (userEvent.setup) need real timers; set fake after render.
     vi.useRealTimers();
     await setupKeyboard();
     vi.useFakeTimers();
@@ -527,32 +504,25 @@ describe("B — Bug dit keep-alive (keyboard)", () => {
       const ev = kdn("BracketLeft");
       window.dispatchEvent(ev);
       expect(ev.defaultPrevented).toBe(true);
-      vi.advanceTimersByTime(30); // 30ms between machine-gun keydowns
+      vi.advanceTimersByTime(30);
     }
-    // Advance past keep-alive so the dit stream stops cleanly.
     vi.advanceTimersByTime(500);
   });
 
-  // B2: stray keyup mid-stream does NOT stop the NEXT keydown from being claimed.
-  // Bites: if keyup is honored mid-stream (stops ditHeld; next keydown doesn't re-start).
   it("B2: stray keyup mid-stream — next keydown still gets preventDefault", async () => {
     vi.useRealTimers();
     await setupKeyboard();
     vi.useFakeTimers();
 
-    // First keydown — starts the dit stream.
     const ev1 = kdn("BracketLeft");
     window.dispatchEvent(ev1);
     expect(ev1.defaultPrevented).toBe(true);
 
-    // Stray keyup — must be ignored by the keyboard path.
     window.dispatchEvent(kup("BracketLeft"));
 
-    // Advance 30ms (within keep-alive window) then another keydown.
     vi.advanceTimersByTime(30);
     const ev2 = kdn("BracketLeft");
     window.dispatchEvent(ev2);
-    // The dit stream must still be active: second keydown also gets claimed.
     expect(ev2.defaultPrevented).toBe(true);
 
     vi.advanceTimersByTime(500);

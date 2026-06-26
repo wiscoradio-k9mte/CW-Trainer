@@ -482,6 +482,9 @@ function useMorsePlayer() {
   return { play, stop, playing, keyDownTone, keyUpTone, beep, startNoise, setNoiseLevel, stopNoise, unlock };
 }
 
+// BUG key hidden 2026-06-25 pending research (machine-gun ]->hold conversion); see docs/design-bug-key.md + brief.
+const BUG_KEY_ENABLED = false;
+
 // Bug dit keep-alive duration (ms).
 // Must be longer than both the VBand inter-keydown gap (~30–60ms) and one dit
 // period at the slowest supported WPM, but short enough that lever release feels
@@ -1066,10 +1069,11 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
   );
 }
 
-// SwapToggle — standalone swap button rendered above the key/paddle surface.
-// Extracted from KeyModeControls so it can sit in main (adjacent to the key)
-// rather than in the options rail. Visible for paddle and bug; hidden for straight.
-// This placement means swap travels with the surface in both wide and narrow layouts.
+// SwapToggle — standalone swap button rendered immediately after KeyModeControls.
+// Visible for paddle and bug; hidden for straight key (no levers to swap).
+// In KeyTrainer it lives in optionsJSX alongside the type selector, so it
+// portals into the rail on wide and renders inline on narrow — matching QSO's
+// KeyInput, where it also sits directly below the type selector.
 function SwapToggle({ swap, onSwap, keyType }) {
   if (keyType !== "paddle" && keyType !== "bug") return null;
   const helpText = keyType === "bug"
@@ -1096,15 +1100,16 @@ function SwapToggle({ swap, onSwap, keyType }) {
 // in the options rail (wide) while the key surface itself stays in main. Both
 // pieces still drive the same keyer instance held by KeyTrainer — no state moves.
 // QsoSim keeps using the combined KeyInput below and is unaffected by this split.
-// The swap button has been REMOVED from this component — it now lives in SwapToggle,
-// placed directly above the key surface in main so it stays adjacent to what it controls.
+// The swap button is NOT inside this component — it lives in SwapToggle, rendered
+// by the caller immediately after this component so they travel as a cluster.
 // modeB / onModeB: optional — only passed when the parent is KeyTrainer (not QsoSim,
 // which shows the full KeyInput). The Mode B toggle is only visible for keyType==="paddle".
 function KeyModeControls({ keyType, onKeyType, modeB, onModeB }) {
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ display: "flex", gap: 6 }}>
-        {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"], ["bug", "BUG"]].map(([v, l]) => (
+        {/* BUG is only offered when BUG_KEY_ENABLED is true (shelved pending research). */}
+        {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"], ...(BUG_KEY_ENABLED ? [["bug", "BUG"]] : [])].map(([v, l]) => (
           <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
             style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: "0.6875rem", ...(keyType === v ? { borderColor: "#F2A93B", color: "#F2A93B" } : { color: "#8A929C" }) }}>
             {l}
@@ -1581,9 +1586,10 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   };
 
   // optionsJSX — category selector (stepper + direct-pick) + key-type controls
-  // (PADDLE / STRAIGHT KEY toggle + swap). On wide these portal into the rail;
-  // on narrow they render inline above the practice panels (today's order).
-  // All handlers close over local state and the keyer — no prop threading needed.
+  // (PADDLE / STRAIGHT KEY toggle) + SwapToggle, clustered together.
+  // On wide these portal into the rail; on narrow they render inline above the
+  // practice panels. Matches QSO's KeyInput pattern: swap directly below the
+  // type selector in both layouts. Handlers close over local state and the keyer.
   const optionsJSX = (
     <>
       <div style={{ ...S.label, marginBottom: 8 }}>Drill category — climb as you improve</div>
@@ -1622,15 +1628,20 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
           </button>
         ))}
       </div>
-      {/* Key-type toggle (PADDLE / STRAIGHT KEY / BUG). The swap toggle is NOT here —
-          it lives above the key surface in main (SwapToggle) so it travels with the key
-          in both wide and narrow layouts rather than going to the rail.
+      {/* Key-type toggle (PADDLE / STRAIGHT KEY / BUG) + swap toggle clustered together.
+          SwapToggle follows immediately below so it travels with the type selector:
+          into the rail on wide, inline on narrow — same pattern as QSO's KeyInput.
           Mode B toggle appears below the type row when paddle is active. */}
       <KeyModeControls
         keyType={settings.keyType}
         onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
         modeB={settings.iambicModeB}
         onModeB={(v) => setSettings((s) => ({ ...s, iambicModeB: v }))}
+      />
+      <SwapToggle
+        swap={settings.paddleSwap}
+        onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+        keyType={settings.keyType}
       />
     </>
   );
@@ -1659,7 +1670,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
           <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
             <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
             <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle above the key if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
+              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle (near the key-type selector) if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
             </p>
           </div>
         </>
@@ -1700,16 +1711,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
             ◉ HH — ERROR SIGNAL, CLEARED
           </div>
         )}
-        {/* SwapToggle sits above the key surface in main (both wide and narrow layouts),
-            so it is always adjacent to what it controls regardless of rail presence.
-            Visible for paddle and bug; hidden for straight key. */}
-        <SwapToggle
-          swap={settings.paddleSwap}
-          onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
-          keyType={settings.keyType}
-        />
-        {/* Key surface — toggle is in the rail (wide) or options panel (narrow).
-            Swap is above (SwapToggle). Surface picks the correct component for each mode. */}
+        {/* Key surface — type toggle and swap are in optionsJSX (rail on wide,
+            inline on narrow), keeping them clustered together in both layouts.
+            Surface picks the correct component for each mode. */}
         <div style={{ marginTop: 4 }}>
           {settings.keyType === "paddle"
             ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
@@ -3551,7 +3555,16 @@ export default function CWTrainer() {
   // Generic placeholder identity — the user sets their own in Settings, and it
   // persists from there. W1AW (the ARRL's station, in Newington CT) is the
   // universally recognized example callsign, so it reads as "change me."
-  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...store.load("settings", {}) }));
+  const [settings, setSettings] = useState(() => {
+    const loaded = { ...DEFAULT_SETTINGS, ...store.load("settings", {}) };
+    // If BUG is hidden and a prior session persisted keyType:"bug", fall back to
+    // "paddle" so the user lands on a working key type. Note: the settings persist
+    // effect writes this coerced value back, so the stored "bug" IS overwritten on
+    // first load — re-enabling the flag lands on paddle (the user re-selects BUG).
+    // Acceptable because BUG never shipped: only local test builds can hold "bug".
+    if (!BUG_KEY_ENABLED && loaded.keyType === "bug") loaded.keyType = "paddle";
+    return loaded;
+  });
   // C4: nudge is visible while the call is still the default W1AW AND the user
   // hasn't dismissed it. Dismissal persists so it shows at most once. Changing
   // the call also satisfies it — we derive visibility rather than storing it.
