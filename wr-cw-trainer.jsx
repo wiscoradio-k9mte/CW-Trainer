@@ -921,20 +921,83 @@ const S = {
   label: { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" },
   btn: { background: "#2A313A", border: "1px solid #3A434E", color: "#E8E2D6", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1 },
   btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
+  // M1: "1.25rem" = type.readout; literal kept because S.type is defined later in the same object
   display: { background: "#080A0D", border: "1px solid #3A434E", borderRadius: 8, padding: "14px 16px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.25rem", letterSpacing: 3, minHeight: 56, wordBreak: "break-all", boxShadow: "inset 0 2px 12px rgba(0,0,0,0.6)" },
+  // M1: "1.125rem" = type.title; literal kept because S.type is defined later in the same object
   input: { background: "#080A0D", border: "1px solid #3A434E", borderRadius: 8, padding: "12px 14px", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem", letterSpacing: 2, width: "100%", boxSizing: "border-box", textTransform: "uppercase" },
   // sr-only: visually hidden but reachable by screen readers (clip technique, NOT
   // display:none or aria-hidden — those remove the node from the accessibility tree).
   // Used for always-mounted live regions: the region exists empty when idle and its
   // text is set on the event, so AT sees a *change* and announces it.
   srOnly: { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0,0,0,0)" },
+
+  // ---- Token layer (H1) ----
+  // Grounds: three deliberate elevation levels. Every near-black in the app maps to one.
+  ground: {
+    app:   "#0D0F13",  // page background (deepest visible chrome)
+    panel: "#191C21",  // raised card / panel surface
+    well:  "#080A0D",  // inset readout/input "well" (recessed below panel)
+  },
+  // Spacing scale (px — structural, must NOT scale with font preference).
+  space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 },
+  // Corner radii (px).
+  radius: { sm: 8, md: 10, lg: 16 },
+  // Semantic tones (status / verdict).
+  tone: {
+    ok:   "#8FCB9B",  // good / on-target / solid
+    warn: "#F2A93B",  // caution / loose — same hue as the amber accent, intentionally
+    err:  "#E07A5F",  // tight / error / poor
+  },
+  // Text colors (see H2 for the contrast-driven values).
+  text: {
+    body:        "#E8E2D6",  // primary body text on dark grounds
+    bright:      "#C9CDD3",  // emphasized inline text
+    dim:         "#8A929C",  // informational / instructional gray (AA floor — see H2)
+    faint:       "#5A626C",  // DECORATIVE ONLY — oversized/brand, never small reading text (H2)
+    hairline:    "#3A434E",  // DECORATIVE ONLY — footer fine print, dividers (H2)
+    amber:       "#F2A93B",  // accent / dial-glow
+    code:        "#FFD89B",  // monospace readout (callsigns, Morse, code)
+    eyebrowDim:  "#8A6A33",  // dim-amber wordmark eyebrow — DECORATIVE wordmark only (H2)
+    eyebrowText: "#A8823F",  // dim-amber when it carries readable WORDS (H2)
+  },
+  // Standard borders.
+  border: {
+    panel:   "1px solid #2E343C",
+    control: "1px solid #3A434E",
+    amber:   "1px solid #F2A93B",
+  },
+  // keySurface: the shared "physical key" recipe for TouchKey / PaddleKey / BugKey.
+  // Defined once here; all three spread it so the gradient/border/shadow are a
+  // single source of truth.
+  keySurface: {
+    background:   "radial-gradient(ellipse at 50% 30%, #3A3128, #241F18)",
+    border:       "2px solid #6B5837",
+    borderRadius: 16,
+    boxShadow:    "0 4px 0 #15110C, inset 0 1px 0 rgba(255,200,120,0.15)",
+    color:        "#F2A93B",
+    fontFamily:   "ui-monospace, monospace",
+  },
+  // selected: consistent toggle/active state — amber border + text + weight 700.
+  // The fontWeight shift is the non-color cue (L2). Inactive half: color: S.text.dim.
+  // Uses `border` (not `borderColor`) to avoid the React shorthand-vs-longhand style warning
+  // when spread alongside S.btn which already sets `border`.
+  selected: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", fontWeight: 700 },
+  // Type scale (rem — scales with OS font preference; structural px values stay px).
+  type: {
+    display: "2rem",      // 32px — splash/brand hero
+    readout: "1.25rem",   // 20px — primary code readout (Display)
+    title:   "1.125rem",  // 18px — input echo, section heroes
+    body:    "0.875rem",  // 14px — buttons, standard UI text
+    label:   "0.6875rem", // 11px — tracked uppercase labels, help text (the workhorse)
+    micro:   "0.625rem",  // 10px — finest print (footer tagline, dense meta)
+  },
 };
 
 function Display({ children, cursor }) {
   return (
     <div style={S.display}>
       {children}
-      {cursor && <span style={{ animation: "blink 1s steps(1) infinite", color: "#F2A93B" }}>▮</span>}
+      {cursor && <span className="wr-cursor" style={{ color: "#F2A93B" }}>▮</span>}
     </div>
   );
 }
@@ -954,18 +1017,19 @@ function TouchKey({ keyDown, keyUp }) {
       onPointerCancel={keyUp}
       onContextMenu={(e) => e.preventDefault()}
       style={{
+        // H1: shared key-surface recipe; per-component deltas below
+        ...S.keySurface,
         userSelect: "none", touchAction: "none", WebkitUserSelect: "none",
-        background: "radial-gradient(ellipse at 50% 30%, #3A3128, #241F18)",
-        border: "2px solid #6B5837", borderRadius: 16, padding: "34px 0",
-        textAlign: "center", color: "#F2A93B", fontFamily: "ui-monospace, monospace",
+        padding: "34px 0", textAlign: "center",
         fontSize: 16, letterSpacing: 3, cursor: "pointer", marginTop: 12,
-        boxShadow: "0 4px 0 #15110C, inset 0 1px 0 rgba(255,200,120,0.15)",
       }}
     >
       ● KEY ●
       {/* D3: first-timer dit/dah cue — one line, lightweight, gray, ≥12px */}
-      <div style={{ fontSize: "0.75rem", color: "#8A6A33", marginTop: 6, letterSpacing: 1 }}>short tap = dit · long hold = dah</div>
-      <div style={{ fontSize: "0.6875rem", color: "#5A626C", marginTop: 3, letterSpacing: 1 }}>or use SPACEBAR</div>
+      {/* H2: bump dim-amber instruction text to eyebrowText (#A8823F) for AA contrast */}
+      <div style={{ fontSize: S.type.label, color: S.text.eyebrowText, marginTop: 6, letterSpacing: 1 }}>short tap = dit · long hold = dah</div>
+      {/* H2: floor "or use SPACEBAR" to S.text.dim (#8A929C) — carries readable words */}
+      <div style={{ fontSize: S.type.label, color: S.text.dim, marginTop: 3, letterSpacing: 1 }}>or use SPACEBAR</div>
     </div>
   );
 }
@@ -986,17 +1050,16 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
       onPointerCancel={() => paddleUp(el)}
       onContextMenu={(e) => e.preventDefault()}
       style={{
+        // H1: shared key-surface recipe; per-component deltas below
+        ...S.keySurface,
         flex: 1, userSelect: "none", touchAction: "none", WebkitUserSelect: "none",
-        background: "radial-gradient(ellipse at 50% 30%, #3A3128, #241F18)",
-        border: "2px solid #6B5837", borderRadius: 16, padding: "34px 0",
-        textAlign: "center", color: "#F2A93B", fontFamily: "ui-monospace, monospace",
-        cursor: "pointer",
-        boxShadow: "0 4px 0 #15110C, inset 0 1px 0 rgba(255,200,120,0.15)",
+        padding: "34px 0", textAlign: "center", cursor: "pointer",
       }}
     >
       <div style={{ fontSize: 26, lineHeight: 1 }}>{glyph}</div>
-      <div style={{ fontSize: "0.875rem", letterSpacing: 3, marginTop: 6 }}>{label}</div>
-      <div style={{ fontSize: "0.75rem", color: "#8A6A33", marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
+      <div style={{ fontSize: S.type.body, letterSpacing: 3, marginTop: 6 }}>{label}</div>
+      {/* H2: bump dim-amber instruction text to eyebrowText (#A8823F) for AA contrast */}
+      <div style={{ fontSize: S.type.label, color: S.text.eyebrowText, marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
     </div>
   );
   const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow");
@@ -1028,17 +1091,16 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
       onPointerCancel={onUp}
       onContextMenu={(e) => e.preventDefault()}
       style={{
+        // H1: shared key-surface recipe; per-component deltas below
+        ...S.keySurface,
         flex: 1, userSelect: "none", touchAction: "none", WebkitUserSelect: "none",
-        background: "radial-gradient(ellipse at 50% 30%, #3A3128, #241F18)",
-        border: "2px solid #6B5837", borderRadius: 16, padding: "34px 0",
-        textAlign: "center", color: "#F2A93B", fontFamily: "ui-monospace, monospace",
-        cursor: "pointer",
-        boxShadow: "0 4px 0 #15110C, inset 0 1px 0 rgba(255,200,120,0.15)",
+        padding: "34px 0", textAlign: "center", cursor: "pointer",
       }}
     >
       <div style={{ fontSize: 26, lineHeight: 1 }}>{glyph}</div>
-      <div style={{ fontSize: "0.875rem", letterSpacing: 3, marginTop: 6 }}>{label}</div>
-      <div style={{ fontSize: "0.75rem", color: "#8A6A33", marginTop: 4, letterSpacing: 1 }}>{sub}</div>
+      <div style={{ fontSize: S.type.body, letterSpacing: 3, marginTop: 6 }}>{label}</div>
+      {/* H2: bump dim-amber instruction text to eyebrowText (#A8823F) for AA contrast */}
+      <div style={{ fontSize: S.type.label, color: S.text.eyebrowText, marginTop: 4, letterSpacing: 1 }}>{sub}</div>
     </div>
   );
 
@@ -1086,7 +1148,7 @@ function SwapToggle({ swap, onSwap, keyType }) {
         onClick={() => onSwap(!swap)}
         title="Swap dit/dah for left-handed keying"
         aria-label={`Swap dit and dah paddles — currently ${swap ? "left-handed" : "right-handed"}`}
-        style={{ ...S.btn, padding: "7px 12px", fontSize: "0.75rem", color: swap ? "#F2A93B" : "#8A929C", ...(swap ? { borderColor: "#F2A93B" } : {}) }}>
+        style={{ ...S.btn, padding: "7px 12px", fontSize: "0.75rem", ...(swap ? { color: "#F2A93B", borderColor: "#F2A93B", fontWeight: 700 } : { color: S.text.dim }) }}>
         ⇄ {swap ? "L" : "R"}
       </button>
       <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 6 }}>
@@ -1110,9 +1172,10 @@ function KeyModeControls({ keyType, onKeyType, modeB, onModeB }) {
     <div style={{ marginTop: 12 }}>
       <div style={{ display: "flex", gap: 6 }}>
         {/* BUG is only offered when BUG_KEY_ENABLED is true (shelved pending research). */}
+        {/* L2: S.selected spreads fontWeight:700 as the non-color selected cue */}
         {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"], ...(BUG_KEY_ENABLED ? [["bug", "BUG"]] : [])].map(([v, l]) => (
           <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
-            style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: "0.6875rem", ...(keyType === v ? { borderColor: "#F2A93B", color: "#F2A93B" } : { color: "#8A929C" }) }}>
+            style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: "0.6875rem", ...(keyType === v ? S.selected : { color: S.text.dim }) }}>
             {l}
           </button>
         ))}
@@ -1127,7 +1190,7 @@ function KeyModeControls({ keyType, onKeyType, modeB, onModeB }) {
                 aria-pressed={modeB === val}
                 onClick={() => onModeB(val)}
                 style={{ ...S.btn, flex: 1, padding: "6px 8px", fontSize: "0.6875rem",
-                  ...(modeB === val ? { borderColor: "#F2A93B", color: "#F2A93B" } : { color: "#8A929C" }) }}>
+                  ...(modeB === val ? S.selected : { color: S.text.dim }) }}>
                 {label}
               </button>
             ))}
@@ -1191,6 +1254,65 @@ function Score({ pct }) {
       <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 30, color, fontWeight: 700 }}>{pct}%</span>
       <span style={{ ...S.label, color }}>{msg}</span>
     </div>
+  );
+}
+
+/* ================= BANNER (M4) ================= */
+// Replaces the bespoke W1AW nudge and no-persist warning rows.
+// variant="note"    → neutral ground, control border, role="note"
+// variant="warning" → neutral ground, amber border, role="status"
+// onDismiss is optional — omit for a persistent banner (no ✕ button).
+function Banner({ variant, onDismiss, dismissLabel, children }) {
+  const borderStyle = variant === "warning" ? S.border.amber : S.border.control;
+  const textColor = variant === "warning" ? S.text.bright : S.text.dim;
+  const role = variant === "warning" ? "status" : "note";
+  return (
+    <div
+      className="wr-full"
+      role={role}
+      style={{
+        display: "flex", alignItems: "flex-start", gap: S.space.md,
+        background: S.ground.panel, border: borderStyle,
+        borderRadius: S.radius.sm, padding: "10px 14px", marginBottom: S.space.lg,
+      }}
+    >
+      <span style={{
+        flex: 1, fontSize: S.type.label, fontFamily: "system-ui, sans-serif",
+        lineHeight: 1.6, color: textColor,
+      }}>
+        {children}
+      </span>
+      {onDismiss && (
+        <button
+          aria-label={dismissLabel}
+          onClick={onDismiss}
+          style={{ ...S.btn, padding: "2px 8px", fontSize: S.type.label, lineHeight: 1, flexShrink: 0, color: S.text.dim }}
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAG (M4) ================= */
+// Verdict chip — color + text word so there's always a non-color cue (L2 rule).
+// A Tag MUST always render its verdict word — never a color-only dot.
+// verdict ∈ "good" | "loose" | "tight" | undefined
+const VERDICT_COLOR = {
+  good:  S.tone.ok,    // #8FCB9B
+  loose: S.tone.warn,  // #F2A93B
+  tight: S.tone.err,   // #E07A5F
+};
+function Tag({ verdict, children }) {
+  const color = VERDICT_COLOR[verdict] ?? S.text.dim;
+  return (
+    <span style={{
+      fontSize: S.type.label, fontFamily: "system-ui, sans-serif",
+      letterSpacing: 1, color,
+    }}>
+      {children}
+    </span>
   );
 }
 
@@ -1309,7 +1431,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
       <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
         This is where the receiving ear gets built. Start at the top of the ladder — a single character — and climb as each rung gets comfortable: pairs, short groups, real words, callsigns, full phrases. Characters always play at full speed; the Farnsworth spacing gives you thinking room between them. Most ops can send faster than they can copy. This tab closes that gap.
       </p>
-      <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+      <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
         <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>How to practice</div>
         <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
           The goal is instant character recognition — hearing each letter as a single sound and knowing it on the spot, without counting dits and dahs or pausing to decode. To build that reflex, keep a pencil and paper handy: listen to the full transmission, write each character by hand the instant you recognize it, then type your answer once playback ends. Writing as you hear trains the immediate sound-to-letter response that fluent copy depends on, and it keeps you from splitting your focus between listening and typing. It's also how copy is done on the air.
@@ -1586,7 +1708,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   };
 
   // Verdict color: good=green, loose=caution-amber, tight=red
-  const verdictColor = (v) => v === "good" ? "#8FCB9B" : v === "loose" ? "#F2A93B" : "#E07A5F";
+  // verdictLabel: human-readable uppercase chip text for the KEY fist panel
   const verdictLabel = (v) => v === "good" ? "GOOD" : v === "loose" ? "LOOSE" : "TIGHT";
 
   // pickCat: centralises the "change category" side-effects so the stepper and
@@ -1682,7 +1804,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
           <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
             Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
           </p>
-          <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+          <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
             <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
             <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
               Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle (near the key-type selector) if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
@@ -1703,7 +1825,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           <button style={S.btnAmber} onClick={newTarget}>▶ NEW TEXT</button>
           <button style={S.btn} onClick={() => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq })}>
-            🔊 HEAR IT
+            ♪ HEAR IT
           </button>
           <button style={S.btn} onClick={() => { keyer.clear(); setResult(null); setAnalysis(null); }}>✕ CLEAR</button>
         </div>
@@ -1754,7 +1876,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
             {analysis && analysis.elements > 0 && (
               <div
                 aria-hidden="true"
-                style={{ marginTop: 14, background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "12px 14px" }}
+                style={{ marginTop: 14, background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "12px 14px" }}
               >
                 {/* aria-hidden: announcement comes from the always-mounted scoreLive region
                     above. The scoreLive text includes the fist summary in plain English so
@@ -1763,7 +1885,8 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                 <div style={{ ...S.label, color: "#8A929C", marginBottom: 2 }}>
                   Fist feedback
                 </div>
-                <div style={{ fontSize: "0.75rem", color: "#5A626C", fontFamily: "system-ui, sans-serif", marginBottom: 8, lineHeight: 1.5 }}>
+                {/* H2: instructional text — floor to S.text.dim for AA contrast */}
+                <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginBottom: 8, lineHeight: 1.5 }}>
                   Your <em>fist</em> — how your timing reads to another operator.
                   Spacing ratios are in units of <strong style={{ color: "#8A929C" }}>u</strong> (u = one dit length).
                 </div>
@@ -1779,7 +1902,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                 </div>
                 {/* B2: WPM delta vs configured key speed — only shown when sample is large enough */}
                 {analysis.lowSample ? (
-                  <div style={{ fontSize: "0.75rem", color: "#5A626C", fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>
+                  <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginBottom: 8 }}>
                     Send a full line for a reliable estimate.
                   </div>
                 ) : (
@@ -1788,7 +1911,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                       vs target ({settings.keyWpm} wpm)
                     </span>
                     <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem", fontWeight: 700,
-                      color: analysis.wpmVerdict === "on target" ? "#8FCB9B" : "#F2A93B", letterSpacing: 1 }}>
+                      color: analysis.wpmVerdict === "on target" ? S.tone.ok : S.tone.warn, letterSpacing: 1 }}>
                       {analysis.wpmVerdict === "on target"
                         ? "on target"
                         : `${analysis.wpmDelta > 0 ? "+" : ""}${analysis.wpmDelta} (${analysis.wpmVerdict})`}
@@ -1813,14 +1936,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                         {label}
                         <span style={{ fontSize: "0.75rem", display: "block" }}>{sub}</span>
                       </span>
-                      <span style={{
-                        fontFamily: "ui-monospace, monospace",
-                        fontSize: "0.8125rem",
-                        fontWeight: 700,
-                        color: verdictColor(sp.verdict),
-                        letterSpacing: 1,
-                      }}>
-                        {verdictLabel(sp.verdict)}
+                      {/* M4: Tag carries the verdict word; ratio suffix keeps the numeric value alongside */}
+                      <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem", fontWeight: 700, letterSpacing: 1 }}>
+                        <Tag verdict={sp.verdict}>{verdictLabel(sp.verdict)}</Tag>
                         {sp.ratio !== null && (
                           <span style={{ fontWeight: 400, fontSize: "0.75rem", color: "#8A929C", marginLeft: 6 }}>
                             {sp.ratio.toFixed(1)}u
@@ -1840,14 +1958,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                       Dah length
                       <span style={{ fontSize: "0.75rem", display: "block" }}>dahs vs 3× dit (ideal 3u)</span>
                     </span>
-                    <span style={{
-                      fontFamily: "ui-monospace, monospace",
-                      fontSize: "0.8125rem",
-                      fontWeight: 700,
-                      color: verdictColor(analysis.weighting.verdict),
-                      letterSpacing: 1,
-                    }}>
-                      {verdictLabel(analysis.weighting.verdict)}
+                    {/* M4: Tag carries the verdict word; ratio suffix keeps the numeric value alongside */}
+                    <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem", fontWeight: 700, letterSpacing: 1 }}>
+                      <Tag verdict={analysis.weighting.verdict}>{verdictLabel(analysis.weighting.verdict)}</Tag>
                       <span style={{ fontWeight: 400, fontSize: "0.75rem", color: "#8A929C", marginLeft: 6 }}>
                         {analysis.weighting.ratio.toFixed(1)}u
                       </span>
@@ -1862,9 +1975,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Footnote: machine-timed dit spacing (paddle and bug both machine-time dits) */}
+                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim */}
                 {(settings.keyType === "paddle" || settings.keyType === "bug") && (
-                  <div style={{ fontSize: "0.75rem", color: "#5A626C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
+                  <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
                     {settings.keyType === "bug"
                       ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only. Your dah length is graded above."
                       : "Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only."}
@@ -2449,7 +2562,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
             <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
           </div>
 
-          <div style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+          <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
             <div style={{ ...S.label, marginBottom: 6 }}>
               Break in with your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
             </div>
@@ -2492,7 +2605,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
           <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
             <button
               aria-label="Abandon this contact and return to setup"
-              style={{ ...S.btn, color: "#5A626C", fontSize: "0.6875rem" }}
+              style={{ ...S.btn, color: S.text.dim, fontSize: "0.6875rem" }}
               onClick={() => { player.stop(); setQso(null); keyer.clear(); }}
             >✕ ABANDON CONTACT / back to setup</button>
           </div>
@@ -2545,7 +2658,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
           <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
             <button
               aria-label="Abandon this contact and return to setup"
-              style={{ ...S.btn, color: "#5A626C", fontSize: "0.6875rem" }}
+              style={{ ...S.btn, color: S.text.dim, fontSize: "0.6875rem" }}
               onClick={() => { player.stop(); setQso(null); keyer.clear(); }}
             >✕ ABANDON CONTACT / back to setup</button>
           </div>
@@ -2571,7 +2684,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
             <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 22, letterSpacing: 3 }}>QSO COMPLETE — 73</div>
             <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif" }}>{qso.summary}</p>
             {scoreSummary}
-            <button style={{ ...S.btnAmber, marginTop: 10 }} onClick={start}>📻 NEXT CONTACT</button>
+            <button style={{ ...S.btnAmber, marginTop: 10 }} onClick={start}>▶ NEXT CONTACT</button>
           </div>
         );
       })()}
@@ -2616,7 +2729,7 @@ function LingoGuide({ player, settings }) {
                 <button key={term} onClick={() => say(term)}
                   aria-label={`Hear ${term} in Morse`}
                   style={{ display: "flex", gap: 12, width: "100%", background: "transparent", border: "none", borderBottom: "1px solid #23272D", padding: "9px 0", cursor: "pointer", textAlign: "left", alignItems: "baseline" }}>
-                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1rem", minWidth: 64, letterSpacing: 1 }}>{term} <span style={{ color: "#8A929C", fontSize: "0.6875rem" }}>🔊</span></span>
+                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1rem", minWidth: 64, letterSpacing: 1 }}>{term} <span style={{ color: "#8A929C", fontSize: "0.6875rem" }}>♪</span></span>
                   <span style={{ color: "#C9CDD3", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>{meaning}</span>
                 </button>
               ))}
@@ -2635,7 +2748,7 @@ function WalkLine({ who, text, why, onHear }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
         <span style={{ ...S.label, color: who === "YOU" ? "#F2A93B" : "#8FCB9B" }}>{who}</span>
         <button style={{ ...S.btn, padding: "3px 10px", fontSize: "0.6875rem" }}
-          aria-label={`Hear this in Morse`} onClick={() => onHear(text)}>🔊 HEAR</button>
+          aria-label={`Hear this in Morse`} onClick={() => onHear(text)}>♪ HEAR</button>
       </div>
       <div style={{ ...S.display, fontSize: "0.9375rem", letterSpacing: 2, minHeight: 0, padding: "10px 12px" }}>{text}</div>
       <p style={{ color: "#8A929C", fontSize: "0.78125rem", fontFamily: "system-ui, sans-serif", margin: "6px 0 0", lineHeight: 1.55 }}>{why}</p>
@@ -2666,13 +2779,13 @@ function OnAirGuide({ player, settings }) {
           <div style={{ ...S.label, marginBottom: 8 }}>Anatomy of a CQ</div>
           <div style={{ ...S.display, fontSize: 16, letterSpacing: 2, marginBottom: 6 }}>{myCq}</div>
           <button style={{ ...S.btn, marginBottom: 14, fontSize: "0.75rem" }}
-            aria-label="Hear the whole CQ call in Morse" onClick={() => say(myCq)}>🔊 HEAR THE WHOLE CALL</button>
+            aria-label="Hear the whole CQ call in Morse" onClick={() => say(myCq)}>♪ HEAR THE WHOLE CALL</button>
           {CQ_ANATOMY.map(([seg, why]) => (
             <div key={seg} style={{ display: "flex", gap: 12, borderBottom: "1px solid #23272D", padding: "10px 0", alignItems: "baseline" }}>
               <button onClick={() => say(sub(seg))}
                 aria-label={`Hear ${sub(seg)} in Morse`}
                 style={{ background: "transparent", border: "none", cursor: "pointer", fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "0.9375rem", minWidth: 110, textAlign: "left", padding: 0, letterSpacing: 1 }}>
-                {sub(seg)} <span style={{ color: "#8A929C", fontSize: "0.625rem" }}>🔊</span>
+                {sub(seg)} <span style={{ color: "#8A929C", fontSize: "0.625rem" }}>♪</span>
               </button>
               <span style={{ color: "#C9CDD3", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>{why}</span>
             </div>
@@ -2693,13 +2806,13 @@ function OnAirGuide({ player, settings }) {
             {[["599", "Perfect copy, loud, clean"], ["579", "Solid copy, good signal"], ["559", "Workable but weak"]].map(([r, d]) => (
               <button key={r} onClick={() => say(r)} aria-label={`Hear ${r} in Morse`}
                 style={{ ...S.btn, flex: 1, padding: "10px 4px", textAlign: "center" }}>
-                <div style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem" }}>{r} <span style={{ fontSize: "0.625rem", color: "#8A929C" }}>🔊</span></div>
+                <div style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1.125rem" }}>{r} <span style={{ fontSize: "0.625rem", color: "#8A929C" }}>♪</span></div>
                 <div style={{ fontSize: "0.625rem", color: "#8A929C", marginTop: 4, fontFamily: "system-ui, sans-serif" }}>{d}</div>
               </button>
             ))}
           </div>
           <p style={{ color: "#8A929C", fontSize: "0.78125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
-            In contests and pileups everyone sends 599 regardless — it's a formality there, and often compressed to cut numbers: <button onClick={() => say("5NN")} aria-label="Hear 5NN in Morse" style={{ background: "transparent", border: "none", color: "#FFD89B", fontFamily: "ui-monospace, monospace", cursor: "pointer", padding: 0, fontSize: "0.8125rem" }}>5NN 🔊</button> where 9 becomes N and 0 becomes T. In a ragchew, send the honest number — a true 559 tells the other op something useful about propagation.
+            In contests and pileups everyone sends 599 regardless — it's a formality there, and often compressed to cut numbers: <button onClick={() => say("5NN")} aria-label="Hear 5NN in Morse" style={{ background: "transparent", border: "none", color: "#FFD89B", fontFamily: "ui-monospace, monospace", cursor: "pointer", padding: 0, fontSize: "0.8125rem" }}>5NN ♪</button> where 9 becomes N and 0 becomes T. In a ragchew, send the honest number — a true 559 tells the other op something useful about propagation.
           </p>
         </div>
       )}
@@ -2733,7 +2846,7 @@ const HISTORY = [
     era: "1844 — THE WIRE",
     title: "What hath God wrought",
     hear: "WHAT HATH GOD WROUGHT",
-    body: "Samuel Morse and Alfred Vail opened America's first telegraph line between Washington and Baltimore with those four words, and distance stopped meaning what it had meant for all of human history. (Tap 🔊 to hear the message in today's International code — the original went out in Morse's own American code, a different dialect.) The operators who worked the wires that followed invented almost everything you'll do on the air: the abbreviations, the rhythm, the etiquette, the fraternity. Radio didn't create CW culture — it inherited it from the landline, fully formed.",
+    body: "Samuel Morse and Alfred Vail opened America's first telegraph line between Washington and Baltimore with those four words, and distance stopped meaning what it had meant for all of human history. (Tap ♪ to hear the message in today's International code — the original went out in Morse's own American code, a different dialect.) The operators who worked the wires that followed invented almost everything you'll do on the air: the abbreviations, the rhythm, the etiquette, the fraternity. Radio didn't create CW culture — it inherited it from the landline, fully formed.",
   },
   {
     era: "1865 — TWO MORSES",
@@ -2776,7 +2889,7 @@ function HistoryGuide({ player, settings }) {
     <div>
       <div style={S.panel}>
         <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-          Every term in this app has a birthday. The shorthand you're learning is a living artifact — phrases coined by wire operators before the Civil War, carried to sea by Marconi's men, standardized after the Titanic, and still doing their job tonight on 20 meters. Tap 🔊 to hear each era's signature in the code itself.
+          Every term in this app has a birthday. The shorthand you're learning is a living artifact — phrases coined by wire operators before the Civil War, carried to sea by Marconi's men, standardized after the Titanic, and still doing their job tonight on 20 meters. Tap ♪ to hear each era's signature in the code itself.
         </p>
       </div>
       {HISTORY.map((h) => (
@@ -2784,7 +2897,7 @@ function HistoryGuide({ player, settings }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
             <span style={{ ...S.label, color: "#F2A93B" }}>{h.era}</span>
             <button style={{ ...S.btn, padding: "3px 10px", fontSize: "0.6875rem" }}
-              aria-label={`Hear ${h.hear} in Morse`} onClick={() => say(h.hear)}>🔊</button>
+              aria-label={`Hear ${h.hear} in Morse`} onClick={() => say(h.hear)}>♪</button>
           </div>
           <div style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "1rem", letterSpacing: 1, marginBottom: 8 }}>{h.title}</div>
           <p style={{ color: "#C9CDD3", fontSize: "0.84375rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.65, margin: 0 }}>{h.body}</p>
@@ -2934,7 +3047,7 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
           Ephemeral: stored in component state only, never written to localStorage.
           Cleared when the next drill starts so it never shows a stale result. */}
       {sessionSummary && (
-        <div role="status" style={{ background: "#131619", border: "1px solid #2E343C", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontFamily: "system-ui, sans-serif", fontSize: "0.8125rem", color: "#C9CDD3", lineHeight: 1.5 }}>
+        <div role="status" style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 14px", marginBottom: 12, fontFamily: "system-ui, sans-serif", fontSize: "0.8125rem", color: "#C9CDD3", lineHeight: 1.5 }}>
           {sessionSummary}
         </div>
       )}
@@ -2982,7 +3095,7 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
         {newChars.map((ch) => (
           <button key={ch} onClick={() => playChar(ch)}
             style={{
-              flex: 1, background: "#080A0D", border: "1px solid #F2A93B", borderRadius: 10,
+              flex: 1, background: S.ground.well, border: S.border.amber, borderRadius: S.radius.md,
               padding: "18px 0", cursor: "pointer", textAlign: "center",
             }}>
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 40, color: "#FFD89B", lineHeight: 1 }}>{ch}</div>
@@ -3008,8 +3121,9 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
 
       <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 12, lineHeight: 1.6 }}>
         This app uses the Koch method — a training approach where every character plays at full speed ({settings.charWpm} wpm — words per minute, the standard measure of how fast code is sent) from the very first lesson, so your ear learns the rhythm of each letter as a single sound — never as counted dits and dahs. Hit 90% over 20 answers and the next character unlocks.
+        {/* M3: canonical one-liner; full Farnsworth explanation lives at the Settings slider */}
         {settings.effWpm < settings.charWpm && (
-          <> The gaps between characters are stretched (Farnsworth spacing — characters stay fast, pauses give you time to think). Raise effective speed in Settings to close the gap as you improve.</>
+          <> Farnsworth keeps characters at full speed and stretches the gaps between them — raise effective speed in Settings as you improve.</>
         )}
       </p>
     </>
@@ -3095,7 +3209,7 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
             <div
               aria-live="polite"
               aria-atomic="true"
-              style={{ ...S.display, textAlign: "center", fontSize: "2.125rem", minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}
+              style={{ ...S.display, textAlign: "center", fontSize: S.type.display, minHeight: 70, display: "flex", alignItems: "center", justifyContent: "center" }}
             >
               {flash ? (
                 <span style={{ color: flash.ok ? "#8FCB9B" : "#E07A5F" }}>
@@ -3217,8 +3331,7 @@ function ProgressView({ progress }) {
   const { records: keyRecords, wpmSeries } = keyTrend(progress);
   const copyGroups = copyTrend(progress);
 
-  // Verdict → color, matching the existing verdictColor palette in KeyTrainer
-  const verdictColor = (v) => v === "good" ? "#8FCB9B" : v === "loose" ? "#F2A93B" : v === "tight" ? "#E07A5F" : "#8A929C";
+  // M4: verdict coloring is now handled by the shared Tag component + VERDICT_COLOR map.
 
   return (
     <div>
@@ -3239,7 +3352,7 @@ function ProgressView({ progress }) {
                   </span>
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
                     {row.sets} set{row.sets !== 1 ? "s" : ""} · best {row.bestPct}% · last {row.lastPct}%
-                    {fmtDate(row.lastT) && <span style={{ marginLeft: 6, color: "#5A626C" }}>{fmtDate(row.lastT)}</span>}
+                    {fmtDate(row.lastT) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(row.lastT)}</span>}
                   </span>
                 </div>
                 <div style={{ fontFamily: "ui-monospace, monospace", color: row.lastPct >= 90 ? "#8FCB9B" : row.lastPct >= 70 ? "#F2A93B" : "#E07A5F", fontSize: "0.875rem", letterSpacing: 2 }}>
@@ -3276,20 +3389,15 @@ function ProgressView({ progress }) {
                     </span>
                     <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
                       {r.estWpm} wpm · copy {r.copyPct}%
-                      {fmtDate(r.t) && <span style={{ marginLeft: 6, color: "#5A626C" }}>{fmtDate(r.t)}</span>}
+                      {fmtDate(r.t) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(r.t)}</span>}
                     </span>
                   </div>
+                  {/* M4: Tag chips — color + text word = non-color cue always present */}
                   <div style={{ display: "flex", gap: 12, marginTop: 3, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: "0.6875rem", color: verdictColor(r.letterVerdict), fontFamily: "system-ui, sans-serif" }}>
-                      letters: {r.letterVerdict}
-                    </span>
-                    <span style={{ fontSize: "0.6875rem", color: verdictColor(r.wordVerdict), fontFamily: "system-ui, sans-serif" }}>
-                      words: {r.wordVerdict}
-                    </span>
+                    <Tag verdict={r.letterVerdict}>letters: {r.letterVerdict}</Tag>
+                    <Tag verdict={r.wordVerdict}>words: {r.wordVerdict}</Tag>
                     {r.weightingVerdict && r.weightingVerdict !== "good" && (
-                      <span style={{ fontSize: "0.6875rem", color: verdictColor(r.weightingVerdict), fontFamily: "system-ui, sans-serif" }}>
-                        weighting: {r.weightingVerdict}
-                      </span>
+                      <Tag verdict={r.weightingVerdict}>weighting: {r.weightingVerdict}</Tag>
                     )}
                   </div>
                 </div>
@@ -3314,7 +3422,7 @@ function ProgressView({ progress }) {
                   <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>{g.source}</span>
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
                     last {g.lastPct}%
-                    {fmtDate(g.lastT) && <span style={{ marginLeft: 6, color: "#5A626C" }}>{fmtDate(g.lastT)}</span>}
+                    {fmtDate(g.lastT) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(g.lastT)}</span>}
                   </span>
                 </div>
                 <div style={{ fontFamily: "ui-monospace, monospace", color: g.lastPct >= 90 ? "#8FCB9B" : g.lastPct >= 70 ? "#F2A93B" : "#E07A5F", fontSize: "0.875rem", letterSpacing: 2 }}>
@@ -3354,7 +3462,8 @@ function Settings({ settings, setSettings, onClose }) {
       {/* Speed sliders are divided into two groups:
           LISTENING speeds affect how the app plays Morse for you to copy.
           SENDING speed is your target when keying — only relevant in the KEY tab. */}
-      <div style={{ ...S.label, color: "#8A929C", fontSize: "0.625rem", letterSpacing: 2, marginBottom: 6 }}>LISTENING SPEED</div>
+      {/* M3: normalize to plain S.label — consistency over 1px size drift */}
+      <div style={{ ...S.label, marginBottom: 6 }}>LISTENING SPEED</div>
       <Slider label="Character speed" value={settings.charWpm} min={10} max={35} step={1} suffix=" wpm" onChange={set("charWpm")} />
       <Slider label="Effective speed (Farnsworth)" value={settings.effWpm} min={4} max={settings.charWpm} step={1} suffix=" wpm" onChange={set("effWpm")} />
       {/* C3: Farnsworth gloss at point of use — the deeper paragraph below covers
@@ -3363,7 +3472,8 @@ function Settings({ settings, setSettings, onClose }) {
         Farnsworth: characters stay at full speed; the pauses between them stretch so you have time to think. Close the gap by raising this toward character speed as you improve.
       </p>
 
-      <div style={{ ...S.label, color: "#8A929C", fontSize: "0.625rem", letterSpacing: 2, marginBottom: 6 }}>SENDING SPEED</div>
+      {/* M3: normalize to plain S.label */}
+      <div style={{ ...S.label, marginBottom: 6 }}>SENDING SPEED</div>
       <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={35} step={1} suffix=" wpm" onChange={set("keyWpm")} />
       <Slider label="Sidetone" value={settings.freq} min={400} max={900} step={10} suffix=" Hz" onChange={set("freq")} />
       <div style={{ marginBottom: 14 }}>
@@ -3389,20 +3499,21 @@ function Settings({ settings, setSettings, onClose }) {
         {/* autoCapitalize="characters": on mobile soft keyboards, capitalise every letter.
             Harmless on desktop. Callsign always uppercases via textTransform anyway,
             but autoCapitalize keeps the mobile keyboard in CAPS mode — one fewer tap. */}
-        <input style={{ ...S.input, fontSize: "0.9375rem", padding: "8px 12px" }} value={settings.myCall}
+        {/* M1: 0.9375rem → S.type.body (0.875rem) — Settings inputs match other buttons */}
+        <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myCall}
           autoCapitalize="characters" autoCorrect="off" spellCheck={false}
           onChange={(e) => setSettings((s) => ({ ...s, myCall: e.target.value.toUpperCase() }))} />
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ ...S.label, marginBottom: 4 }}>Your name</div>
-          <input style={{ ...S.input, fontSize: "0.9375rem", padding: "8px 12px" }} value={settings.myName}
+          <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myName}
             autoCapitalize="words" autoCorrect="off" spellCheck={false}
             onChange={(e) => setSettings((s) => ({ ...s, myName: e.target.value.toUpperCase() }))} />
         </div>
         <div style={{ flex: 1.4 }}>
           <div style={{ ...S.label, marginBottom: 4 }}>Your QTH</div>
-          <input style={{ ...S.input, fontSize: "0.9375rem", padding: "8px 12px" }} value={settings.myQth}
+          <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myQth}
             autoCapitalize="words" autoCorrect="off" spellCheck={false}
             onChange={(e) => setSettings((s) => ({ ...s, myQth: e.target.value.toUpperCase() }))} />
         </div>
@@ -3424,16 +3535,17 @@ function Settings({ settings, setSettings, onClose }) {
           {settings.cutNumbers ? "5NN ON" : "599 OFF"}
         </button>
       </div>
-      <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", marginBottom: 0 }}>
-        Farnsworth keeps each character at full speed but stretches the gaps — train your ear at the character speed you'll actually hear on the air, with thinking room between letters. Close the gap by raising effective speed, not lowering character speed.
-      </p>
+      {/* M3: duplicate Farnsworth paragraph removed — the full gloss lives at the slider
+          (Farnsworth line above); the in-tab mentions (LEARN/COPY) use the canonical one-liner.
+          The no-sound hint keeps its own paragraph. */}
       <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", marginBottom: 0, marginTop: 10 }}>
-        🔇 No sound? On iPhone, flip the ring/silent switch off silent — silent mode mutes web audio entirely. Then check media volume and tap any play button.
+        No sound? On iPhone, flip the ring/silent switch off silent — silent mode mutes web audio entirely. Then check media volume and tap any play button.
       </p>
       {/* Version display — sourced from package.json at build time via Vite define.
           Low-key, footer of the panel. Falls back to "dev" if the define is absent
           (e.g. a test runner that skips the Vite define step). */}
-      <div style={{ color: "#3A434E", fontSize: "0.6875rem", fontFamily: "ui-monospace, monospace", letterSpacing: 1, marginTop: 14, textAlign: "right" }}>
+      {/* H2: version number is minor metadata — bump one step to S.text.faint (3:1, acceptable) */}
+      <div style={{ color: S.text.faint, fontSize: "0.6875rem", fontFamily: "ui-monospace, monospace", letterSpacing: 1, marginTop: 14, textAlign: "right" }}>
         v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}
       </div>
     </div>
@@ -3441,23 +3553,39 @@ function Settings({ settings, setSettings, onClose }) {
 }
 
 /* ================= SPLASH ================= */
+// L3: auto-dismisses after 2800ms so the app never waits indefinitely.
+// When auto-fired the onSkip(true) flag tells the parent to skip the WR tone —
+// audio autoplay requires a user gesture, so the tone is a bonus when the user
+// taps, not a requirement for advancing into the app.
 function Splash({ onSkip }) {
+  useEffect(() => {
+    const t = setTimeout(() => onSkip(true), 2800);
+    return () => clearTimeout(t);
+    // onSkip is stable (defined once in CWTrainer) — exhaustive-deps lint
+    // would include it, but it never changes so the effect fires once only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div
       role="button"
       tabIndex={0}
       aria-label="Enter CW Trainer"
-      onClick={onSkip}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSkip(); } }}
+      onClick={() => onSkip(false)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSkip(false); } }}
       style={{
         position: "fixed", inset: 0, zIndex: 50, cursor: "pointer",
+        // #14171C is a Splash-local brand gradient stop (between app #0D0F13 and well
+        // #080A0D) — deliberately left inline rather than forced into a ground token.
         background: "radial-gradient(ellipse at 50% 40%, #14171C, #080A0D)",
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       }}
     >
-      <style>{`@keyframes splashIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }`}</style>
-      <div style={{ textAlign: "center", animation: "splashIn 1.1s ease both" }}>
-        <div style={{ fontFamily: "ui-monospace, monospace", color: "#8A6A33", fontSize: 16, letterSpacing: 6 }}>
+      {/* H3: splashIn keyframe is defined in the shared <style> block; .wr-splash-in
+          applies it here so the @media reduced-motion rule can target the class. */}
+      <div className="wr-splash-in" style={{ textAlign: "center" }}>
+        {/* H2: ·−− ·−· Morse mark is decorative — keep eyebrowDim (#8A6A33) */}
+        <div style={{ fontFamily: "ui-monospace, monospace", color: S.text.eyebrowDim, fontSize: 16, letterSpacing: 6 }}>
           ·−− ·−·
         </div>
         <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 32, letterSpacing: 9, fontWeight: 700, marginTop: 12, textShadow: "0 0 24px rgba(242,169,59,0.35)" }}>
@@ -3466,13 +3594,17 @@ function Splash({ onSkip }) {
         <div style={{ fontFamily: "ui-monospace, monospace", color: "#C9CDD3", fontSize: "0.8125rem", letterSpacing: 8, marginTop: 10 }}>
           CW TRAINER
         </div>
-        <div style={{ width: 120, height: 1, background: "#3A434E", margin: "20px auto 0" }} />
-        <div style={{ fontFamily: "system-ui, sans-serif", color: "#5A626C", fontSize: "0.6875rem", letterSpacing: 2, marginTop: 12 }}>
+        <div style={{ width: 120, height: 1, background: S.text.hairline, margin: "20px auto 0" }} />
+        {/* H2: "MADE IN THE DRIFTLESS" carries readable words — bump to S.text.dim */}
+        <div style={{ fontFamily: "system-ui, sans-serif", color: S.text.dim, fontSize: S.type.label, letterSpacing: 2, marginTop: 12 }}>
           MADE IN THE DRIFTLESS
         </div>
       </div>
-      <div style={{ position: "absolute", bottom: 28, fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: "0.6875rem", letterSpacing: 1, animation: "splashIn 1.1s 1.5s ease both" }}>
-        tap to skip
+      {/* audio-gesture caveat: tap/Enter/Space skips with tone; auto-dismiss skips silently.
+          Text is split into two lines so tests can still find "tap to skip" by exact text. */}
+      <div className="wr-splash-in" style={{ position: "absolute", bottom: 28, textAlign: "center", fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: S.type.label, letterSpacing: 1, animationDelay: "1.5s" }}>
+        <div>tap to skip</div>
+        <div style={{ fontSize: S.type.micro, marginTop: 4, opacity: 0.8 }}>tap anywhere to unlock audio</div>
       </div>
     </div>
   );
@@ -3611,14 +3743,14 @@ export default function CWTrainer() {
   };
 
   useEffect(() => {
-    const t = setTimeout(() => setSplash(false), 5000);
     // Unlock audio on the very first touch/click anywhere — capture phase so it
     // runs before any component handler tries to make sound.
+    // L3: the splash auto-dismisses after 2800ms via its own useEffect; the
+    // old 5s top-level timeout is removed — the Splash component owns its timer.
     const wake = () => player.unlock();
     window.addEventListener("pointerdown", wake, { capture: true, once: true });
     window.addEventListener("touchend", wake, { capture: true, once: true });
     return () => {
-      clearTimeout(t);
       window.removeEventListener("pointerdown", wake, { capture: true });
       window.removeEventListener("touchend", wake, { capture: true });
     };
@@ -3643,9 +3775,14 @@ export default function CWTrainer() {
   if (splash) {
     return (
       <Splash
-        onSkip={() => {
-          player.unlock();
-          player.play("WR", { charWpm: 22, effWpm: 22, freq: settings.freq });
+        onSkip={(auto) => {
+          // When user taps/keys: unlock audio and play the WR signature tone.
+          // When auto-dismissed: just advance — the browser blocks audio autoplay
+          // without a user gesture, so skip the tone rather than throw an error.
+          if (!auto) {
+            player.unlock();
+            player.play("WR", { charWpm: 22, effWpm: 22, freq: settings.freq });
+          }
           setSplash(false);
         }}
       />
@@ -3653,7 +3790,7 @@ export default function CWTrainer() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0D0F13", padding: "16px 12px 60px", color: "#E8E2D6" }}>
+    <div style={{ minHeight: "100vh", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
       {/*
         The <style> block is the only injected CSS in the app — established
         precedent for keyframes and focus rings. We extend it with two layout
@@ -3665,6 +3802,20 @@ export default function CWTrainer() {
       <style>{`
         @keyframes blink { 50% { opacity: 0; } }
         @keyframes splashIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+        /* H3: named classes so the reduced-motion query targets them cleanly */
+        /* Cursor blinks by default; steady under reduced motion */
+        .wr-cursor { animation: blink 1s steps(1) infinite; }
+        /* Splash content fades/slides in by default; appears instantly under reduced motion */
+        .wr-splash-in { animation: splashIn 1.1s ease both; }
+
+        /* H3: honor the OS "reduce motion" preference */
+        @media (prefers-reduced-motion: reduce) {
+          .wr-splash-in { animation: none !important; }
+          /* Cursor stays visible and steady — still marks the insertion point */
+          .wr-cursor { animation: none !important; opacity: 1 !important; }
+        }
+
         * { -webkit-tap-highlight-color: transparent; }
         button { outline: none; }
         button:focus { outline: none; }
@@ -3745,7 +3896,8 @@ export default function CWTrainer() {
         {/* Header spans all three columns on wide; naturally full-width on narrow */}
         <header className="wr-full" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <div>
-            <div style={{ ...S.label, color: "#8A6A33", letterSpacing: 3 }}>WISCO RADIO LABS</div>
+            {/* H2: small eyebrow carries readable brand words — bump to eyebrowText (#A8823F) for AA */}
+            <div style={{ ...S.label, color: S.text.eyebrowText, letterSpacing: 3 }}>WISCO RADIO LABS</div>
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, letterSpacing: 4, color: "#F2A93B", fontWeight: 700 }}>
               CW TRAINER
             </div>
@@ -3780,18 +3932,11 @@ export default function CWTrainer() {
             derived condition without requiring explicit dismissal.
             Spans full width in both modes — it's transient and shouldn't be
             trapped in a column. */}
+        {/* M4: W1AW nudge routed through Banner — same grounds/borders/padding, no visual change */}
         {settings.myCall === "W1AW" && !nudgeDismissed && (
-          <div className="wr-full" role="note" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#191C21", border: "1px solid #3A434E", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
-            <span style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.6, flex: 1 }}>
-              <strong style={{ color: "#C9CDD3" }}>W1AW is an example callsign</strong> (a well-known example used by default). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
-            </span>
-            <button
-              aria-label="Dismiss callsign notice"
-              onClick={dismissCallNudge}
-              style={{ ...S.btn, padding: "2px 8px", fontSize: "0.8125rem", lineHeight: 1, flexShrink: 0, color: "#8A929C" }}>
-              ✕
-            </button>
-          </div>
+          <Banner variant="note" onDismiss={dismissCallNudge} dismissLabel="Dismiss callsign notice">
+            <strong style={{ color: S.text.bright }}>W1AW is an example callsign</strong> (a well-known example used by default). Tap ⚙ Settings to set your own call, name, and QTH — they'll personalize your practice contacts.
+          </Banner>
         )}
 
         {/*
@@ -3804,21 +3949,42 @@ export default function CWTrainer() {
           No role=tablist conversion — that requires roving tabindex + arrow-key
           nav and is explicitly out of scope for this phase (see design §3).
         */}
+        {/*
+          M2: Practice tabs [LEARN/KEY/COPY/QSO] and the PROGRESS review tab are
+          kept in the same nav. On wide, a thin divider + dim resting color tier
+          PROGRESS visually as "review, not practice." On narrow, PROGRESS label
+          abbreviates to "STATS" so five buttons fit in one scannable row.
+          Active state (amber + bold) is unchanged for all tabs.
+        */}
         <nav aria-label="Sections" className="wr-nav-rail">
-          {tabs.map(([v, l]) => (
-            <button key={v} aria-pressed={tab === v} onClick={() => { player.stop(); setTab(v); }}
-              style={{
-                ...S.btn,
-                // Wide: no flex:1 — the buttons are stacked vertically and each
-                // takes its natural width (full nav-rail width via align-items:stretch).
-                // Narrow: flex:1 so each button fills its share of the row (today's behavior).
-                ...(isWide ? {} : { flex: 1 }),
-                // Active tab styling — same amber highlight in both orientations.
-                ...(tab === v ? { background: "#3A2E18", borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}),
-              }}>
-              {l}
-            </button>
-          ))}
+          {tabs.map(([v, l], i) => {
+            const isProgress = v === "progress";
+            const isActive = tab === v;
+            // Narrow label: shorten PROGRESS to STATS so 5 buttons fit at 360px
+            const label = isProgress && !isWide ? "STATS" : l;
+            return (
+              <React.Fragment key={v}>
+                {/* M2: thin divider above PROGRESS on wide rail — quiet seam */}
+                {isProgress && isWide && (
+                  <div style={{ height: 1, background: S.text.hairline, margin: "6px 0" }} />
+                )}
+                <button
+                  aria-pressed={isActive}
+                  onClick={() => { player.stop(); setTab(v); }}
+                  style={{
+                    ...S.btn,
+                    // Wide: no flex:1 — stacked vertically, full rail width.
+                    // Narrow: flex:1 + reduced padding so five labels don't truncate.
+                    ...(isWide ? {} : { flex: 1, padding: "10px 8px", letterSpacing: 0.5 }),
+                    // PROGRESS resting state is dim (secondary) — active state is unchanged.
+                    ...(isActive ? { ...S.selected } : { color: isProgress ? S.text.dim : undefined }),
+                  }}
+                >
+                  {label}
+                </button>
+              </React.Fragment>
+            );
+          })}
         </nav>
 
         {/*
@@ -3832,18 +3998,11 @@ export default function CWTrainer() {
             localStorage is blocked (private mode / locked sandbox). The banner
             is non-blocking and dismissible. It cannot persist "don't warn again"
             (storage is down), so it shows once per launch — correct and honest. */}
+        {/* M4: no-persist warning routed through Banner — same grounds/borders/padding, no visual change */}
         {!store.isPersistent() && !noPersistDismissed && (
-          <div className="wr-full" role="status" style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#131619", border: "1px solid #F2A93B", borderRadius: 8, padding: "10px 14px", marginBottom: 14 }}>
-            <span style={{ color: "#C9CDD3", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.6, flex: 1 }}>
-              <strong style={{ color: "#F2A93B" }}>Heads up</strong> — your browser is blocking local storage, so your progress and settings won't be saved between sessions.
-            </span>
-            <button
-              aria-label="Dismiss storage warning"
-              onClick={() => setNoPersistDismissed(true)}
-              style={{ ...S.btn, padding: "2px 8px", fontSize: "0.8125rem", lineHeight: 1, flexShrink: 0, color: "#8A929C" }}>
-              ✕
-            </button>
-          </div>
+          <Banner variant="warning" onDismiss={() => setNoPersistDismissed(true)} dismissLabel="Dismiss storage warning">
+            <strong style={{ color: S.text.amber }}>Heads up</strong> — your browser is blocking local storage, so your progress and settings won't be saved between sessions.
+          </Banner>
         )}
 
         <main className="wr-main">
@@ -3873,10 +4032,11 @@ export default function CWTrainer() {
 
         {/* Footer spans all three columns on wide; naturally full-width on narrow */}
         <footer className="wr-full" style={{ textAlign: "center", marginTop: 24 }}>
-          <div style={{ fontFamily: "ui-monospace, monospace", color: "#5A626C", fontSize: "0.6875rem", letterSpacing: 3 }}>
+          {/* H2: footer brand text carries words — floor to S.text.dim; tagline → S.text.faint (3:1, understated) */}
+          <div style={{ fontFamily: "ui-monospace, monospace", color: S.text.dim, fontSize: "0.6875rem", letterSpacing: 3 }}>
             ·−− ·−·&nbsp;&nbsp;WISCO RADIO LABS
           </div>
-          <div style={{ fontFamily: "system-ui, sans-serif", color: "#3A434E", fontSize: "0.625rem", letterSpacing: 1, marginTop: 4 }}>
+          <div style={{ fontFamily: "system-ui, sans-serif", color: S.text.faint, fontSize: S.type.micro, letterSpacing: 1, marginTop: 4 }}>
             made in the Driftless
           </div>
         </footer>

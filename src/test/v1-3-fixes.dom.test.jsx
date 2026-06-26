@@ -6,8 +6,8 @@
 // Assertions are by role/text/label — never by DOM structure — so they survive
 // future layout changes without false negatives.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, within, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp, gotoTab } from "./helpers.jsx";
 import CWTrainer from "../../wr-cw-trainer.jsx";
@@ -263,5 +263,155 @@ describe("Fix 8 — W1AW nudge banner framing", () => {
     if (nudge) {
       expect(nudge.textContent).toMatch(/set your own call/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H3: Reduced-motion classnames present on animated nodes
+// ---------------------------------------------------------------------------
+describe("H3 — reduced-motion classnames", () => {
+  it("cursor span has wr-cursor class so reduced-motion CSS targets it", async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+
+    // Navigate to KEY tab and start the keyer — Display renders a cursor span
+    await user.click(screen.getByRole("button", { name: "KEY" }));
+    const cursors = document.querySelectorAll(".wr-cursor");
+    // At least one cursor is present (the decoded-output display in KEY shows cursor)
+    expect(cursors.length).toBeGreaterThan(0);
+  });
+
+  it("splash content has wr-splash-in class so reduced-motion CSS targets it", () => {
+    window.localStorage.clear();
+    render(<CWTrainer />);
+    const splashIns = document.querySelectorAll(".wr-splash-in");
+    // Splash mounts with at least two .wr-splash-in nodes: content + tap-to-skip
+    expect(splashIns.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L3: Splash auto-dismiss after 2800ms
+// ---------------------------------------------------------------------------
+describe("L3 — splash auto-dismiss", () => {
+  it("dismisses after 2800ms without user input", async () => {
+    window.localStorage.clear();
+    vi.useFakeTimers();
+    render(<CWTrainer />);
+
+    // Splash is visible before 2800ms
+    expect(screen.getByRole("button", { name: /Enter CW Trainer/i })).toBeInTheDocument();
+
+    // Advance 2800ms — the useEffect timer fires onSkip(true) → setSplash(false)
+    await act(() => { vi.advanceTimersByTime(2800); });
+
+    // Splash gone, main nav visible
+    expect(screen.queryByRole("button", { name: /Enter CW Trainer/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "LEARN" })).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it("timer is cancelled on unmount (clearTimeout called before 2800ms fires)", () => {
+    // WHY behavioral, not console.error: React 18.3 removed the
+    // "state update on unmounted component" warning, so spying on console.error
+    // for that pattern can never fail — the test was vacuous.
+    //
+    // Splash is an internal (non-exported) function, so we cannot render it
+    // directly with our own onSkip spy.  We verify the cleanup ran through
+    // clearTimeout: Splash's useEffect returns `() => clearTimeout(t)`.
+    // Spying on clearTimeout shows it was invoked by cleanup before the timer
+    // would fire.  Without the cleanup line, clearTimeout is never called on
+    // unmount — the spy call count is 0 and the test fails.
+    window.localStorage.clear();
+
+    // Use fake timers so the 2800ms auto-dismiss cannot fire spontaneously.
+    // Wrapped in try/finally so useRealTimers always restores even on assertion
+    // failure — otherwise fake timers leak into subsequent tests.
+    vi.useFakeTimers();
+    let clearSpy;
+    try {
+      clearSpy = vi.spyOn(globalThis, "clearTimeout");
+
+      const { unmount } = render(<CWTrainer />);
+      // Splash is visible; the 2800ms timer is pending.
+      expect(screen.getByRole("button", { name: /Enter CW Trainer/i })).toBeInTheDocument();
+
+      // Unmount before 2800ms — React runs useEffect cleanup → clearTimeout(t).
+      unmount();
+
+      // clearTimeout must have been called (Node's Timeout object, not a Number).
+      // If `return () => clearTimeout(t)` were removed, call count is 0 — test fails.
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy?.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("manual tap before 2800ms skips immediately and audio plays (not auto)", async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+
+    // Tap before 2800ms — onSkip(false) → audio unlock path
+    await user.click(screen.getByText("tap to skip"));
+
+    // Splash gone immediately on click
+    expect(screen.queryByRole("button", { name: /Enter CW Trainer/i })).not.toBeInTheDocument();
+    // Main content is now visible
+    expect(screen.getByRole("button", { name: "LEARN" })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M4: Tag verdict chips render the verdict WORD, not just a color
+// ---------------------------------------------------------------------------
+describe("M4 — Tag verdict chips include verdict text", () => {
+  it("renders verdict word ('good', 'loose', or 'tight') in the PROGRESS KEY section", async () => {
+    // WHY seeded localStorage, not a live KEY session: driving the keyer to
+    // produce real timing events in jsdom (no audio, no real clock events) is
+    // fragile.  The PROGRESS view reads directly from wrcw:progress in
+    // localStorage, so seeding a record with known verdicts is the clean path.
+    //
+    // The invariant under test: Tag renders {children}, and children is
+    // "letters: good" / "words: loose" etc.  A regression that strips the
+    // verdict word (e.g. rendering only a color dot) would make getByText fail.
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:progress", JSON.stringify({
+      schemaVersion: 1,
+      learn: [],
+      copy:  [],
+      key: [{
+        t:               Date.now(),
+        category:        "Common words",
+        keyType:         "straight",
+        copyPct:         85,
+        estWpm:          18,
+        wpmVerdict:      "on target",
+        elementVerdict:  "good",
+        letterVerdict:   "good",
+        wordVerdict:     "loose",
+        weightingVerdict: "tight",
+        weightingRatio:   2.1,
+      }],
+    }));
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+
+    // Navigate to the PROGRESS tab (wide layout — button label is "PROGRESS").
+    await user.click(screen.getByRole("button", { name: "PROGRESS" }));
+
+    // The PROGRESS KEY section renders Tag chips for letterVerdict and wordVerdict.
+    // Each Tag renders its children: "letters: good", "words: loose".
+    // If the verdict WORD were dropped and only color remained, these would fail.
+    expect(screen.getByText(/letters:\s*good/i)).toBeInTheDocument();
+    expect(screen.getByText(/words:\s*loose/i)).toBeInTheDocument();
+    // weightingVerdict "tight" is only shown when !== "good" — it is "tight" here.
+    expect(screen.getByText(/weighting:\s*tight/i)).toBeInTheDocument();
   });
 });

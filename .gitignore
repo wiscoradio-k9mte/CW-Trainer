@@ -24,3 +24,9 @@ npm-debug.log*
 .env
 .env.*
 *.env
+# Credential files (e.g. snapcraft export-login output) — never commit; use Actions secrets
+credentials.txt
+*credentials*.txt
+*.snapcraft
+snapcraft-login*
+*.macaroon

@@ -10,9 +10,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
 
-// Render the app and get past the 5-second splash. Clicking the splash is how a
-// real user starts (it also unlocks/plays audio through the mock), and it avoids
-// fake timers. Returns the userEvent instance for the test to drive.
+// Render the app and get past the splash. Clicking the splash is how a real user
+// starts (it also unlocks/plays audio through the mock), and it avoids fake timers.
+// The splash auto-dismisses at 2800ms; clicking is faster and more reliable.
+// Returns the userEvent instance for the test to drive.
 export async function renderApp() {
   // Each test starts from a clean slate: settings/lesson persist via localStorage
   // in jsdom and would otherwise leak between tests.
