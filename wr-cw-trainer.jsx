@@ -1280,7 +1280,10 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
     setSession((s) => [...s, pct]);
     // Persist to cross-session progress history (v2.0 §1).
     // record() is a no-op when undefined (narrow/no-prop caller).
-    if (record) {
+    // Guard: an empty answer box yields a meaningless 0% — skip it so junk
+    // records don't pollute the trend.  Mirrors the QSO copy-input guard
+    // (disabled={!copyAttempt.trim()}) and the KEY fist.elements > 0 guard.
+    if (record && attempt.trim()) {
       record("copy", { t: Date.now(), source, pct });
     }
     // Update the always-mounted sr-only region. Because the region is already in the
@@ -3172,6 +3175,18 @@ function sparkline(values) {
   }).join("");
 }
 
+// fmtDate: compact locale-friendly date from epoch ms (e.g. "Jun 24").
+// Returns an empty string for a missing or invalid t so callers can skip it
+// without crashing on records written before the t field existed.
+function fmtDate(t) {
+  if (!t) return "";
+  try {
+    return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
 function ProgressView({ progress }) {
   const learn = learnTrend(progress);
   const { records: keyRecords, wpmSeries } = keyTrend(progress);
@@ -3199,6 +3214,7 @@ function ProgressView({ progress }) {
                   </span>
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
                     {row.sets} set{row.sets !== 1 ? "s" : ""} · best {row.bestPct}% · last {row.lastPct}%
+                    {fmtDate(row.lastT) && <span style={{ marginLeft: 6, color: "#5A626C" }}>{fmtDate(row.lastT)}</span>}
                   </span>
                 </div>
                 <div style={{ fontFamily: "ui-monospace, monospace", color: row.lastPct >= 90 ? "#8FCB9B" : row.lastPct >= 70 ? "#F2A93B" : "#E07A5F", fontSize: "0.875rem", letterSpacing: 2 }}>
@@ -3235,6 +3251,7 @@ function ProgressView({ progress }) {
                     </span>
                     <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
                       {r.estWpm} wpm · copy {r.copyPct}%
+                      {fmtDate(r.t) && <span style={{ marginLeft: 6, color: "#5A626C" }}>{fmtDate(r.t)}</span>}
                     </span>
                   </div>
                   <div style={{ display: "flex", gap: 12, marginTop: 3, flexWrap: "wrap" }}>
@@ -3270,7 +3287,10 @@ function ProgressView({ progress }) {
               <div key={g.source} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
                   <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>{g.source}</span>
-                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>last {g.lastPct}%</span>
+                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
+                    last {g.lastPct}%
+                    {fmtDate(g.lastT) && <span style={{ marginLeft: 6, color: "#5A626C" }}>{fmtDate(g.lastT)}</span>}
+                  </span>
                 </div>
                 <div style={{ fontFamily: "ui-monospace, monospace", color: g.lastPct >= 90 ? "#8FCB9B" : g.lastPct >= 70 ? "#F2A93B" : "#E07A5F", fontSize: "0.875rem", letterSpacing: 2 }}>
                   {sparkline(g.recent)}

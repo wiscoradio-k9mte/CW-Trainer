@@ -102,6 +102,60 @@ describe("PROGRESS — KEY records a fist session on CHECK (round-trip)", () => 
 });
 
 // ---------------------------------------------------------------------------
+// FIX 1: empty-answer COPY-CHECK must NOT write a progress record
+// ---------------------------------------------------------------------------
+describe("PROGRESS — COPY empty-answer guard (Fix 1)", () => {
+  it("CHECK with empty answer box does NOT write a copy progress record", async () => {
+    // Drive a target to appear so CHECK becomes enabled, then CHECK without typing
+    // anything.  The fix guards record() on attempt.trim() — an empty box must
+    // produce zero copy records in localStorage.
+    const { user } = await freshApp();
+    await gotoTab(user, "COPY");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: /▶ NEW/ }));
+    act(() => {
+      vi.advanceTimersByTime(6000); // wait out the 5-second countdown
+    });
+
+    // Do NOT type anything — the input stays empty.  CHECK is now enabled
+    // (a target exists), so click it.
+    fireEvent.click(screen.getByRole("button", { name: "CHECK" }));
+    vi.useRealTimers();
+
+    // No copy record should have been written.
+    const raw = window.localStorage.getItem("wrcw:progress");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      expect(parsed.copy.length).toBe(0);
+    }
+    // If raw is null that's also fine — nothing was persisted at all.
+  });
+
+  it("CHECK with a non-empty answer DOES write a copy progress record", async () => {
+    // Regression guard: the guard must not swallow a real attempt.
+    const { user } = await freshApp();
+    await gotoTab(user, "COPY");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: /▶ NEW/ }));
+    act(() => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    const input = screen.getByRole("textbox", { name: /Your copy/i });
+    fireEvent.change(input, { target: { value: "E" } });
+    fireEvent.click(screen.getByRole("button", { name: "CHECK" }));
+    vi.useRealTimers();
+
+    const raw = window.localStorage.getItem("wrcw:progress");
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw);
+    expect(parsed.copy.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // COPY-CHECK persists a `copy` record
 // ---------------------------------------------------------------------------
 describe("PROGRESS — COPY records a session on CHECK (round-trip)", () => {

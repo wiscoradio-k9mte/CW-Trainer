@@ -991,6 +991,10 @@ export function learnTrend(progress) {
         bestPct: Math.max(...pcts),
         sets: recs.length,
         recent: pcts.slice(-TREND_WINDOW),
+        // lastT: epoch ms of the most recent set in this lesson; used for date
+        // display in ProgressView.  May be undefined for records written before
+        // the t field existed — callers must treat it as optional.
+        lastT: recs[recs.length - 1].t,
       };
     })
     .sort((a, b) => a.lesson - b.lesson);
@@ -1018,5 +1022,8 @@ export function copyTrend(progress) {
     source,
     recent: recs.map((r) => r.pct),
     lastPct: recs[recs.length - 1].pct,
+    // lastT: epoch ms of the most recent record for this rung; used for date
+    // display in ProgressView.  May be undefined for pre-t records.
+    lastT: recs[recs.length - 1].t,
   }));
 }

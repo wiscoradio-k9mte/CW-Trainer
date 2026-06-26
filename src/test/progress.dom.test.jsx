@@ -151,3 +151,100 @@ describe("PROGRESS — survives remount", () => {
     expect(screen.getByText(/Lesson 1/i)).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FIX 2: stored dates appear in the PROGRESS view
+// ---------------------------------------------------------------------------
+describe("PROGRESS — date display (Fix 2)", () => {
+  // Build a known epoch so we can assert the formatted string.
+  // Use a fixed local date that toLocaleDateString will render consistently.
+  // We pick a date and assert month+day appear somewhere in the rendered output.
+  const KNOWN_T = new Date("2026-06-24T12:00:00").getTime(); // June 24 local time
+  // toLocaleDateString with {month:'short',day:'numeric'} on this date will
+  // render something like "Jun 24" in en-US.  We assert "Jun" and "24" appear
+  // rather than the exact locale string so the test is locale-tolerant.
+
+  it("LEARN row shows a human-readable date for a seeded record with t", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:progress", JSON.stringify({
+      schemaVersion: 1,
+      learn: [{ t: KNOWN_T, lesson: 2, attempts: 10, correct: 8, pct: 80 }],
+      key: [],
+      copy: [],
+    }));
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await gotoTab(user, "PROGRESS");
+
+    // The Lesson 2 row should be present and contain a formatted date.
+    // We scan the rendered text for the month name to stay locale-tolerant.
+    const formatted = new Date(KNOWN_T).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    // At least the month portion must appear in the page somewhere.
+    const monthStr = formatted.split(/[\s,]+/)[0]; // first token: "Jun" or locale equivalent
+    expect(document.body.textContent).toContain(monthStr);
+  });
+
+  it("KEY session card shows a date for a seeded record with t", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:progress", JSON.stringify({
+      schemaVersion: 1,
+      learn: [],
+      key: [{
+        t: KNOWN_T, category: "words", keyType: "straight",
+        copyPct: 55, estWpm: 12, wpmVerdict: "on target",
+        elementVerdict: null, letterVerdict: "good", wordVerdict: "good",
+        weightingVerdict: null, weightingRatio: null,
+      }],
+      copy: [],
+    }));
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await gotoTab(user, "PROGRESS");
+
+    const formatted = new Date(KNOWN_T).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const monthStr = formatted.split(/[\s,]+/)[0];
+    expect(document.body.textContent).toContain(monthStr);
+  });
+
+  it("COPY rung row shows a date for a seeded record with t", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:progress", JSON.stringify({
+      schemaVersion: 1,
+      learn: [],
+      key: [],
+      copy: [{ t: KNOWN_T, source: "single", pct: 70 }],
+    }));
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await gotoTab(user, "PROGRESS");
+
+    const formatted = new Date(KNOWN_T).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const monthStr = formatted.split(/[\s,]+/)[0];
+    expect(document.body.textContent).toContain(monthStr);
+  });
+
+  it("gracefully handles a record with no t field (no crash, no date shown)", async () => {
+    // Older records (pre-t) must not crash the view.
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:progress", JSON.stringify({
+      schemaVersion: 1,
+      learn: [{ lesson: 1, attempts: 3, correct: 2, pct: 67 }], // no t field
+      key: [],
+      copy: [],
+    }));
+
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    // Just navigating to PROGRESS without crash is the assertion — if it threw
+    // an unhandled error the test would already fail.
+    await gotoTab(user, "PROGRESS");
+    expect(screen.getByText(/Lesson 1/i)).toBeDefined();
+  });
+});
