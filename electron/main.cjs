@@ -55,8 +55,21 @@ function createWindow() {
 
   // Any external link opens in the user's real browser, never a new Electron
   // window (the app itself has none today, but this is the safe policy).
+  //
+  // Guard: only allow safe URL schemes before shelling out.  The app renders no
+  // external URLs today, so this path is dormant — but a future content addition
+  // or a renderer XSS that smuggles a `javascript:` or `file:` URL would
+  // otherwise reach shell.openExternal() unchecked.  Deny anything that isn't
+  // http, https, or mailto; log it so it doesn't silently disappear.
+  const ALLOWED_SCHEMES = new Set(["https:", "http:", "mailto:"]);
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    let scheme;
+    try { scheme = new URL(url).protocol; } catch (_) { scheme = ""; }
+    if (ALLOWED_SCHEMES.has(scheme)) {
+      shell.openExternal(url);
+    } else {
+      console.warn("[main] setWindowOpenHandler: blocked non-allowed scheme:", url);
+    }
     return { action: "deny" };
   });
 }

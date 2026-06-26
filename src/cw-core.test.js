@@ -1204,28 +1204,28 @@ describe("toCodes()", () => {
   it("ordinary single characters map to their MORSE codes", () => {
     const result = toCodes("THE");
     expect(result.length).toBe(3);
-    expect(result[0]).toEqual({ code: MORSE.T });
-    expect(result[1]).toEqual({ code: MORSE.H });
-    expect(result[2]).toEqual({ code: MORSE.E });
+    expect(result[0]).toEqual({ code: MORSE.T, displayLen: 1 });
+    expect(result[1]).toEqual({ code: MORSE.H, displayLen: 1 });
+    expect(result[2]).toEqual({ code: MORSE.E, displayLen: 1 });
   });
 
   it("space produces a wordGap sentinel (not a code entry)", () => {
     const result = toCodes("A B");
     expect(result.length).toBe(3);
-    expect(result[1]).toEqual({ wordGap: true });
+    expect(result[1]).toEqual({ wordGap: true, displayLen: 1 });
   });
 
   it("'SK' → one atomic code entry (not two separate letters)", () => {
     const result = toCodes("SK");
     expect(result.length).toBe(1);
-    expect(result[0]).toEqual({ code: PROSIGN_CODES.SK });
+    expect(result[0]).toEqual({ code: PROSIGN_CODES.SK, displayLen: 2 });
     expect(result[0].code).toBe("...-.-");
   });
 
   it("'KN' → one atomic code entry", () => {
     const result = toCodes("KN");
     expect(result.length).toBe(1);
-    expect(result[0]).toEqual({ code: PROSIGN_CODES.KN });
+    expect(result[0]).toEqual({ code: PROSIGN_CODES.KN, displayLen: 2 });
     expect(result[0].code).toBe("-.--."); // KN in PROSIGN_CODES
   });
 
@@ -1249,10 +1249,10 @@ describe("toCodes()", () => {
     const result = toCodes("CQ SK");
     // C, Q, wordGap, SK (atomic)
     expect(result.length).toBe(4);
-    expect(result[0]).toEqual({ code: MORSE.C });
-    expect(result[1]).toEqual({ code: MORSE.Q });
-    expect(result[2]).toEqual({ wordGap: true });
-    expect(result[3]).toEqual({ code: PROSIGN_CODES.SK });
+    expect(result[0]).toEqual({ code: MORSE.C, displayLen: 1 });
+    expect(result[1]).toEqual({ code: MORSE.Q, displayLen: 1 });
+    expect(result[2]).toEqual({ wordGap: true, displayLen: 1 });
+    expect(result[3]).toEqual({ code: PROSIGN_CODES.SK, displayLen: 2 });
   });
 
   it("'THE' (ordinary word) is not affected — [T, H, E]", () => {
@@ -1289,9 +1289,9 @@ describe("toCodes()", () => {
     // ARE is in COMMON_WORDS. The 'AR' inside it must NOT be fused.
     const result = toCodes("ARE");
     expect(result.length).toBe(3);
-    expect(result[0]).toEqual({ code: MORSE.A });
-    expect(result[1]).toEqual({ code: MORSE.R });
-    expect(result[2]).toEqual({ code: MORSE.E });
+    expect(result[0]).toEqual({ code: MORSE.A, displayLen: 1 });
+    expect(result[1]).toEqual({ code: MORSE.R, displayLen: 1 });
+    expect(result[2]).toEqual({ code: MORSE.E, displayLen: 1 });
   });
 
   it("'W9KN' (callsign) → four separate characters — KN suffix not fused", () => {
@@ -1299,10 +1299,10 @@ describe("toCodes()", () => {
     // the KN prosign; that would drop W and 9 and turn KN into one sound.
     const result = toCodes("W9KN");
     expect(result.length).toBe(4);
-    expect(result[0]).toEqual({ code: MORSE.W });
-    expect(result[1]).toEqual({ code: MORSE[9] });
-    expect(result[2]).toEqual({ code: MORSE.K });
-    expect(result[3]).toEqual({ code: MORSE.N });
+    expect(result[0]).toEqual({ code: MORSE.W, displayLen: 1 });
+    expect(result[1]).toEqual({ code: MORSE[9], displayLen: 1 });
+    expect(result[2]).toEqual({ code: MORSE.K, displayLen: 1 });
+    expect(result[3]).toEqual({ code: MORSE.N, displayLen: 1 });
   });
 
   it("'CQ SK' → [C, Q, wordGap, SK_atomic] — standalone SK still fuses", () => {
@@ -1310,16 +1310,114 @@ describe("toCodes()", () => {
     // still produce one atomic code (not S then K separately).
     const result = toCodes("CQ SK");
     expect(result.length).toBe(4);
-    expect(result[0]).toEqual({ code: MORSE.C });
-    expect(result[1]).toEqual({ code: MORSE.Q });
-    expect(result[2]).toEqual({ wordGap: true });
-    expect(result[3]).toEqual({ code: PROSIGN_CODES.SK });
+    expect(result[0]).toEqual({ code: MORSE.C, displayLen: 1 });
+    expect(result[1]).toEqual({ code: MORSE.Q, displayLen: 1 });
+    expect(result[2]).toEqual({ wordGap: true, displayLen: 1 });
+    expect(result[3]).toEqual({ code: PROSIGN_CODES.SK, displayLen: 2 });
   });
 });
 
 // ---------------------------------------------------------------------------
-// A3 (v1.1) — mustContain ⊆ suggested invariant across ALL builders × roles
+// Fix 1 (pre-launch) — toCodes() displayLen and reveal-position correctness
 // ---------------------------------------------------------------------------
+// These tests assert the single-source-of-truth for easy-mode live-reveal
+// strPos advancement.  Before Fix 1 the player ran its own parallel prosign scan
+// over the original string; it matched AR/BT/SK/KN at ANY position, so "ARE",
+// "W9KN", and "CEDAR" all advanced strPos by 2 instead of 1, making the reveal
+// jump characters.  The tests below would FAIL against the old parallel scan.
+describe("toCodes() displayLen — reveal-position correctness (Fix 1)", () => {
+  // Helper: simulate the strPos accumulation that play() now performs using
+  // tok.displayLen.  Returns the character at each onChar event as
+  // { strPos, char } pairs.
+  function revealPositions(text) {
+    const upper = text.toUpperCase();
+    const tokens = toCodes(text);
+    const positions = [];
+    let strPos = 0;
+    for (const tok of tokens) {
+      const consumed = tok.displayLen;
+      if (!tok.wordGap) {
+        // capturedPos mirrors: strPos + consumed - 1 (last char of the token)
+        const capturedPos = strPos + consumed - 1;
+        positions.push({ capturedPos, char: upper[strPos] });
+      }
+      strPos += consumed;
+    }
+    return positions;
+  }
+
+  it("every token carries displayLen:1 for plain chars, displayLen:2 for prosigns, displayLen:1 for wordGap", () => {
+    // "CQ SK" — sanity check on all three token types
+    const result = toCodes("CQ SK");
+    expect(result[0].displayLen).toBe(1);  // C
+    expect(result[1].displayLen).toBe(1);  // Q
+    expect(result[2].displayLen).toBe(1);  // wordGap (the space)
+    expect(result[3].displayLen).toBe(2);  // SK prosign
+  });
+
+  it("'ARE YOU' — 'AR' inside 'ARE' does NOT advance strPos by 2 (old bug)", () => {
+    // Old parallel scan: at strPos=0, slice(0,2)==='AR' → consumed=2, skipping E.
+    // New: toCodes sees token 'ARE' (not a prosign key) → each char gets displayLen:1.
+    // So positions[0] must be { capturedPos:0, char:'A' }, not { capturedPos:1, char:'A' }.
+    const pos = revealPositions("ARE YOU");
+    expect(pos[0]).toEqual({ capturedPos: 0, char: "A" });
+    expect(pos[1]).toEqual({ capturedPos: 1, char: "R" });
+    expect(pos[2]).toEqual({ capturedPos: 2, char: "E" });
+    // After the space (strPos 3), 'Y' is at strPos 4
+    expect(pos[3]).toEqual({ capturedPos: 4, char: "Y" });
+  });
+
+  it("'W9KN' callsign — 'KN' at end does NOT advance strPos by 2 (old bug)", () => {
+    // Old scan: at strPos=2, slice(2,4)==='KN' → consumed=2, skipping N.
+    // New: all four chars advance by 1 each.
+    const pos = revealPositions("W9KN");
+    expect(pos[0]).toEqual({ capturedPos: 0, char: "W" });
+    expect(pos[1]).toEqual({ capturedPos: 1, char: "9" });
+    expect(pos[2]).toEqual({ capturedPos: 2, char: "K" });
+    expect(pos[3]).toEqual({ capturedPos: 3, char: "N" });
+  });
+
+  it("'CEDAR RAPIDS' — 'AR' in 'RAPIDS' does NOT advance strPos by 2 (old bug)", () => {
+    // Old scan: at strPos=7 (start of 'RAPIDS'), slice(7,9)==='RA' ≠ 'AR'; at
+    // strPos=8, slice(8,10)==='AP' — actually in RAPIDS the 'AR' is not at the start,
+    // but 'CEDAR' contains 'AR' nowhere; however 'RAPIDS' contains no AR at position 0.
+    // The old scan checked ALL character positions including mid-token: at strPos=8
+    // inside RAPIDS, upperText.slice(8,10) === 'AP' — not AR.  But 'CEDAR' at
+    // strPos=2: slice(2,4) === 'DA' — also not AR.  The real trap is ANY string where
+    // the two-letter window at a given strPos happens to match AR/BT/SK/KN.
+    // "CEDAR" starts at 0; at strPos=0, slice(0,2)==='CE'≠AR — safe there.
+    // For the stated QTHS entry "CEDAR RAPIDS IA": 'AR' appears at position 7
+    // (C-E-D-A-R-[space]-R-A-P-I-D-S — 'RA' at 6-7, 'AP' at 7-8, not 'AR').
+    // But "CEDAR" alone: C(0) E(1) D(2) A(3) R(4) — no AR pair at token-start.
+    // Use a direct string that has AR-pair at token-start to prove isolation:
+    const pos = revealPositions("CEDAR");
+    expect(pos[0]).toEqual({ capturedPos: 0, char: "C" });
+    expect(pos[1]).toEqual({ capturedPos: 1, char: "E" });
+    expect(pos[2]).toEqual({ capturedPos: 2, char: "D" });
+    expect(pos[3]).toEqual({ capturedPos: 3, char: "A" });
+    expect(pos[4]).toEqual({ capturedPos: 4, char: "R" });
+  });
+
+  it("standalone prosign AR in 'CQ AR' has displayLen:2 and its capturedPos is the SECOND letter", () => {
+    // This confirms the prosign path: capturedPos = strPos + 2 - 1 = strPos + 1.
+    // The onChar callback fires once for the whole prosign, pointing at its second
+    // display character, so text.slice(0, capturedPos+1) reveals both letters.
+    const pos = revealPositions("CQ AR");
+    // C(strPos=0 capturedPos=0), Q(strPos=1 capturedPos=1), AR(strPos=3 consumed=2 capturedPos=4)
+    expect(pos[2]).toEqual({ capturedPos: 4, char: "A" });
+  });
+
+  it("strPos after full traversal equals the display string length (no off-by-one)", () => {
+    // After iterating all tokens, strPos should equal the original string length.
+    // Verifies no double-counting or skipping anywhere in the token stream.
+    for (const text of ["ARE YOU", "W9KN", "CEDAR", "CQ SK", "AR", "THE QSO"]) {
+      const tokens = toCodes(text);
+      let strPos = 0;
+      for (const tok of tokens) strPos += tok.displayLen;
+      expect(strPos).toBe(text.toUpperCase().length);
+    }
+  });
+});
 // This is a regression guard: if any mustContain token is not satisfiable from
 // the suggested script, the grader will always mark that step wrong on a
 // correct answer.  A3 found exactly this bug in the ragchew call-branch close

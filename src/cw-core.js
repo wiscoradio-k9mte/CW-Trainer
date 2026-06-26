@@ -22,14 +22,21 @@ export const PROSIGN_CODES = {
   KN: "-.--.",   // new — same reason
 };
 
-// toCodes(text) → [{code: string} | {wordGap: true}]
+// toCodes(text) → [{code: string, displayLen: number} | {wordGap: true, displayLen: number}]
 //
 // Tokenizes a display string into an array the audio players iterate over.
 // Each entry is one of:
-//   { code: ".-" }    — a Morse code string to key (one character)
-//   { wordGap: true } — a word boundary (player inserts wordSp - charSp)
+//   { code: ".-", displayLen: 1 }    — one character (advances strPos by 1)
+//   { code: ".-.-.", displayLen: 2 } — a fused prosign (advances strPos by 2)
+//   { wordGap: true, displayLen: 1 } — a space in the original string (advances strPos by 1)
 //
-// Prosigns AR, BT, SK, KN are recognized ONLY when the WHOLE whitespace-
+// displayLen is the single source of truth for how far to advance strPos in the
+// easy-mode live-reveal.  Before this field existed, play() ran its own prosign
+// scan over the original string to decide the consumed width; that parallel scan
+// matched AR/BT/SK/KN at ANY position, so "ARE YOU", "W9KN", and "CEDAR" all
+// triggered a false prosign match and desynchronised the reveal.
+//
+// Prosigns AR, BT, SK, KN are recognised ONLY when the WHOLE whitespace-
 // delimited token equals a PROSIGN_CODES key.  The earlier character-position
 // scan fused "AR" inside ordinary words like "ARE", callsign suffixes like
 // "W9KN", and place names like "CEDAR RAPIDS" — all wrong.  Prosigns are
@@ -46,20 +53,22 @@ export function toCodes(text) {
   tokens.forEach((token, idx) => {
     // Word boundary: insert a wordGap before every token after the first.
     // We must mirror the original behaviour: one gap per space in the input.
-    if (idx > 0) result.push({ wordGap: true });
+    // displayLen:1 because the space occupies one position in the original string.
+    if (idx > 0) result.push({ wordGap: true, displayLen: 1 });
 
     if (token === "") return; // consecutive spaces produce an empty token; skip
 
     // A whole token that is exactly a prosign key → emit one atomic code.
+    // displayLen:2 because the prosign is spelled as two letters in the source text.
     if (PROSIGN_CODES[token] !== undefined) {
-      result.push({ code: PROSIGN_CODES[token] });
+      result.push({ code: PROSIGN_CODES[token], displayLen: 2 });
       return;
     }
 
-    // Otherwise emit each character individually.
+    // Otherwise emit each character individually (displayLen:1 each).
     for (const ch of token) {
       const code = MORSE[ch];
-      if (code) result.push({ code }); // unknown characters are silently skipped
+      if (code) result.push({ code, displayLen: 1 }); // unknown characters are silently skipped
     }
   });
   return result;

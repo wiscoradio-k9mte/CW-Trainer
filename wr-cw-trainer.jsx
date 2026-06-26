@@ -286,16 +286,17 @@ function useMorsePlayer() {
           duck.setTargetAtTime(1, t + Math.min(0.15, gapLen * 0.35), 0.3);
         }
         t += wordSp - charSp; // word gap replaces the trailing char gap
-        strPos++; // advance past the space character in the original string
+        // tok.displayLen is 1 (the space in the original string); advance past it.
+        strPos += tok.displayLen;
         return;
       }
       const code = tok.code;
-      // Advance strPos: find how many display characters this token consumed.
-      // Prosigns are two letters in the display; ordinary tokens are one.
-      // We advance to the end of the token in the original string.
-      const consumed = Object.keys({ AR: 1, BT: 1, SK: 1, KN: 1 }).some(
-        (ps) => upperText.slice(strPos, strPos + 2) === ps
-      ) ? 2 : 1;
+      // tok.displayLen is the single source of truth for how many characters this
+      // token occupies in the original display string: 1 for a plain character,
+      // 2 for a fused prosign (AR/BT/SK/KN).  Using this eliminates the old
+      // parallel scan that matched prosign letter-pairs at any position in the
+      // string and desync'd easy-mode reveal on "ARE YOU", "W9KN", "CEDAR", etc.
+      const consumed = tok.displayLen;
       if (duck) duck.setTargetAtTime(DUCK, t, 0.015); // gain drops as the signal appears
       if (onChar) {
         const capturedPos = strPos + consumed - 1;
@@ -1514,6 +1515,20 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     modeB: settings.keyType === "paddle" && settings.iambicModeB,
   });
 
+  // Clear any in-flight keyer loop / held-lever state when the operator switches
+  // key type (paddle ↔ straight ↔ bug).  Without this, a paddle or bug loop
+  // started on one type continues running after the switch — ditHeld/dahHeld stay
+  // true, loopTimer keeps firing, and the sidetone can ring indefinitely.  The
+  // window-listener effect's cleanup already does this on a full re-mount, but
+  // settings.keyType changes do NOT re-mount the component — they only update
+  // modeRef.current — so the cleanup never fires.  This effect closes the gap.
+  useEffect(() => {
+    keyer.clear();
+  }, [settings.keyType]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: keyer.clear is stable (useCallback with [player] dep) but we only want
+  // to fire on keyType changes, not on every render — listing only keyType here
+  // is intentional and correct.
+
   const newTarget = () => {
     const cat = DRILL_CATEGORIES[catIdx];
     const t = cat.gen(settings);
@@ -2021,6 +2036,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
     // Mode B: gate on keyType==="paddle" — straight/bug unaffected.
     modeB: settings.keyType === "paddle" && settings.iambicModeB,
   });
+
+  // Clear keyer state when operator switches key type mid-contact (see KeyTrainer
+  // for the full rationale — same gap applies here).
+  useEffect(() => {
+    keyer.clear();
+  }, [settings.keyType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [difficulty, setDifficulty] = useState("normal");
   const [liveText, setLiveText] = useState("");
