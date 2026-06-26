@@ -29,6 +29,7 @@ all the way from recognizing your first two characters to running a complete on-
 - 🛠️ **Bring your own key** — practice on screen, on the keyboard, or with your real straight key or
   paddle through a VBand-style USB adapter.
 - 📻 **Real operating, simulated** — work POTA, SOTA, IOTA, and ragchew contacts as either side of the QSO.
+- 📈 **See your progress** — lessons, sending, and copy tracked across sessions, with simple trends and dates.
 - 🔌 **Offline forever** — it never asks for the network.
 
 ---
@@ -45,7 +46,7 @@ all the way from recognizing your first two characters to running a complete on-
 
 ## Using the trainer
 
-The app opens to four modes, on the tabs across the top:
+The app opens with five tabs across the top — four practice modes plus a progress view:
 
 ### 📚 Learn
 Koch-method character lessons. Every character is sent at full speed from the very first lesson,
@@ -63,7 +64,7 @@ Sending practice with a built-in iambic-paddle and straight-key decoder that sho
 your fist sends — not what you meant. Choose a **drill category** (callsigns, calling CQ, signal
 reports, numbers, prosigns, Q-codes, common words, or full QSO lines) and climb the ladder as you
 improve. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
-paddle), or with **your own key or paddle** through a USB adapter (the `[` / `]` brackets a
+paddle — with selectable iambic **Mode A or B**), or with **your own key or paddle** through a USB adapter (the `[` / `]` brackets a
 VBand-style adapter sends; flip the dit/dah swap if your levers come out reversed). Afterward you
 get **fist feedback** — your estimated speed and how tight your letter/word spacing reads.
 
@@ -73,6 +74,11 @@ SOTA, or IOTA), your **role** (Activator or Hunter/Chaser; or, for a ragchew, Ca
 CQ), and the **difficulty**. Then work the whole exchange — call, signal report, the back-and-forth,
 and the sign-off — copying by ear and sending with your key. Real-life difficulty adds QSB fading,
 band noise, and on-air break-in fills (`?`, `AGN`, `QRS`).
+
+### 📈 Progress
+A running history of how you're doing — your Koch-lesson accuracy, your sending sessions (speed and
+fist), and your copy — tracked across sessions with simple trends and dates, so you can see whether
+today beat last week. Saved locally; it never leaves your machine.
 
 **Plus:** built-in reference guides (CW lingo, on-air procedure, and the history of the code), and a
 Settings panel for speed, Farnsworth timing, sidetone pitch, and band conditions (receiver
