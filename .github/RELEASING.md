@@ -34,23 +34,29 @@ Security / maintenance workflows (owned by security-engineer)
             └── dawidd6/action-send-mail → wiscoradio@gmail.com
 ```
 
-## Human-confirmed publish gate
+## Publish gate — auto-publish on tag (model changed 2026-06-26)
 
-**The snap is never promoted to a public channel automatically.**
+**The deliberate version tag IS the publish authorization.** When you push a
+`vX.Y.Z` tag, Job 1 runs the full test suite + build; only if they pass does Job 2
+`snapcraft upload ... --release=stable`, which releases the revision to the public
+`stable` channel automatically (it goes live once the store's automated review
+passes). You do not need to be present for a promotion step.
 
-`snapcraft upload` in Job 2 assigns a revision number in the store and holds it
-pending Travis's review. It is NOT visible to users until Travis promotes it.
+Why this model: the human checkpoint is the tag (a one-line act you can do from
+anywhere, even GitHub's web UI), not a second manual promote. The test gate is the
+safety — **a broken build can never reach `stable`.** This replaced the earlier
+"upload-without-channel, human promotes manually" flow.
 
-After the workflow completes, promote manually:
-
+To launch a release:
 ```bash
-# Option A: Snap Store dashboard
-# Visit https://snapcraft.io/wr-cw-trainer/releases and drag the revision
-# to the stable channel.
+git tag vX.Y.Z && git push origin vX.Y.Z   # the deliberate "go" — auto-publishes
+```
 
-# Option B: CLI (from your local machine, with store credentials active)
+If you ever want a manual gate back (e.g. release to `candidate` and promote later),
+change the upload step to `snapcraft upload "${SNAP_FILE}"` (no `--release`) and
+promote with:
+```bash
 snapcraft release wr-cw-trainer <REVISION_NUMBER> stable
-# e.g.: snapcraft release wr-cw-trainer 7 stable
 ```
 
 To find the revision number: the `snapcraft upload` output in the workflow log
@@ -180,11 +186,11 @@ OR leave it at "Read repository contents and packages permissions" (the per-work
 
 ### 4. No Snap Store environment gate (by design)
 
-The publish gate is the `snapcraft upload` without `--release`, plus Travis's
-manual promotion. A GitHub Environment with a required reviewer was considered but
-rejected: it holds a live runner while Travis is away, and runs time out at 6 hours.
-The upload-without-releasing pattern is simpler, more reliable, and the Snap Store's
-own pending-review state is the natural gate.
+The publish gate is the **deliberate version tag** plus the **automated test gate**:
+the tag is the human authorization, and Job 2 only releases to `stable` if the tests
+pass. A GitHub Environment with a required reviewer was considered but rejected — it
+holds a live runner while Travis is away (runs time out at 6 hours) and requires the
+human to be present at publish time, the exact thing this model avoids.
 
 ---
 

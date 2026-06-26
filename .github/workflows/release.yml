@@ -5,22 +5,18 @@
 # Automation builds, tests, packages, creates the GitHub Release, and
 # uploads the snap revision to the Snap Store.
 #
-# HUMAN-GATED PUBLISH:
-# The snap is uploaded to the Snap Store WITHOUT a channel (--no-wait,
-# no --release flag), producing a numbered revision that sits in the store
-# review queue but is NOT visible to users. Travis then promotes it to the
-# `candidate` or `stable` channel manually in the Snap Store dashboard or
-# via `snapcraft promote`. See RELEASING.md for the exact command.
+# AUTO-PUBLISH ON TAG (model changed 2026-06-26, per Travis):
+# The DELIBERATE version tag that triggers this workflow IS the human's publish
+# authorization. The full test suite + build run first; only if they pass does the
+# snap upload-and-release to `stable`. So a broken build can never go live, and Travis
+# does not need to be present for the promotion step. The human checkpoint moved from
+# "manually promote each release" to "deliberately tag the release"; the automation
+# carries it out, gated by the tests.
 #
-# This satisfies the firm checkpoint: automation may build and upload,
-# but promotion to a public channel requires explicit human action.
-#
-# WHY THIS APPROACH over a GitHub Environment gate:
-# A GitHub Environment (e.g. `snap-store` with a required reviewer) gates
-# a JOB step. That works, but it holds the GitHub Actions runner live while
-# Travis is away — runs time out at 6 hours. The upload-without-releasing
-# approach is simpler, more reliable, and the Snap Store's own "pending
-# review" state is the natural gate. See RELEASING.md for the full runbook.
+# WHY auto-promote on tag (vs a GitHub Environment approval gate):
+# An Environment gate holds the runner live waiting for a click (times out at 6h) and
+# requires the human to be available at publish time — the exact thing this avoids.
+# The tag is a one-line deliberate act Travis can do from anywhere. See RELEASING.md.
 #
 # SNAP BUILD IN CI:
 # We use snapcore/action-build, which provisions LXD on the ubuntu-latest
@@ -157,9 +153,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   # Job 2: Create GitHub Release and upload the snap to the store.
   #
-  # Runs only after build-and-package succeeds.
-  # The snap revision is uploaded WITHOUT a channel (no --release flag),
-  # so it does NOT go live automatically. Travis promotes manually.
+  # Runs only after build-and-package succeeds (the test gate).
+  # The snap is uploaded and released to `stable` automatically — the deliberate
+  # version tag is the human's publish authorization; a failed build never reaches here.
   # ──────────────────────────────────────────────────────────────────────
   release-and-upload:
     name: Create GitHub Release & Upload Snap Revision
@@ -233,24 +229,21 @@ jobs:
         run: |
           sudo snap install snapcraft --classic
 
-      - name: Upload snap revision to Snap Store (no channel — human promotes)
-        # Uploads the snap revision to the store WITHOUT releasing it to any channel.
-        # The revision number is assigned by the store but the snap is NOT visible to
-        # users until Travis promotes it. See RELEASING.md for the promotion command.
+      - name: Upload snap revision and release to stable (auto-publish on tag)
+        # Uploads the snap revision and releases it to the `stable` channel. The human's
+        # authorization is the DELIBERATE version tag that triggered this workflow; the
+        # full test gate above must pass before this step runs, so a broken build can
+        # never reach stable. (Model changed 2026-06-26 from human-promotes to
+        # auto-publish-on-tag, per Travis — see RELEASING.md.)
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
-          echo "Uploading ${SNAP_FILE} to the Snap Store (no channel)..."
-          snapcraft upload "${SNAP_FILE}"
-          # Note: no --release flag. The revision is uploaded and held pending
-          # Travis's manual promotion via the Snap Store dashboard or:
-          #   snapcraft promote wr-cw-trainer --from-channel=<revision> --to-channel=stable
-          # See RELEASING.md for the exact command.
+          echo "Uploading ${SNAP_FILE} and releasing to the stable channel..."
+          snapcraft upload "${SNAP_FILE}" --release=stable
           echo ""
-          echo "Upload complete. The snap revision is now in the Snap Store review"
-          echo "queue but NOT released to any channel."
-          echo "Promote to stable manually — see RELEASING.md."
+          echo "Upload complete. The revision has been released to stable;"
+          echo "it goes live once the store's automated review passes."
 
       - name: Push text metadata to Snap Store
         # Reads summary, description, and icon from the built snap and updates
