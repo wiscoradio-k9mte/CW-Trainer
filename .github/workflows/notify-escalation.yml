@@ -1,0 +1,87 @@
+# Email-escalation reusable workflow
+#
+# Called by security/maintenance workflows when they encounter something they
+# cannot safely handle automatically (high/critical vuln with no safe patch,
+# a failing security gate, a breaking-change bump, etc.).
+#
+# USAGE — from a calling workflow:
+#
+#   jobs:
+#     escalate:
+#       uses: ./.github/workflows/notify-escalation.yml
+#       with:
+#         subject: "CW Trainer CI: high-severity vuln found — action needed"
+#         body: |
+#           <multi-line details here>
+#         severity: "high"            # informational label (low/medium/high/critical)
+#       secrets: inherit              # passes MAIL_* secrets through automatically
+#
+# Deliberately does NOT trigger on success or routine events — only call it
+# when human judgment is actually required.
+
+name: Notify — Escalation Email
+
+on:
+  workflow_call:
+    inputs:
+      subject:
+        description: 'Email subject line'
+        required: true
+        type: string
+      body:
+        description: 'Email body (plain text; may include newlines)'
+        required: true
+        type: string
+      severity:
+        description: 'Severity label: low | medium | high | critical'
+        required: false
+        type: string
+        default: 'high'
+    secrets:
+      MAIL_SERVER:
+        required: true
+      MAIL_PORT:
+        required: true
+      MAIL_USERNAME:
+        required: true
+      MAIL_PASSWORD:
+        required: true
+
+# No GITHUB_TOKEN permissions needed — this workflow only sends email.
+permissions: {}
+
+jobs:
+  send-email:
+    name: Send escalation email
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Send escalation email to Travis
+        # dawidd6/action-send-mail v18
+        uses: dawidd6/action-send-mail@94de994a9f6fffee200243214e17002e2920bb59
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: '[CW Trainer / ${{ inputs.severity }}] ${{ inputs.subject }}'
+          to: wiscoradio@gmail.com
+          from: 'CW Trainer CI <${{ secrets.MAIL_USERNAME }}>'
+          body: |
+            CW Trainer automation needs your attention.
+
+            Severity: ${{ inputs.severity }}
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ---
+
+            ${{ inputs.body }}
+
+            ---
+            This email was sent automatically because the workflow reached a
+            condition it cannot safely resolve on its own. No action has been
+            taken; the decision is yours.

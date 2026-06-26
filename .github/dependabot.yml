@@ -1,0 +1,79 @@
+# Dependabot — dependency currency + security updates for CW Trainer
+#
+# Two ecosystems:
+#   - npm            : the app's JS dependencies (and devDependencies)
+#   - github-actions : the SHA-pinned actions in .github/workflows/*
+#
+# Dependabot opens BOTH security-update PRs (always, ASAP, regardless of
+# schedule) and version-update PRs (on the weekly schedule below). For the
+# github-actions ecosystem this is what keeps our SHA pins fresh: Dependabot
+# bumps the pinned commit AND updates the version comment for us.
+#
+# CW Trainer ships only react + react-dom at runtime (Vite-bundles them); the
+# rest are dev/build tooling. So grouping keeps the PR volume sane for a solo
+# maintainer — one grouped PR per ecosystem per week instead of a dozen.
+#
+# Owned by the security-engineer. Triage per docs/remote-operation.md.
+
+version: 2
+updates:
+  # ── npm ────────────────────────────────────────────────────────────────
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '08:00'
+      timezone: 'America/Chicago'   # K9MTE / Driftless region
+    open-pull-requests-limit: 5
+    # Group to cut noise. Security updates still come through immediately and
+    # individually even when grouped version-updates are batched.
+    groups:
+      # The two runtime deps move together — a React minor/patch should be
+      # tested as a pair, never split.
+      react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+      # All dev/build tooling (vite, vitest, electron, electron-builder,
+      # testing-library, patch-package, etc.) in one weekly PR.
+      dev-dependencies:
+        dependency-type: 'development'
+        update-types:
+          - 'minor'
+          - 'patch'
+    labels:
+      - 'dependencies'
+    commit-message:
+      prefix: 'deps'
+      prefix-development: 'deps-dev'
+      include: 'scope'
+    # Electron is the one dep where a major bump is a real, breaking event
+    # (native toolchain, snap/segfault history — see CLAUDE.md). Let Dependabot
+    # surface electron majors as their own PR so they are never silently folded
+    # into a group; the security-engineer routes them to test-qa.
+    ignore:
+      - dependency-name: 'electron'
+        update-types: ['version-update:semver-major']
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '08:00'
+      timezone: 'America/Chicago'
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for all action bumps — they are low-risk and SHA-pinned, so a
+      # batched weekly refresh of the pins is ideal.
+      github-actions:
+        patterns:
+          - '*'
+    labels:
+      - 'dependencies'
+      - 'github-actions'
+    commit-message:
+      prefix: 'ci'
+      include: 'scope'

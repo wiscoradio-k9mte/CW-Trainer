@@ -14,3 +14,13 @@ npm-debug.log*
 /parts/
 /stage/
 /prime/
+
+# Internal team docs — kept locally as project memory, not for the public repo
+/CLAUDE.md
+/STATUS.md
+/docs/
+
+# Secrets / local environment files — never commit
+.env
+.env.*
+*.env

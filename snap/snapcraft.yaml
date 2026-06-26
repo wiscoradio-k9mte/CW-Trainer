@@ -10,13 +10,25 @@ description: |
 
   • A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.
 
-  • Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends — including the HH "start over" prosign. Key on screen, with the keyboard, or with your own paddle or straight key through a USB adapter (VBand-compatible — the [ and ] keys).
+  • Sending practice with a built-in decoder that shows exactly what your fist sends — plus fist feedback that scores your estimated speed, dit/dah weighting, and element, character, and word spacing against the standard. Eight drill categories climb from common words to callsigns. Key with an iambic paddle (Mode A or Mode B), a straight key, the on-screen key, the keyboard, or your own key through a USB adapter (VBand-compatible — the [ and ] keys). Send the HH "start over" prosign just like on the air.
 
-  • A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — on-air break-in fills, honest signal reports, and a 5-second "get ready" countdown before the code starts.
+  • A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — pick your role (activator, hunter, chaser, or call/answer CQ), with on-air break-in fills, honest signal reports, varied CQ calls, and a 5-second "get ready" countdown before the code starts.
+
+  • Cross-session progress tracking — your lessons, sending sessions, and copy accuracy are saved and charted with dates, so you can see whether today beat last week.
+
+  • A responsive layout that spreads across a desktop screen and collapses to a clean single column on a small one.
 
   • Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.
 
   • Reference guides on CW lingo, on-air procedure, and the history of the code.
+
+  What's new in 2.0 — from K9MTE:
+  • Progress tracking — a new Progress tab keeps a running history of your lessons, fist, and copy, with dates and trends.
+  • Iambic Mode B for paddle operators (opt-in).
+  • A roomier desktop layout that puts your practice controls in one place.
+  • Sharper sending feedback, more realistic QSO roles and CQ calls, and a long list of fixes and polish.
+
+  This is actively developed — I'm a ham building the trainer I always wanted, and there's more on the way. 73, K9MTE.
 
   Made in the Driftless by Wisco Radio Labs (K9MTE). GPL-3.0 · open source · fully offline.
 

@@ -1,0 +1,69 @@
+# CodeQL — static application security testing (SAST) for CW Trainer
+#
+# Scans the JavaScript/TypeScript source for security-relevant bug patterns
+# (injection, prototype pollution, unsafe deserialization, etc.) on every PR,
+# every push to main, and once a week so newly-published CodeQL queries catch
+# code that was clean when it last changed.
+#
+# CW Trainer is a fully offline Electron app, so CodeQL's web/server queries
+# will mostly be quiet here — that is expected and correct. We run it as a
+# low-noise tripwire and a roadmap-ready baseline (network/account features,
+# and the future Capacitor mobile build, are where it will start earning its
+# keep). Do NOT tune the query suite to "find something" — a quiet pass on an
+# inert app is the honest result.
+#
+# Owned by the security-engineer (separate from ci.yml, which is test+build).
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 07:17 UTC. Off-peak and not on the hour to avoid the scheduler
+    # stampede. Weekly is the right cadence for a low-churn offline app.
+    - cron: '17 7 * * 1'
+
+# Default to nothing; the analyze job elevates only what CodeQL needs.
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Required by CodeQL:
+      security-events: write   # upload results to the Security tab
+      contents: read           # checkout the source
+      # actions: read is only needed for private repos; this repo is public,
+      # so it is omitted to keep the grant minimal.
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        # github/codeql-action/init v3.36.2
+        uses: github/codeql-action/init@dd903d2e4f5405488e5ef1422510ee31c8b32357
+        with:
+          languages: javascript-typescript
+          # 'security-and-quality' adds maintainability queries on top of the
+          # security set. For a solo maintainer that is extra noise; the default
+          # 'security-extended' would also work. We use the default suite (no
+          # queries: override) = the standard security queries only.
+
+      - name: Perform CodeQL Analysis
+        # github/codeql-action/analyze v3.36.2
+        uses: github/codeql-action/analyze@dd903d2e4f5405488e5ef1422510ee31c8b32357
+        with:
+          category: '/language:javascript-typescript'

@@ -1,0 +1,59 @@
+# CI — PR checks for CW Trainer
+#
+# Runs on every pull request and every push to main.
+# These jobs become the *required status checks* for the main branch.
+# (Set them in Settings → Branches → branch protection rules once the
+# workflow has run at least once so GitHub surfaces the job names.)
+#
+# Scope: test + build only. CodeQL, Dependabot, dependency-review, and
+# secret scanning are owned by the security-engineer and live in separate
+# workflows — do not add them here.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel any in-flight run for the same ref so a quick follow-up push
+# doesn't queue behind a slow one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token: we only read the repo.
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Node 22
+        # actions/setup-node v4.4.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        # npm ci is the lockfile-respecting install — never npm install in CI.
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build renderer
+        # vite build — confirms the production bundle compiles cleanly.
+        # The snap build (electron-builder --dir + snapcraft) is only done
+        # on the release workflow; it requires a heavier build environment.
+        run: npm run build

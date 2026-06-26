@@ -74,6 +74,20 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.0.0" date="2026-06-25" type="stable">
+      <description>
+        <p>Version 2.0 — a big step up in feedback and progress tracking:</p>
+        <ul>
+          <li>New Progress tab: cross-session history of your lessons, sending, and copy, with dates and trends.</li>
+          <li>Fist feedback on your sending — estimated speed, dit/dah weighting, and element, character, and word spacing.</li>
+          <li>Eight keying drill categories, from common words to callsigns.</li>
+          <li>QSO roles — activator, hunter, chaser, or call/answer CQ — with varied, realistic CQ calls.</li>
+          <li>Iambic Mode B for paddle operators (opt-in).</li>
+          <li>A roomier, responsive desktop layout.</li>
+          <li>Accessibility, onboarding, and many smaller fixes and polish.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.1" date="2026-06-20" type="stable">
       <description>
         <p>Answer Koch-method lessons with the keyboard, not just tap/click.</p>

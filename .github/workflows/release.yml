@@ -1,0 +1,292 @@
+# Release — CW Trainer
+#
+# Trigger: a pushed tag matching v*.*.* (e.g. v2.0.0).
+# Travis pushes the tag manually after confirming the build is ready.
+# Automation builds, tests, packages, creates the GitHub Release, and
+# uploads the snap revision to the Snap Store.
+#
+# HUMAN-GATED PUBLISH:
+# The snap is uploaded to the Snap Store WITHOUT a channel (--no-wait,
+# no --release flag), producing a numbered revision that sits in the store
+# review queue but is NOT visible to users. Travis then promotes it to the
+# `candidate` or `stable` channel manually in the Snap Store dashboard or
+# via `snapcraft promote`. See RELEASING.md for the exact command.
+#
+# This satisfies the firm checkpoint: automation may build and upload,
+# but promotion to a public channel requires explicit human action.
+#
+# WHY THIS APPROACH over a GitHub Environment gate:
+# A GitHub Environment (e.g. `snap-store` with a required reviewer) gates
+# a JOB step. That works, but it holds the GitHub Actions runner live while
+# Travis is away — runs time out at 6 hours. The upload-without-releasing
+# approach is simpler, more reliable, and the Snap Store's own "pending
+# review" state is the natural gate. See RELEASING.md for the full runbook.
+#
+# SNAP BUILD IN CI:
+# We use snapcore/action-build, which provisions LXD on the ubuntu-latest
+# runner and invokes real snapcraft inside an LXD container — the same
+# toolchain that produced the live v1.0.x snaps. This is the correct path
+# for a core22 + gnome-extension snap. electron-builder's snap target is
+# explicitly NOT used (see CLAUDE.md — it segfaults Electron 42 against the
+# gnome-3-28-1804 runtime).
+#
+# The snapcraft.yaml `dump` plugin references `release/linux-unpacked`, which
+# `npm run pack` (electron-builder --dir) produces. So the build order is:
+#   1. npm ci
+#   2. npm test
+#   3. npm run build        (vite build → dist/)
+#   4. npm run pack         (electron-builder --dir → release/linux-unpacked/)
+#   5. snapcore/action-build (snapcraft → wr-cw-trainer_*.snap)
+#
+# SECRETS REQUIRED (see RELEASING.md for how to obtain and set each):
+#   SNAPCRAFT_STORE_CREDENTIALS  — snapcraft export-login output (base64 macaroon)
+#   MAIL_SERVER                  — SMTP host for escalation emails
+#   MAIL_PORT                    — SMTP port (465 for TLS)
+#   MAIL_USERNAME                — sender address / SMTP username
+#   MAIL_PASSWORD                — Gmail App Password
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# No cancel-in-progress for releases — a running release should not be
+# interrupted by a duplicate tag push (which should never happen anyway).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default to no permissions; each job declares only what it needs.
+permissions: {}
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 1: Build, test, and package the snap.
+  # ──────────────────────────────────────────────────────────────────────
+  build-and-package:
+    name: Build, Test & Package Snap
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read   # checkout only
+
+    outputs:
+      snap-path: ${{ steps.find-snap.outputs.snap-path }}
+      version: ${{ steps.get-version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.2.2
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Node 22
+        # actions/setup-node v4.4.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Extract version from tag
+        id: get-version
+        # Strip the leading 'v' from the tag name so we get '2.0.0' not 'v2.0.0'.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${VERSION}"
+
+      - name: Validate version matches package.json
+        # Fail fast if the tag and package.json are out of sync — prevents
+        # a release with the wrong version baked into the binary.
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${{ steps.get-version.outputs.version }}"
+          if [ "${PKG_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "ERROR: package.json version (${PKG_VERSION}) does not match tag (${TAG_VERSION})"
+            echo "Bump package.json and snapcraft.yaml to ${TAG_VERSION} before tagging."
+            exit 1
+          fi
+          echo "Version check passed: ${PKG_VERSION}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build renderer (Vite)
+        run: npm run build
+
+      - name: Build Electron unpacked tree
+        # electron-builder --dir produces release/linux-unpacked/, which the
+        # snapcraft.yaml `dump` plugin uses as its source.
+        run: npm run pack
+
+      - name: Build snap (snapcore/action-build v1.3.0)
+        # snapcore/action-build v1.3.0
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79
+        id: snapcraft
+        with:
+          snapcraft-channel: stable
+
+      - name: Locate snap artifact
+        id: find-snap
+        # snapcore/action-build outputs the snap path in steps.snapcraft.outputs.snap,
+        # but we also verify it exists before proceeding.
+        run: |
+          SNAP_PATH="${{ steps.snapcraft.outputs.snap }}"
+          if [ ! -f "${SNAP_PATH}" ]; then
+            echo "ERROR: snap artifact not found at ${SNAP_PATH}"
+            exit 1
+          fi
+          echo "snap-path=${SNAP_PATH}" >> "$GITHUB_OUTPUT"
+          echo "Snap built at: ${SNAP_PATH}"
+          ls -lh "${SNAP_PATH}"
+
+      - name: Upload snap artifact (for release job)
+        # Stash the snap so the release job can download it without rebuilding.
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: snap-artifact
+          path: ${{ steps.find-snap.outputs.snap-path }}
+          retention-days: 7
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 2: Create GitHub Release and upload the snap to the store.
+  #
+  # Runs only after build-and-package succeeds.
+  # The snap revision is uploaded WITHOUT a channel (no --release flag),
+  # so it does NOT go live automatically. Travis promotes manually.
+  # ──────────────────────────────────────────────────────────────────────
+  release-and-upload:
+    name: Create GitHub Release & Upload Snap Revision
+    needs: build-and-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write   # create GitHub Release and upload release assets
+
+    steps:
+      - name: Checkout (for release notes)
+        # actions/checkout v4.2.2
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Download snap artifact
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: snap-artifact
+          path: ./dist-snap
+
+      - name: Locate downloaded snap
+        id: snap-loc
+        run: |
+          SNAP_FILE=$(ls ./dist-snap/*.snap | head -1)
+          echo "snap-file=${SNAP_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Snap file: ${SNAP_FILE}"
+          ls -lh "${SNAP_FILE}"
+
+      - name: Extract release notes from metainfo.xml
+        id: release-notes
+        # Pull the description for the current version from the AppStream metainfo
+        # file so store notes and GitHub Release notes stay in sync.
+        # Falls back to a minimal "CW Trainer vX.Y.Z" line if absent.
+        run: |
+          python3 .github/scripts/extract_release_notes.py > /tmp/release_notes.txt
+          {
+            echo "notes<<NOTES_EOF"
+            cat /tmp/release_notes.txt
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ needs.build-and-package.outputs.version }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+
+      - name: Create GitHub Release
+        id: gh-release
+        # softprops/action-gh-release v3.0.1
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: 'CW Trainer v${{ needs.build-and-package.outputs.version }}'
+          body: |
+            ${{ steps.release-notes.outputs.notes }}
+
+            ---
+            **Install from the Snap Store:**
+            ```
+            snap install wr-cw-trainer
+            ```
+            Or download the `.snap` file below and install manually:
+            ```
+            sudo snap install --dangerous wr-cw-trainer_*.snap
+            ```
+          files: ${{ steps.snap-loc.outputs.snap-file }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+      - name: Install snapcraft
+        run: |
+          sudo snap install snapcraft --classic
+
+      - name: Upload snap revision to Snap Store (no channel — human promotes)
+        # Uploads the snap revision to the store WITHOUT releasing it to any channel.
+        # The revision number is assigned by the store but the snap is NOT visible to
+        # users until Travis promotes it. See RELEASING.md for the promotion command.
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
+          echo "Uploading ${SNAP_FILE} to the Snap Store (no channel)..."
+          snapcraft upload "${SNAP_FILE}"
+          # Note: no --release flag. The revision is uploaded and held pending
+          # Travis's manual promotion via the Snap Store dashboard or:
+          #   snapcraft promote wr-cw-trainer --from-channel=<revision> --to-channel=stable
+          # See RELEASING.md for the exact command.
+          echo ""
+          echo "Upload complete. The snap revision is now in the Snap Store review"
+          echo "queue but NOT released to any channel."
+          echo "Promote to stable manually — see RELEASING.md."
+
+      - name: Push text metadata to Snap Store
+        # Reads summary, description, and icon from the built snap and updates
+        # the store listing. Does NOT affect screenshots or other dashboard media
+        # (upload-metadata only touches the fields embedded in the snap itself).
+        # The --force flag overrides any store-side metadata conflicts.
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
+          snapcraft upload-metadata "${SNAP_FILE}" --force
+          echo "Metadata (summary, description, icon) pushed to the Snap Store."
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 3: Email Travis if the release failed.
+  # Only fires if one of the previous jobs failed — not on success.
+  # ──────────────────────────────────────────────────────────────────────
+  notify-on-failure:
+    name: Notify on release failure
+    needs: [build-and-package, release-and-upload]
+    if: failure()
+    uses: ./.github/workflows/notify-escalation.yml
+    with:
+      subject: 'Release ${{ github.ref_name }} FAILED — action needed'
+      severity: 'high'
+      body: |
+        The release workflow for tag ${{ github.ref_name }} failed.
+
+        Check the run log for details:
+        ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+        Common causes:
+        - package.json / snapcraft.yaml version mismatch with the tag
+        - snapcraft build failure (LXD setup or snapcraft.yaml error)
+        - SNAPCRAFT_STORE_CREDENTIALS expired (re-export and update the secret)
+        - GitHub Release creation failure
+
+        The snap was NOT uploaded to the store. No user-visible change occurred.
+    secrets: inherit

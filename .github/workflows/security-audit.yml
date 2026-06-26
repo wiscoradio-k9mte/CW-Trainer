@@ -1,0 +1,136 @@
+# Security Audit — weekly dependency-vulnerability sweep with email escalation
+#
+# Runs `npm audit` on a schedule (and on demand). This is the scheduled
+# security workflow the brief calls for, and the hook for the weekly Snyk loop
+# (see SECURITY-AUTOMATION.md — the Snyk dashboard integration runs on its own;
+# an optional Snyk Action step can be added here if Travis wants Snyk results
+# in the Actions log).
+#
+# Behaviour:
+#   - npm audit at the configured threshold.
+#   - CLEAN  -> the job passes, nothing happens (no email on routine success).
+#   - HIGH/CRITICAL found -> the audit STEP does not fail the workflow; instead
+#     a follow-up job CALLS the release-engineer's reusable notify-escalation
+#     workflow, which emails Travis. Escalate, don't fail silently, and don't
+#     fail-noisily-then-get-ignored: a red X on a schedule is easy to miss, an
+#     email is not.
+#
+# Why npm audit and not a hard `npm audit --audit-level=high` gate: a non-zero
+# exit just paints the schedule red. The value is a HUMAN getting told. So we
+# capture the result, decide, and route high/critical to the escalation email.
+#
+# Owned by the security-engineer.
+
+name: Security Audit
+
+on:
+  schedule:
+    # Mondays 08:30 UTC — after the Dependabot run so a freshly-bumped lockfile
+    # is what gets audited.
+    - cron: '30 8 * * 1'
+  workflow_dispatch: {}   # let Travis run it on demand from the Actions tab
+
+# Nothing by default. The audit job only reads the repo.
+permissions: {}
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      # 'true' when high/critical vulns were found and the run should escalate.
+      escalate: ${{ steps.audit.outputs.escalate }}
+      summary: ${{ steps.audit.outputs.summary }}
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up Node 22
+        # actions/setup-node v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        id: audit
+        # `npm audit --json` exits non-zero when vulns exist, so we guard it
+        # with `|| true` and parse the JSON ourselves to classify severity.
+        # All values written to GITHUB_OUTPUT are integers/booleans we compute
+        # here — NO audit text is interpolated into a later `run:` or into a
+        # workflow expression, so there is no script-injection surface.
+        run: |
+          set -o pipefail
+          npm audit --json > audit.json || true
+
+          # Pull severity counts with node (jq may not be present on the image).
+          CRITICAL=$(node -p "try{require('./audit.json').metadata.vulnerabilities.critical||0}catch(e){0}")
+          HIGH=$(node -p "try{require('./audit.json').metadata.vulnerabilities.high||0}catch(e){0}")
+          MODERATE=$(node -p "try{require('./audit.json').metadata.vulnerabilities.moderate||0}catch(e){0}")
+          LOW=$(node -p "try{require('./audit.json').metadata.vulnerabilities.low||0}catch(e){0}")
+
+          echo "npm audit: critical=$CRITICAL high=$HIGH moderate=$MODERATE low=$LOW"
+
+          SUMMARY="critical=$CRITICAL high=$HIGH moderate=$MODERATE low=$LOW"
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "escalate=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::High/critical npm audit findings — escalation email will be sent."
+          else
+            echo "escalate=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload audit report
+        if: always()
+        # actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: npm-audit-report
+          path: audit.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ── Escalation ────────────────────────────────────────────────────────────
+  # Only runs when the audit job flagged high/critical. Calls the
+  # release-engineer's reusable workflow to email Travis. `secrets: inherit`
+  # passes the MAIL_* secrets through.
+  escalate:
+    name: Escalate to Travis
+    needs: audit
+    if: needs.audit.outputs.escalate == 'true'
+    uses: ./.github/workflows/notify-escalation.yml
+    with:
+      subject: 'npm audit found high/critical vulnerabilities'
+      severity: 'high'
+      body: |
+        The weekly security-audit workflow found high or critical
+        vulnerabilities in CW Trainer's dependencies that it cannot
+        safely auto-patch.
+
+        npm audit summary: ${{ needs.audit.outputs.summary }}
+
+        Next steps:
+        - Review the full audit.json artifact attached to the run.
+        - The security-engineer should triage by reachability (most of
+          CW Trainer's deps are dev/build-only and never ship) and route
+          any safe fix through test-qa-engineer before merge.
+        - A Dependabot security-update PR may already be open for these.
+
+        Run log:
+        ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    secrets: inherit
