@@ -57,7 +57,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.1.0",
-    "cross-env": "^7.0.3",
+    "cross-env": "^10.1.0",
     "electron": "^42.4.1",
     "electron-builder": "^26.15.5",
     "jsdom": "^29.1.1",
