@@ -14,6 +14,7 @@ import {
   PROGRESS_RETENTION, PROGRESS_SCHEMA_VERSION,
   emptyProgress, appendProgress, migrateProgress,
   learnTrend, keyTrend, copyTrend,
+  splashSignature,
 } from "./cw-core.js";
 
 // ---------------------------------------------------------------------------
@@ -2007,5 +2008,22 @@ describe("copyTrend()", () => {
     expect(singleGroup).toBeDefined();
     expect(singleGroup.recent).toEqual([80, 90]);
     expect(singleGroup.lastPct).toBe(90);
+  });
+});
+
+describe("splashSignature", () => {
+  it("returns the operator's callsign once they've set one", () => {
+    expect(splashSignature("K9MTE", "W1AW")).toBe("K9MTE");
+  });
+  it("defaults to WR while the call is still the placeholder (not set up)", () => {
+    expect(splashSignature("W1AW", "W1AW")).toBe("WR");
+  });
+  it("defaults to WR when the call is empty or blank", () => {
+    expect(splashSignature("", "W1AW")).toBe("WR");
+    expect(splashSignature("   ", "W1AW")).toBe("WR");
+    expect(splashSignature(undefined, "W1AW")).toBe("WR");
+  });
+  it("trims whitespace around a real call", () => {
+    expect(splashSignature("  K9MTE  ", "W1AW")).toBe("K9MTE");
   });
 });

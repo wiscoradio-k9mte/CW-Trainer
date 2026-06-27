@@ -896,6 +896,16 @@ export function averageScore(nums) {
   return Math.round(sum / nums.length);
 }
 
+/* ================= SPLASH SIGNATURE ================= */
+// What the splash sends in Morse when the user skips it: the operator's own
+// callsign once they've set one, else "WR" (Wisco Radio) as the default. The
+// caller passes the placeholder (DEFAULT_SETTINGS.myCall) so we don't hardcode it
+// twice — a myCall still equal to the placeholder means "not set up yet".
+export function splashSignature(myCall, placeholder) {
+  const call = (myCall || "").trim();
+  return call && call !== placeholder ? call : "WR";
+}
+
 /* ================= KOCH ADVANCEMENT GATE ================= */
 // history is an array of booleans (true = correct answer). Advance when the
 // learner has done at least 20 reps AND is at >= 90% rounded accuracy — the
