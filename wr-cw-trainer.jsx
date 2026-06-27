@@ -3882,6 +3882,31 @@ export default function CWTrainer() {
         @media (max-width: 899px) {
           .wr-rail { display: none; }
         }
+
+        /*
+          Coffee/support button hover + focus ring.
+          Inline styles can't do :hover or :focus-visible, so this class
+          carries the stateful rules; everything else is set inline via S tokens.
+
+          Hover: fill with the same #3A2E18 wash S.btnAmber / S.selected use —
+          no new color invented, exact reuse.
+          Transition: 120ms ease on background-color only; gated by reduced-motion
+          so users who prefer no motion get an instant color switch.
+
+          Focus-visible: brighter ring (#FFD89B, the code/readout amber) rather
+          than the standard button ring (#F2A93B border color), so the keyboard
+          focus ring reads as distinct from the button's own border color.
+
+          Active: deepen the fill slightly; global button:active adds translateY(1px)
+          which we must cancel here — a pill-shaped label button should not physically
+          "press down" the way a key-surface does.
+        */
+        .wr-coffee:hover { background-color: #3A2E18; transition: background-color 120ms ease; }
+        .wr-coffee:focus-visible { outline: 2px solid #FFD89B; outline-offset: 2px; }
+        .wr-coffee:active { background-color: #2A2212; transform: none; }
+        @media (prefers-reduced-motion: reduce) {
+          .wr-coffee:hover { transition: none; }
+        }
       `}</style>
 
       {/*
@@ -3905,12 +3930,47 @@ export default function CWTrainer() {
               {settings.charWpm} wpm chars · {settings.effWpm} wpm effective · {settings.myCall}
             </div>
           </div>
-          <button
-            aria-label="Settings"
-            aria-expanded={showSettings}
-            style={{ ...S.btn, padding: "8px 12px" }}
-            onClick={() => { setShowSettings((v) => !v); dismissCallNudge(); }}
-          >⚙</button>
+          {/* Right-side header controls: coffee support link + settings gear.
+              Grouped so they share a flex row with consistent vertical alignment.
+              Coffee is first (left of gear) so it stays visually distinct from
+              the gear's toggle affordance. */}
+          <div style={{ display: "flex", alignItems: "center", gap: S.space.sm }}>
+            {/*
+              Opens the Buy Me a Coffee page in the user's real browser.
+              Must be window.open(..., "_blank") — NOT a same-window href — because
+              an href would navigate the Electron SPA away from the app.
+              The setWindowOpenHandler in electron/main.cjs intercepts _blank opens,
+              checks that the scheme is https (allowlisted), and routes to
+              shell.openExternal so it lands in the OS default browser, not a new
+              Electron window. Works offline: the OS opens the URL independently.
+            */}
+            <button
+              type="button"
+              className="wr-coffee"
+              aria-label="Support the developer on Buy Me a Coffee — opens in your web browser"
+              style={{
+                background: "transparent",
+                border: S.border.amber,
+                color: S.text.amber,
+                borderRadius: S.radius.md,
+                padding: "8px 12px",
+                fontFamily: "ui-monospace, monospace",
+                letterSpacing: 1,
+                fontSize: S.type.body,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+              onClick={() => window.open("https://buymeacoffee.com/wiscoradiolabs", "_blank", "noopener,noreferrer")}
+            >
+              <span aria-hidden="true" style={{ marginRight: S.space.xs }}>☕</span>Coffee?
+            </button>
+            <button
+              aria-label="Settings"
+              aria-expanded={showSettings}
+              style={{ ...S.btn, padding: "8px 12px" }}
+              onClick={() => { setShowSettings((v) => !v); dismissCallNudge(); }}
+            >⚙</button>
+          </div>
         </header>
 
         {/* Settings panel.
