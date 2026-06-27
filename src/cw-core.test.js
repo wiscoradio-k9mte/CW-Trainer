@@ -1813,16 +1813,22 @@ describe("migrateProgress()", () => {
     expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
   });
 
-  it("wrong schemaVersion → resets to empty (old data is gone)", () => {
-    const stale = {
-      schemaVersion: 99,
+  it("mismatched schemaVersion → data is carried forward, version stamped current", () => {
+    // Old behaviour: wiped. New behaviour: carry forward through the migration
+    // ladder (PROGRESS_MIGRATIONS). With no migrations registered (only v1 exists),
+    // learn/key/copy arrays pass through untouched and the version is stamped current.
+    // schemaVersion:0 simulates a pre-v1 blob (e.g. written before the field existed).
+    const oldBlob = {
+      schemaVersion: 0,
       learn: [{ t: 1, lesson: 1, attempts: 10, correct: 9, pct: 90 }],
       key:   [],
       copy:  [],
     };
-    const p = migrateProgress(stale);
-    // Must reset — not carry the stale data
-    expect(p.learn.length).toBe(0);
+    const p = migrateProgress(oldBlob);
+    // Data must be preserved, not wiped.
+    expect(p.learn.length).toBe(1);
+    expect(p.learn[0].pct).toBe(90);
+    // Version is stamped to the current schema.
     expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
   });
 
@@ -1851,6 +1857,97 @@ describe("migrateProgress()", () => {
     expect(p.copy.length).toBe(0);
     // Existing data preserved
     expect(p.learn.length).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // T3 — old-schema blob carries data forward (the main regression guard for
+  // the old wipe-on-mismatch behaviour).
+  // Mutation target: the try/catch → emptyProgress() path. We verify this test
+  // goes red when the old wipe is restored (see mutation note below).
+  // -------------------------------------------------------------------------
+  it("T3: old-schema blob (schemaVersion:0) → all records preserved, version current", () => {
+    const old = {
+      schemaVersion: 0,
+      learn: [
+        { t: 1000, lesson: 1, attempts: 10, correct: 9, pct: 90 },
+        { t: 2000, lesson: 2, attempts: 10, correct: 8, pct: 80 },
+      ],
+      key:  [{ t: 3000, estWpm: 18, weighting: { verdict: "ok" }, spacing: { verdict: "ok" }, element: { verdict: "good" } }],
+      copy: [{ t: 4000, source: "words", pct: 75 }],
+    };
+    const p = migrateProgress(old);
+    // All three category arrays must survive the migration.
+    expect(p.learn.length).toBe(2);
+    expect(p.learn[1].pct).toBe(80);
+    expect(p.key.length).toBe(1);
+    expect(p.copy.length).toBe(1);
+    // Version stamped to current.
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  // -------------------------------------------------------------------------
+  // T4 — QSO seam preserved across a version mismatch (the invariant must hold
+  // even when schemaVersion does NOT match the current version).
+  // -------------------------------------------------------------------------
+  it("T4: QSO seam preserved across a version mismatch (old blob with qso data)", () => {
+    const old = {
+      schemaVersion: 0,   // pre-v1
+      learn: [{ t: 1, lesson: 1, attempts: 5, correct: 4, pct: 80 }],
+      key:   [],
+      copy:  [],
+      qso:   [{ t: 5000, activity: "pota", pct: 95 }], // written by a future build
+    };
+    const p = migrateProgress(old);
+    // QSO seam must survive even when the blob needed a migration walk.
+    expect(Array.isArray(p.qso)).toBe(true);
+    expect(p.qso.length).toBe(1);
+    expect(p.qso[0].activity).toBe("pota");
+    // Known categories are not disturbed.
+    expect(p.learn.length).toBe(1);
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  // -------------------------------------------------------------------------
+  // T5 — genuinely corrupt data falls back to emptyProgress(); a parseable
+  // old-version blob does NOT fall back (only a throw triggers the catch).
+  // -------------------------------------------------------------------------
+  it("T5: throwing migration falls back to emptyProgress(); a valid old blob does not", () => {
+    // A parseable old blob must not lose data (covered by T3 above).
+    const old = { schemaVersion: 0, learn: [{ t: 1, lesson: 1, attempts: 5, correct: 4, pct: 80 }], key: [], copy: [] };
+    const p = migrateProgress(old);
+    expect(p.learn.length).toBe(1); // not wiped
+
+    // Force a throw inside the migration path by passing a Proxy that throws
+    // on spread. This simulates genuinely unprocessable data.
+    const throwingBlob = new Proxy({}, {
+      get(target, prop) {
+        if (prop === "schemaVersion") return 0;
+        // Throw on any other access (the spread { ...raw } triggers ownKeys).
+        throw new Error("simulated corrupt data");
+      },
+      ownKeys() { throw new Error("simulated corrupt ownKeys"); },
+    });
+    // Must fall back to emptyProgress() rather than propagating the error.
+    const fallback = migrateProgress(throwingBlob);
+    expect(fallback.learn.length).toBe(0);
+    expect(fallback.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  // -------------------------------------------------------------------------
+  // T6 — per-category default: one bad category does NOT wipe the others.
+  // -------------------------------------------------------------------------
+  it("T6: learn valid, key non-array → learn preserved, key defaults to []", () => {
+    const mixed = {
+      schemaVersion: PROGRESS_SCHEMA_VERSION,
+      learn: [{ t: 1, lesson: 3, attempts: 10, correct: 10, pct: 100 }],
+      key:   "corrupted",  // not an array
+      copy:  [{ t: 2, source: "phrases", pct: 60 }],
+    };
+    const p = migrateProgress(mixed);
+    expect(p.learn.length).toBe(1);          // preserved
+    expect(Array.isArray(p.key)).toBe(true); // defaulted to []
+    expect(p.key.length).toBe(0);
+    expect(p.copy.length).toBe(1);           // preserved
   });
 });
 

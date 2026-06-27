@@ -3464,7 +3464,7 @@ function Settings({ settings, setSettings, onClose }) {
           SENDING speed is your target when keying — only relevant in the KEY tab. */}
       {/* M3: normalize to plain S.label — consistency over 1px size drift */}
       <div style={{ ...S.label, marginBottom: 6 }}>LISTENING SPEED</div>
-      <Slider label="Character speed" value={settings.charWpm} min={10} max={35} step={1} suffix=" wpm" onChange={set("charWpm")} />
+      <Slider label="Character speed" value={settings.charWpm} min={10} max={40} step={1} suffix=" wpm" onChange={set("charWpm")} />
       <Slider label="Effective speed (Farnsworth)" value={settings.effWpm} min={4} max={settings.charWpm} step={1} suffix=" wpm" onChange={set("effWpm")} />
       {/* C3: Farnsworth gloss at point of use — the deeper paragraph below covers
           the full story; this one-liner is for first-glance context at the slider. */}
@@ -3474,7 +3474,7 @@ function Settings({ settings, setSettings, onClose }) {
 
       {/* M3: normalize to plain S.label */}
       <div style={{ ...S.label, marginBottom: 6 }}>SENDING SPEED</div>
-      <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={35} step={1} suffix=" wpm" onChange={set("keyWpm")} />
+      <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={40} step={1} suffix=" wpm" onChange={set("keyWpm")} />
       <Slider label="Sidetone" value={settings.freq} min={400} max={900} step={10} suffix=" Hz" onChange={set("freq")} />
       <div style={{ marginBottom: 14 }}>
         <div style={{ ...S.label, marginBottom: 6 }}>RX filter (band noise voicing)</div>
@@ -3716,6 +3716,13 @@ export default function CWTrainer() {
     // first load — re-enabling the flag lands on paddle (the user re-selects BUG).
     // Acceptable because BUG never shipped: only local test builds can hold "bug".
     if (!BUG_KEY_ENABLED && loaded.keyType === "bug") loaded.keyType = "paddle";
+    // charWpm is authoritative. Re-clamp effWpm to [4, charWpm] at load so a
+    // stored blob where effWpm > charWpm (possible if charWpm was lowered via a
+    // future path after effWpm was set) doesn't leave the app in an inconsistent
+    // state. The Farnsworth slider's max={charWpm} is UI-only; it cannot fix
+    // already-stored data. The useEffect below persists the corrected value.
+    loaded.effWpm = Math.min(loaded.effWpm, loaded.charWpm);
+    loaded.effWpm = Math.max(4, loaded.effWpm);
     return loaded;
   });
   // C4: nudge is visible while the call is still the default W1AW AND the user
