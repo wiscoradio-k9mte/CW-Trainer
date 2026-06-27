@@ -9,6 +9,7 @@ import {
   toCodes,
   emptyProgress, appendProgress, migrateProgress,
   learnTrend, keyTrend, copyTrend,
+  splashSignature,
 } from "./src/cw-core.js";
 
 /* ================= PERSISTENCE =================
@@ -3776,12 +3777,16 @@ export default function CWTrainer() {
     return (
       <Splash
         onSkip={(auto) => {
-          // When user taps/keys: unlock audio and play the WR signature tone.
+          // When user taps/keys: unlock audio and send the splash signature in Morse —
+          // the operator's own callsign once they've set one, else "WR" (Wisco Radio).
+          // Sent at the user's saved character speed, tight (effWpm = charWpm: a
+          // callsign signature shouldn't have Farnsworth gaps).
           // When auto-dismissed: just advance — the browser blocks audio autoplay
           // without a user gesture, so skip the tone rather than throw an error.
           if (!auto) {
             player.unlock();
-            player.play("WR", { charWpm: 22, effWpm: 22, freq: settings.freq });
+            const sig = splashSignature(settings.myCall, DEFAULT_SETTINGS.myCall);
+            player.play(sig, { charWpm: settings.charWpm, effWpm: settings.charWpm, freq: settings.freq });
           }
           setSplash(false);
         }}
