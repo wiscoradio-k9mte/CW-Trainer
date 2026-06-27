@@ -960,24 +960,76 @@ export function appendProgress(progress, category, record) {
   return { ...progress, [category]: next };
 }
 
+// PROGRESS_MIGRATIONS — ordered map of (fromVersion → transform function).
+//
+// Only v1 exists today so there are no entries. This is the seam: a future
+// schema bump adds ONE entry here instead of touching any wipe logic.
+//
+// Shape: { [fromVersion: number]: (obj: object) => object }
+// Each function transforms a blob from `fromVersion` to `fromVersion + 1`.
+// Functions must be pure and must not throw (errors are caught by migrateProgress).
+const PROGRESS_MIGRATIONS = {
+  // Example of future entry:
+  //   1: (obj) => ({ ...obj, newField: [] }),   // v1 → v2
+};
+
 // migrateProgress(raw) → a valid progress object.
 //
 // raw is whatever store.load returned: null, an old shape, or garbage.
-// SEAM INVARIANT: unknown keys in raw (e.g. {qso:[...]}) are preserved
-// untouched so a future build's data survives an older build reading it.
+//
+// CARRY-FORWARD RULE (replaces the old wipe-on-mismatch):
+// - null / non-object raw → emptyProgress() (genuinely absent — data loss is
+//   correct here; there is nothing to carry forward).
+// - otherwise walk PROGRESS_MIGRATIONS from raw.schemaVersion up to current,
+//   then merge the result into emptyProgress() so unknown keys (the qso: seam,
+//   etc.) pass through untouched. Per-category arrays are kept if they're arrays,
+//   defaulted to [] if not — a bad category must NOT wipe the others.
+//
+// SEAM INVARIANT: unknown keys in raw (e.g. {qso:[...]}) are preserved across
+// BOTH same-version and cross-version reads. A future build's data survives an
+// older build round-tripping it.
+//
+// ERROR CONTAINMENT: the migration walk is wrapped in try/catch. Only a genuine
+// throw (unprocessable data) falls back to emptyProgress(). That is the sole
+// data-loss path.
 export function migrateProgress(raw) {
   if (!raw || typeof raw !== "object") return emptyProgress();
-  if (raw.schemaVersion !== PROGRESS_SCHEMA_VERSION) {
-    // Schema changed in a breaking way — reset to empty.
-    // No partial migration: v1 has no prior shape to carry forward.
+
+  try {
+    // Walk the migration ladder from the stored version up to current.
+    // Default to 0 if schemaVersion is absent or non-numeric so a very old
+    // blob still gets the full ladder treatment.
+    let fromVersion = typeof raw.schemaVersion === "number" ? raw.schemaVersion : 0;
+    let obj = { ...raw }; // shallow copy — migrations are pure, but we own this object
+
+    while (fromVersion < PROGRESS_SCHEMA_VERSION) {
+      if (PROGRESS_MIGRATIONS[fromVersion]) {
+        obj = PROGRESS_MIGRATIONS[fromVersion](obj);
+      }
+      fromVersion++;
+    }
+
+    // Merge into emptyProgress() so unknown keys (qso: seam) pass through and
+    // missing fields get correct defaults. Stamp schemaVersion last so a migration
+    // function can't accidentally leave a stale version number.
+    const merged = { ...emptyProgress(), ...obj };
+    merged.schemaVersion = PROGRESS_SCHEMA_VERSION; // always authoritative
+
+    // Per-category default: a bad/missing category array must NOT wipe the others.
+    for (const cat of KNOWN_PROGRESS_CATEGORIES) {
+      if (Array.isArray(merged[cat])) {
+        // Slice to the retention cap so an oversized stored array is trimmed.
+        merged[cat] = merged[cat].slice(-PROGRESS_RETENTION);
+      } else {
+        merged[cat] = [];
+      }
+    }
+
+    return merged;
+  } catch {
+    // Genuinely unprocessable data (migration threw). Only path to data loss.
     return emptyProgress();
   }
-  // Known categories: fill any missing arrays with [].
-  const migrated = { ...raw };
-  for (const cat of KNOWN_PROGRESS_CATEGORIES) {
-    if (!Array.isArray(migrated[cat])) migrated[cat] = [];
-  }
-  return migrated;
 }
 
 // learnTrend(progress) → per-lesson rollup array for the PROGRESS view.
