@@ -88,13 +88,11 @@ filtering, QSB, AGC).
 
 ## Install
 
-**From the Snap Store** (once published):
+**From the Snap Store:**
 
 ```bash
 sudo snap install wr-cw-trainer
 ```
-
-> Not on the store yet — until then, run it from source (below).
 
 **From source** — requires **Node.js 18+** and npm:
 

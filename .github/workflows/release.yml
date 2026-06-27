@@ -250,12 +250,17 @@ jobs:
         # the store listing. Does NOT affect screenshots or other dashboard media
         # (upload-metadata only touches the fields embedded in the snap itself).
         # The --force flag overrides any store-side metadata conflicts.
+        # NON-FATAL: this runs AFTER the snap is already released to stable, so a
+        # metadata-push hiccup (e.g. an oversized icon) must never fail the release.
+        # The store-metadata icon limit is 256kB — keep snap/local/icon.png under it.
+        continue-on-error: true
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
-          snapcraft upload-metadata "${SNAP_FILE}" --force
-          echo "Metadata (summary, description, icon) pushed to the Snap Store."
+          snapcraft upload-metadata "${SNAP_FILE}" --force \
+            && echo "Metadata (summary, description, icon) pushed to the Snap Store." \
+            || echo "WARNING: metadata push failed (non-fatal — the snap is already released)."
 
   # ──────────────────────────────────────────────────────────────────────
   # Job 3: Email Travis if the release failed.
