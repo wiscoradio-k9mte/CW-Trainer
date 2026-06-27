@@ -298,3 +298,33 @@ When the roadmap reaches Windows (Microsoft Store) or macOS (App Store):
 - The human-confirmed publish gate applies to every store, not just Snap.
 - macOS notarization adds a `xcrun notarytool` step after signing; both macOS
   and Windows builds need code-signing before upload.
+
+## Manual steps the human does (the automation can't)
+
+The pipeline builds, tests, packages, releases to stable, pushes the listing
+text + icon, and emails on failure. A short list stays human-only — do these after
+each launch or enhancement:
+
+**Every release:**
+1. **Test the running app** *(before you tag)* — the team can't launch Electron
+   headless, so you're the one who runs it and confirms the UI + features look and
+   work right. This is the gate before the deliberate tag.
+2. **Tag the version** — `git tag vX.Y.Z && git push origin vX.Y.Z`. The tag is your
+   "go"; it triggers build → test → auto-publish to stable. (Bump `package.json` +
+   `snapcraft.yaml` to the version first.)
+3. **Upload/refresh the Snap Store screenshots** — the pipeline pushes the description
+   and icon but **cannot** push screenshots (they're dashboard-managed). After any UI
+   change, re-capture and upload them: snapcraft.io → wr-cw-trainer → Listing →
+   Screenshots. (The description/icon you can also refresh without a release via the
+   **Refresh Store Metadata** workflow.)
+4. **Eyeball the live listing** — confirm the description, screenshots, and icon look
+   right on the public store page.
+5. **Announce it, when you're ready** — community post / kick off the marketing team
+   (human-approved publishing; marketing stays dark until you say go).
+
+**Occasional (watch for these):**
+- **Snapcraft store credentials expire (~1 year).** When they do, the release will
+  fail at the upload step — regenerate with `snapcraft export-login` and update the
+  `SNAPCRAFT_STORE_CREDENTIALS` Actions secret.
+- **Mail app password** — if the Gmail app password is revoked/changed, re-set
+  `MAIL_PASSWORD` (the escalation email will start failing if it lapses).
