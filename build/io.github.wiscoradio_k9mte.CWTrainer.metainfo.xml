@@ -74,6 +74,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.0.1" date="2026-06-26" type="stable">
+      <description>
+        <p>A small update:</p>
+        <ul>
+          <li>The splash now sends your own callsign in Morse once you've set it, at your saved speed.</li>
+          <li>Character and keying speeds now go up to 40 wpm.</li>
+          <li>Steadier settings and progress saving across updates.</li>
+          <li>A small "Coffee?" link in the header to support development.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-06-26" type="stable">
       <description>
         <p>Version 2.0 — a big step up in feedback and progress tracking:</p>
