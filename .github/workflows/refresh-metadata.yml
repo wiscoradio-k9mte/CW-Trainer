@@ -1,0 +1,60 @@
+# Refresh the Snap Store listing metadata (summary, description, icon) WITHOUT a release.
+#
+# Manual-only. Builds the snap from the current main branch so the embedded metadata is
+# current, then pushes that metadata to the store listing. It does NOT upload a new
+# revision and does NOT release to any channel — it only updates the listing text/icon.
+#
+# Use it after editing snapcraft.yaml's summary/description or the icon, when you want
+# the live listing updated without cutting a new version.
+name: Refresh Store Metadata
+
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh-metadata:
+    name: Build snap and push store metadata (no release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        # actions/checkout v4.3.1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Set up Node 22
+        # actions/setup-node v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer (Vite)
+        run: npm run build
+
+      - name: Build Electron unpacked tree
+        run: npm run pack
+
+      - name: Build snap
+        # snapcore/action-build v1.3.0
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79
+        id: snapcraft
+        with:
+          snapcraft-channel: stable
+
+      - name: Push text + icon metadata to the Snap Store (no release)
+        # upload-metadata pushes the snap's embedded summary/description/icon to the
+        # store listing. It does NOT upload a new revision or release a channel.
+        # The icon must be <=256kB (kept that way in snap/local/icon.png).
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          SNAP_FILE="${{ steps.snapcraft.outputs.snap }}"
+          echo "Pushing metadata from ${SNAP_FILE} (no release, no new revision)..."
+          snapcraft upload-metadata "${SNAP_FILE}" --force
+          echo "Store listing metadata (summary, description, icon) refreshed."
