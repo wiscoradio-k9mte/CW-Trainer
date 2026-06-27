@@ -8,7 +8,7 @@ import {
   DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
   toCodes,
   emptyProgress, appendProgress, migrateProgress,
-  learnTrend, keyTrend, copyTrend,
+  learnTrend, keyTrend, copyTrend, toneFor, qsoTrend,
   splashSignature,
 } from "./src/cw-core.js";
 
@@ -977,6 +977,18 @@ const S = {
     boxShadow:    "0 4px 0 #15110C, inset 0 1px 0 rgba(255,200,120,0.15)",
     color:        "#F2A93B",
     fontFamily:   "ui-monospace, monospace",
+  },
+  // Chart tokens — used by BarTrend only; not for ad-hoc inline use.
+  // chart: the flex bar-chart container (fixed height, relative for the mastery line).
+  // chartLine: the absolutely-positioned 90% mastery line overlay.
+  chart: { position: "relative", display: "flex", alignItems: "flex-end", gap: 2, height: 72, overflow: "hidden" },
+  chartLine: {
+    position: "absolute",
+    // bottom = 90% of 72px = 64.8px — the top of a 90% bar meets this line exactly.
+    bottom: Math.round((90 / 100) * 72),
+    left: 0, right: 0,
+    borderTop: "1px dashed #8FCB9B",  // S.tone.ok — the mastery color
+    pointerEvents: "none",
   },
   // selected: consistent toggle/active state — amber border + text + weight 700.
   // The fontWeight shift is the non-color cue (L2). Inactive half: color: S.text.dim.
@@ -2092,7 +2104,7 @@ const ROLE_DESCS = {
 //   railEl  — the DOM element of the <aside class="wr-rail">; null until the
 //             rail mounts. QsoSim portals the setup controls into it when wide.
 //             The portal is skipped when railEl is null (first paint or narrow).
-function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail }) {
+function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, record }) {
   // Activity and role menus (Phase 2/3).
   // Defaults: ragchew + answering role so the first-run experience is the
   // same as the old random behavior (which also skewed toward answering).
@@ -2239,6 +2251,21 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail })
         // reset their ear and pick up their pencil between exchanges.
         startCountdown(() => playDx(nextStep.text));
       }
+    } else {
+      // Contact complete — next === qso.steps.length means every step was advanced.
+      // Record exactly once here; the `next === length` guard prevents double-fire.
+      // averageScore([]) → null so an un-graded side is recorded as null, not 0.
+      // Closure-freshness: copyScores/sendScores are stable at this point because
+      // score accumulation (checkCopy/checkSend) always happens in a prior user event
+      // before the final CONTINUE/TRANSMIT → advance() click.
+      record?.("qso", {
+        t: Date.now(),
+        activity,
+        role,
+        difficulty,
+        copyPct: averageScore(copyScores),
+        sendPct: averageScore(sendScores),
+      });
     }
   };
 
@@ -3304,15 +3331,62 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
 }
 
 /* ================= PROGRESS VIEW (v2.0 §1) ================= */
-// Text-only sparklines using Unicode block glyphs — no charting library.
-// Maps a percentage (0-100) to a block character on an 8-step scale.
-const SPARK_GLYPHS = "▁▂▃▄▅▆▇█";
-function sparkline(values) {
-  if (!values || values.length === 0) return "";
-  return values.map((v) => {
-    const idx = Math.min(7, Math.floor((v / 100) * 8));
-    return SPARK_GLYPHS[idx];
-  }).join("");
+
+// CHART_HEIGHT: pixel height of the bar-chart plot area.
+// The 90% mastery line sits at (90/100)*CHART_HEIGHT from the bottom,
+// computed once and stored in S.chartLine.bottom.
+const CHART_HEIGHT = 72;
+
+// BarTrend — pure CSS flex-of-divs bar chart. No external charting library.
+//
+// variant="accuracy": bars colored per-bar by value via toneFor(); a dashed
+//   green mastery line is overlaid at 90% height.
+// variant="speed": single amber bars, no mastery line. maxVal caps the scale.
+//
+// values: number[] — the series to chart (chronological, oldest-first).
+// maxVal: number — the scale maximum for the speed variant (default 40 wpm).
+// ariaLabel: string — describes the chart for screen readers (role="img").
+//   Should summarize the values and trend direction.
+//
+// WHY pure CSS: the brief prohibits charting libraries; flex + alignItems:flex-end
+// gives bars that grow upward with zero JS layout math. Each bar is flex:1 1 0 so
+// it fills the container evenly, capped at 18px so charts don't go wall-to-wall
+// on very wide screens.
+function BarTrend({ values, variant = "accuracy", maxVal = 40, ariaLabel }) {
+  if (!values || values.length === 0) return null;
+
+  const isAccuracy = variant === "accuracy";
+
+  return (
+    <div
+      role="img"
+      aria-label={ariaLabel}
+      style={{ ...S.chart, height: CHART_HEIGHT }}
+    >
+      {values.map((v, i) => {
+        const pct = isAccuracy
+          ? Math.min(100, Math.max(0, v))
+          : Math.min(100, Math.max(0, (v / maxVal) * 100));
+        const color = isAccuracy ? toneFor(v) : "#F2A93B"; // accuracy: per-bar tone; speed: always amber
+        return (
+          <div
+            key={i}
+            style={{
+              flex: "1 1 0",
+              maxWidth: 18,
+              height: `${pct}%`,
+              background: color,
+              borderRadius: "2px 2px 0 0",
+            }}
+          />
+        );
+      })}
+      {/* Mastery line: only for the accuracy variant.
+          Absolutely positioned at 90% height so the top of a 90% bar
+          meets the line — the visual "you made it" moment. */}
+      {isAccuracy && <div style={S.chartLine} aria-hidden="true" />}
+    </div>
+  );
 }
 
 // fmtDate: compact locale-friendly date from epoch ms (e.g. "Jun 24").
@@ -3327,10 +3401,34 @@ function fmtDate(t) {
   }
 }
 
+// trendArrow(values) — describes trend direction from the last few values in a series.
+// Returns "up", "down", or "flat". Used only for aria-label generation.
+function trendArrow(values) {
+  if (!values || values.length < 2) return "flat";
+  // Compare average of the most-recent half to the earlier half
+  const half = Math.ceil(values.length / 2);
+  const older = values.slice(0, half);
+  const newer = values.slice(half);
+  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const diff = avg(newer) - avg(older);
+  if (diff > 2) return "up";
+  if (diff < -2) return "down";
+  return "flat";
+}
+
+// accuracyAriaLabel(label, values) — generates a readable aria-label for BarTrend.
+// Format: "{label} over last {N} sessions: {v1}, {v2}, … percent — trending {dir}"
+function accuracyAriaLabel(label, values) {
+  if (!values || values.length === 0) return label;
+  const dir = trendArrow(values);
+  return `${label} over last ${values.length} session${values.length !== 1 ? "s" : ""}: ${values.join(", ")} percent — trending ${dir}`;
+}
+
 function ProgressView({ progress }) {
   const learn = learnTrend(progress);
   const { records: keyRecords, wpmSeries } = keyTrend(progress);
   const copyGroups = copyTrend(progress);
+  const { records: qsoRecords, copySeries: qsoCopy, sendSeries: qsoSend } = qsoTrend(progress);
 
   // M4: verdict coloring is now handled by the shared Tag component + VERDICT_COLOR map.
 
@@ -3347,7 +3445,7 @@ function ProgressView({ progress }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {learn.map((row) => (
               <div key={row.lesson} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                   <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>
                     Lesson {row.lesson}
                   </span>
@@ -3356,9 +3454,11 @@ function ProgressView({ progress }) {
                     {fmtDate(row.lastT) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(row.lastT)}</span>}
                   </span>
                 </div>
-                <div style={{ fontFamily: "ui-monospace, monospace", color: row.lastPct >= 90 ? "#8FCB9B" : row.lastPct >= 70 ? "#F2A93B" : "#E07A5F", fontSize: "0.875rem", letterSpacing: 2 }}>
-                  {sparkline(row.recent)}
-                </div>
+                <BarTrend
+                  variant="accuracy"
+                  values={row.recent}
+                  ariaLabel={accuracyAriaLabel(`Lesson ${row.lesson} accuracy`, row.recent)}
+                />
               </div>
             ))}
           </div>
@@ -3375,11 +3475,14 @@ function ProgressView({ progress }) {
         ) : (
           <>
             <div style={{ ...S.label, color: "#8A929C", marginBottom: 4 }}>Est WPM trend</div>
-            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.875rem", letterSpacing: 2, color: "#F2A93B", marginBottom: 12 }}>
-              {sparkline(wpmSeries.map((w) => Math.min(100, (w / 35) * 100)))}
-              <span style={{ color: "#8A929C", marginLeft: 8, fontSize: "0.75rem" }}>
-                last: {wpmSeries[wpmSeries.length - 1]} wpm
-              </span>
+            <BarTrend
+              variant="speed"
+              values={wpmSeries}
+              maxVal={40}
+              ariaLabel={`Keying speed over last ${wpmSeries.length} session${wpmSeries.length !== 1 ? "s" : ""}: ${wpmSeries.join(", ")} wpm`}
+            />
+            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C", marginBottom: 12, marginTop: 4 }}>
+              last: {wpmSeries[wpmSeries.length - 1]} wpm
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {keyRecords.slice().reverse().map((r, i) => (
@@ -3419,19 +3522,82 @@ function ProgressView({ progress }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {copyGroups.map((g) => (
               <div key={g.source} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                   <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>{g.source}</span>
                   <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
                     last {g.lastPct}%
                     {fmtDate(g.lastT) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(g.lastT)}</span>}
                   </span>
                 </div>
-                <div style={{ fontFamily: "ui-monospace, monospace", color: g.lastPct >= 90 ? "#8FCB9B" : g.lastPct >= 70 ? "#F2A93B" : "#E07A5F", fontSize: "0.875rem", letterSpacing: 2 }}>
-                  {sparkline(g.recent)}
-                </div>
+                <BarTrend
+                  variant="accuracy"
+                  values={g.recent}
+                  ariaLabel={accuracyAriaLabel(`${g.source} copy accuracy`, g.recent)}
+                />
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* ---- QSO section ---- */}
+      <div style={S.panel}>
+        <div style={{ ...S.label, marginBottom: 10 }}>QSO — Contact accuracy</div>
+        {qsoRecords.length === 0 ? (
+          <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+            No QSO sessions yet — complete a full contact in the QSO tab to start tracking your accuracy.
+          </p>
+        ) : (
+          <>
+            {/* Copy % chart — only when there is copy data */}
+            {qsoCopy.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ ...S.label, color: "#8A929C", marginBottom: 4 }}>Copy %</div>
+                <BarTrend
+                  variant="accuracy"
+                  values={qsoCopy}
+                  ariaLabel={accuracyAriaLabel("QSO copy accuracy", qsoCopy)}
+                />
+              </div>
+            )}
+            {/* Send % chart — only when there is send data */}
+            {qsoSend.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ ...S.label, color: "#8A929C", marginBottom: 4 }}>Send %</div>
+                <BarTrend
+                  variant="accuracy"
+                  values={qsoSend}
+                  ariaLabel={accuracyAriaLabel("QSO send accuracy", qsoSend)}
+                />
+              </div>
+            )}
+            {/* Records list — newest-first */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {qsoRecords.map((r, i) => (
+                <div key={i} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ fontFamily: "ui-monospace, monospace", color: "#FFD89B", fontSize: "0.875rem" }}>
+                      {r.activity} · {r.role} · {r.difficulty}
+                    </span>
+                    <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
+                      {fmtDate(r.t) && <span style={{ color: S.text.dim }}>{fmtDate(r.t)}</span>}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C", marginTop: 3 }}>
+                    {r.copyPct !== null && r.copyPct !== undefined
+                      ? <span>copy <span style={{ color: toneFor(r.copyPct) }}>{r.copyPct}%</span></span>
+                      : <span>copy <span style={{ color: "#5A626C" }}>—</span></span>
+                    }
+                    <span style={{ margin: "0 8px" }}>·</span>
+                    {r.sendPct !== null && r.sendPct !== undefined
+                      ? <span>send <span style={{ color: toneFor(r.sendPct) }}>{r.sendPct}%</span></span>
+                      : <span>send <span style={{ color: "#5A626C" }}>—</span></span>
+                    }
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -4081,7 +4247,7 @@ export default function CWTrainer() {
           {tab === "learn" && <LearnTab player={player} settings={settings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} record={record} />}
           {tab === "copy" && <CopyTrainer player={player} settings={settings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} record={record} />}
           {tab === "key" && <KeyTrainer player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} record={record} />}
-          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} />}
+          {tab === "qso" && <QsoSim player={player} settings={settings} setSettings={setSettings} isWide={isWide} railEl={railEl} suppressRail={railShowsSettings} record={record} />}
           {/* PROGRESS: reading view, full main column. No rail (by design). */}
           {tab === "progress" && <ProgressView progress={progress} />}
         </main>

@@ -14,6 +14,7 @@ import {
   PROGRESS_RETENTION, PROGRESS_SCHEMA_VERSION,
   emptyProgress, appendProgress, migrateProgress,
   learnTrend, keyTrend, copyTrend,
+  toneFor, qsoTrend,
   splashSignature,
 } from "./cw-core.js";
 
@@ -1786,10 +1787,24 @@ describe("appendProgress()", () => {
     expect(next.learn.length).toBe(1);
   });
 
-  it("throws on an unknown category so typos fail loudly", () => {
+  it("writes to the qso category now that it is known", () => {
+    // qso is a known category in this schema version — appending must succeed,
+    // NOT throw. (The old test had both qso and typo throwing; fix: qso is now valid.)
     const p = emptyProgress();
-    expect(() => appendProgress(p, "qso", baseRec)).toThrow(/unknown category/);
+    const qsoRec = { t: Date.now(), activity: "pota", role: "hunter", difficulty: "normal", copyPct: 85, sendPct: null };
+    const next = appendProgress(p, "qso", qsoRec);
+    expect(next.qso.length).toBe(1);
+    expect(next.qso[0].activity).toBe("pota");
+    // Other categories untouched
+    expect(next.learn.length).toBe(0);
+    expect(next.copy.length).toBe(0);
+  });
+
+  it("throws on a genuine typo so bad category names fail loudly", () => {
+    const p = emptyProgress();
     expect(() => appendProgress(p, "typo", baseRec)).toThrow(/unknown category/);
+    // A close-but-wrong name also throws (no partial match)
+    expect(() => appendProgress(p, "qsoo", baseRec)).toThrow(/unknown category/);
   });
 
   it("writes to the correct category array and leaves the others empty", () => {
@@ -1833,17 +1848,19 @@ describe("migrateProgress()", () => {
     expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
   });
 
-  it("QSO seam: an unknown future key is preserved untouched (forward-compat)", () => {
-    // A future build wrote qso records; an older build should NOT strip them.
-    const futureBlob = {
+  it("QSO seam: qso records in a stored blob are preserved through migrateProgress", () => {
+    // qso is now a known category — migrateProgress carries its records forward
+    // exactly like learn/key/copy. This is the seam invariant: data survives a
+    // round-trip through an older build that didn't write qso records.
+    const blob = {
       schemaVersion: PROGRESS_SCHEMA_VERSION,
       learn: [],
       key:   [],
       copy:  [],
-      qso:   [{ t: 1, activity: "pota", pct: 95 }],
+      qso:   [{ t: 1, activity: "pota", copyPct: 95, sendPct: 80, role: "hunter", difficulty: "normal" }],
     };
-    const p = migrateProgress(futureBlob);
-    // The qso array survives the migration round-trip untouched.
+    const p = migrateProgress(blob);
+    // The qso array survives the migration round-trip.
     expect(Array.isArray(p.qso)).toBe(true);
     expect(p.qso.length).toBe(1);
     expect(p.qso[0].activity).toBe("pota");
@@ -2008,6 +2025,156 @@ describe("copyTrend()", () => {
     expect(singleGroup).toBeDefined();
     expect(singleGroup.recent).toEqual([80, 90]);
     expect(singleGroup.lastPct).toBe(90);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toneFor() — color thresholds for BarTrend bars
+// ---------------------------------------------------------------------------
+describe("toneFor()", () => {
+  it("returns green (#8FCB9B) at exactly 90 (mastery threshold)", () => {
+    expect(toneFor(90)).toBe("#8FCB9B");
+  });
+  it("returns green for values above 90", () => {
+    expect(toneFor(100)).toBe("#8FCB9B");
+    expect(toneFor(95)).toBe("#8FCB9B");
+  });
+  it("returns amber (#F2A93B) at exactly 70 (lower caution threshold)", () => {
+    expect(toneFor(70)).toBe("#F2A93B");
+  });
+  it("returns amber for values in the 70–89 range", () => {
+    expect(toneFor(89)).toBe("#F2A93B");
+    expect(toneFor(80)).toBe("#F2A93B");
+  });
+  it("returns red (#E07A5F) below 70", () => {
+    expect(toneFor(69)).toBe("#E07A5F");
+    expect(toneFor(0)).toBe("#E07A5F");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// emptyProgress() — qso field now included
+// ---------------------------------------------------------------------------
+describe("emptyProgress() — qso field", () => {
+  it("includes qso as an empty array", () => {
+    const p = emptyProgress();
+    expect(Array.isArray(p.qso)).toBe(true);
+    expect(p.qso.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// qsoTrend()
+// ---------------------------------------------------------------------------
+describe("qsoTrend()", () => {
+  // Build a realistic QSO record
+  const rec = (i, copyPct, sendPct) => ({
+    t: 1000 * (i + 1),
+    activity: "pota",
+    role: "hunter",
+    difficulty: "normal",
+    copyPct,
+    sendPct,
+  });
+
+  it("returns the last 10 records newest-first", () => {
+    // 15 contacts — only the last 10 should appear, newest first
+    let p = emptyProgress();
+    for (let i = 0; i < 15; i++) {
+      p = appendProgress(p, "qso", rec(i, 70 + i, 80 + i));
+    }
+    const { records } = qsoTrend(p);
+    expect(records.length).toBe(10);
+    // Newest record (i=14) should be first, oldest kept (i=5) should be last
+    expect(records[0].t).toBe(1000 * 15);  // i=14
+    expect(records[9].t).toBe(1000 * 6);   // i=5
+  });
+
+  it("copySeries and sendSeries are chronological (oldest-first)", () => {
+    let p = emptyProgress();
+    for (let i = 0; i < 5; i++) {
+      p = appendProgress(p, "qso", rec(i, 60 + i * 10, 50 + i * 10));
+    }
+    const { copySeries, sendSeries } = qsoTrend(p);
+    // chronological means ascending t — so values ascend too
+    expect(copySeries).toEqual([60, 70, 80, 90, 100]);
+    expect(sendSeries).toEqual([50, 60, 70, 80, 90]);
+  });
+
+  it("null copyPct values are filtered out of copySeries (one-sided send-only role)", () => {
+    let p = emptyProgress();
+    // 3 send-only contacts (copyPct null), then 2 with both sides
+    for (let i = 0; i < 3; i++) {
+      p = appendProgress(p, "qso", rec(i, null, 80 + i));
+    }
+    p = appendProgress(p, "qso", rec(3, 75, 85));
+    p = appendProgress(p, "qso", rec(4, 90, 90));
+
+    const { copySeries, sendSeries } = qsoTrend(p);
+    // Copy: only the 2 non-null records (75, 90)
+    expect(copySeries).toEqual([75, 90]);
+    // Send: all 5 are non-null (80, 81, 82, 85, 90)
+    expect(sendSeries).toEqual([80, 81, 82, 85, 90]);
+  });
+
+  it("per-series cap: >10 graded-copy records → copySeries length exactly 10", () => {
+    let p = emptyProgress();
+    // 12 records all with both sides graded
+    for (let i = 0; i < 12; i++) {
+      p = appendProgress(p, "qso", rec(i, 70 + i, 70 + i));
+    }
+    const { copySeries, sendSeries } = qsoTrend(p);
+    expect(copySeries.length).toBe(10);
+    expect(sendSeries.length).toBe(10);
+    // Oldest 2 are sliced off — cap is applied AFTER null-filter
+    expect(copySeries[0]).toBe(72);  // i=2 (first 2 dropped)
+    expect(copySeries[9]).toBe(81);  // i=11
+  });
+
+  it("empty qso array → empty records and empty series", () => {
+    const { records, copySeries, sendSeries } = qsoTrend(emptyProgress());
+    expect(records).toEqual([]);
+    expect(copySeries).toEqual([]);
+    expect(sendSeries).toEqual([]);
+  });
+
+  it("seam round-trip: qso data preserved through migrateProgress", () => {
+    // Simulate a stored blob with qso records (as would be written by this version)
+    const blob = {
+      schemaVersion: PROGRESS_SCHEMA_VERSION,
+      learn: [],
+      key:   [],
+      copy:  [],
+      qso:   [
+        { t: 1000, activity: "sota", role: "chaser", difficulty: "easy", copyPct: 88, sendPct: null },
+        { t: 2000, activity: "pota", role: "hunter", difficulty: "normal", copyPct: 95, sendPct: 90 },
+      ],
+    };
+    const p = migrateProgress(blob);
+    expect(p.qso.length).toBe(2);
+    expect(p.qso[0].activity).toBe("sota");
+    // qsoTrend still works on the migrated result
+    const { records, copySeries } = qsoTrend(p);
+    expect(records.length).toBe(2);
+    expect(copySeries).toEqual([88, 95]);
+  });
+
+  it("no-qso v2.0.1 blob → qso defaults to [] (forward-compat)", () => {
+    // An older build (v2.0.1) wrote a blob without a qso key — migrateProgress
+    // must default it to [] so qsoTrend doesn't crash.
+    const old201Blob = {
+      schemaVersion: PROGRESS_SCHEMA_VERSION,
+      learn: [{ t: 1, lesson: 1, attempts: 5, correct: 4, pct: 80 }],
+      key:   [],
+      copy:  [],
+      // qso key intentionally absent
+    };
+    const p = migrateProgress(old201Blob);
+    expect(Array.isArray(p.qso)).toBe(true);
+    expect(p.qso.length).toBe(0);
+    // qsoTrend must not throw and returns empty results
+    const trend = qsoTrend(p);
+    expect(trend.records).toEqual([]);
   });
 });
 
