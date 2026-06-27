@@ -938,7 +938,7 @@ export const PROGRESS_RETENTION = 50;
 export const PROGRESS_SCHEMA_VERSION = 1;
 
 // Known categories in this schema version.
-const KNOWN_PROGRESS_CATEGORIES = ["learn", "key", "copy"];
+const KNOWN_PROGRESS_CATEGORIES = ["learn", "key", "copy", "qso"];
 
 // emptyProgress() — canonical empty progress object for this schema version.
 export function emptyProgress() {
@@ -947,9 +947,7 @@ export function emptyProgress() {
     learn: [],
     key:   [],
     copy:  [],
-    // qso: []  <-- THE SEAM. Not written in v2.0. Key reserved, documented,
-    //            absent until QSO history ships. migrateProgress preserves it
-    //            if present in a blob written by a future build.
+    qso:   [],  // QSO history: records from QsoSim.advance() when a contact completes.
   };
 }
 
@@ -1097,4 +1095,54 @@ export function copyTrend(progress) {
     // display in ProgressView.  May be undefined for pre-t records.
     lastT: recs[recs.length - 1].t,
   }));
+}
+
+// toneFor(pct) → one of the three semantic tone values used by BarTrend.
+//
+// Thresholds match the mastery model used everywhere else in the app:
+//   ≥90 = green (mastered / on target)
+//   70–89 = amber (in progress / caution)
+//   <70  = red (needs work)
+//
+// Returns literal hex strings so BarTrend's inline style can use them directly,
+// but they are THE SAME values as S.tone.ok/warn/err — callers MUST NOT use
+// magic color strings; import this and let the token stay in one place.
+export function toneFor(pct) {
+  if (pct >= 90) return "#8FCB9B"; // S.tone.ok
+  if (pct >= 70) return "#F2A93B"; // S.tone.warn
+  return "#E07A5F";                 // S.tone.err
+}
+
+// qsoTrend(progress) → { records, copySeries, sendSeries } for the PROGRESS QSO section.
+//
+// records: last TREND_WINDOW QSO records, newest-first (chronological reversed).
+//   Used for the records list: activity, role, difficulty, per-contact scores, date.
+//
+// copySeries / sendSeries: chronological (oldest-first) percentage arrays for BarTrend.
+//   Each series is computed independently from all qso records (not just the last 10
+//   contacts): null values (un-graded side) are filtered OUT first, THEN the last
+//   TREND_WINDOW are taken. This means a history with only sending attempts still
+//   yields a full sendSeries up to 10 bars, even if copySeries is short or empty.
+//
+// WHY independent caps: a contact that has no copy grade (pure send role) should
+// not burn a slot in the copy sparkline — filtering before capping gives a denser,
+// more meaningful chart for single-role operators.
+export function qsoTrend(progress) {
+  const all = progress.qso || [];
+
+  // records: last 10, newest-first for the UI list
+  const records = all.slice(-TREND_WINDOW).reverse();
+
+  // Per-series: filter out nulls across ALL records, then take the last TREND_WINDOW
+  const copySeries = all
+    .map((r) => r.copyPct)
+    .filter((v) => v !== null && v !== undefined)
+    .slice(-TREND_WINDOW);
+
+  const sendSeries = all
+    .map((r) => r.sendPct)
+    .filter((v) => v !== null && v !== undefined)
+    .slice(-TREND_WINDOW);
+
+  return { records, copySeries, sendSeries };
 }
