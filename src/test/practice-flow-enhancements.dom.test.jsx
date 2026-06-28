@@ -349,24 +349,19 @@ describe("Enhancement #2 — QSO step-gating", () => {
   // ---------------------------------------------------------------------------
   // Test 4a (HIGH): Auto-grade fires on a you-send step WITHOUT a CHECK click.
   //
-  // Navigate to QSO with Ragchew + "Call CQ" role. The first step is a you-send
-  // step (cur.who = "you", cur.suggested = the CQ text). Drive enough dits to
-  // exceed normLen(cur.suggested). The auto-grade send effect fires checkSend()
-  // which sets sendResult → the Score panel appears.
+  // The QSO send auto-grade is PAUSE-based (fix/qso-autograde): after the operator
+  // stops keying and the idle pause elapses (max(1500ms, 8u)), checkSend() fires.
+  // Drive a few chars, then advance the clock past the 1500ms floor.
   //
-  // The suggested CQ text (from cqCall("ragchew", myCall)) is at least
-  // "CQ CQ DE K9MTE K" = 17 chars at minimum. Driving 40 dits guarantees
-  // normLen(decoded) >= normLen(cur.suggested) for any CQ variant.
+  // The old length-based trigger required reaching normLen(cur.suggested) ≈ 60–90
+  // chars, which a real over never matches — that's the bug this fix corrects.
   //
   // Mutation verified to bite:
-  //   M5 (verified): comment out `checkSend()` in the QSO auto-grade send effect
-  //       → no send score appears without CHECK TRANSMISSION click → test FAILS ✓
-  //   NOTE: changing `<` to `>` in the early-return guard also causes failures, but
-  //   since you-send steps HAVE a suggested field and we drive 40 dits (> any CQ
-  //   variant's length), the exact crossing still fires checkSend via equality.
-  //   The cleaner bit-flip mutation is removing checkSend() entirely.
+  //   M5: comment out `checkSend()` inside the setTimeout callback in the
+  //       auto-grade effect → no send score appears after advancing past the pause
+  //       threshold → test FAILS ✓
   // ---------------------------------------------------------------------------
-  it("[M5] you-send step: keying to suggested length auto-grades WITHOUT CHECK TRANSMISSION click", async () => {
+  it("[M5] you-send step: auto-grades after idle pause WITHOUT CHECK TRANSMISSION click", async () => {
     const { user } = await freshApp();
     await gotoTab(user, "QSO");
 
@@ -379,7 +374,6 @@ describe("Enhancement #2 — QSO step-gating", () => {
     await user.click(startBtn);
 
     // Confirm this is a you-step (CHECK TRANSMISSION button is visible in the panel).
-    // The KeyInput (including STRAIGHT KEY toggle) is rendered inside this panel.
     const checkTxBtn = screen.queryByRole("button", { name: /CHECK TRANSMISSION/i });
     if (!checkTxBtn) {
       // This role variant doesn't start with a you-step — skip.
@@ -387,23 +381,29 @@ describe("Enhancement #2 — QSO step-gating", () => {
     }
 
     // Switch to STRAIGHT KEY so Space events are the element source.
-    // The STRAIGHT KEY toggle appears in KeyInput which is INSIDE the you-send panel
-    // (not in optionsJSX, which is only shown before the QSO starts). It is visible now.
     const skBtn = screen.queryByRole("button", { name: "STRAIGHT KEY" });
     expect(skBtn).toBeInTheDocument();
     await user.click(skBtn);
 
-    // The suggested CQ text is at least "CQ CQ DE W9ABC K" (17 chars, terse variant).
-    // Drive 40 dits — normLen("E"×40) = 40 >= any cqCall() variant's normLen.
     vi.useFakeTimers();
-    for (let i = 0; i < 40; i++) tapAndFinalize();
+
+    // Drive 5 chars (far below the 60–90 char suggested CQ text — this is the
+    // scenario the old length trigger could never handle; the pause trigger can).
+    for (let i = 0; i < 5; i++) tapAndFinalize();
     await act(async () => {});
 
-    // The send score panel (Score component) must be visible: checkSend() set
-    // sendResult which renders a score % + verdict text. No CHECK TRANSMISSION
-    // click was made — auto-grade fired. All three verdict strings are checked
-    // because the score (40 "E"s vs CQ text) is always 0% → "PSE AGN", but the
-    // pattern is future-proof.
+    // No grade yet — we haven't waited out the pause.
+    const noVerdict =
+      screen.queryByText("PSE AGN") ||
+      screen.queryByText("SOLID COPY") ||
+      screen.queryByText(/GOOD — AGN/);
+    expect(noVerdict).not.toBeInTheDocument();
+
+    // Advance past the max(1500ms, 8u=240ms at 20wpm) threshold.
+    act(() => { vi.advanceTimersByTime(1600); });
+    await act(async () => {});
+
+    // Now the verdict must be visible: checkSend() fired via the pause timer.
     const sendVerdict =
       screen.queryByText("PSE AGN") ||
       screen.queryByText("SOLID COPY") ||
