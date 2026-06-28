@@ -1084,8 +1084,12 @@ export function copyTrend(progress) {
   const records = (progress.copy || []).slice(-TREND_WINDOW);
   const bySource = {};
   for (const r of records) {
-    if (!bySource[r.source]) bySource[r.source] = [];
-    bySource[r.source].push(r);
+    // Records written before the `source` field existed have r.source === undefined.
+    // Default to "—" so they group under a named rung rather than an `undefined` key
+    // (which would render as a garbled "undefined" rung in ProgressView).
+    const key = r.source || "—";
+    if (!bySource[key]) bySource[key] = [];
+    bySource[key].push(r);
   }
   return Object.entries(bySource).map(([source, recs]) => ({
     source,

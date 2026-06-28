@@ -2026,6 +2026,45 @@ describe("copyTrend()", () => {
     expect(singleGroup.recent).toEqual([80, 90]);
     expect(singleGroup.lastPct).toBe(90);
   });
+
+  // ---------------------------------------------------------------------------
+  // FIX 3 — sourceless records must NOT produce an `undefined` rung.
+  //
+  // Records written before the `source` field existed have r.source === undefined.
+  // The old code used `r.source` directly as the group key, producing an `undefined`
+  // rung that renders as a garbled "undefined" label in ProgressView.
+  // The fix: `const key = r.source || "—"` defaults to a named fallback.
+  //
+  // Mutation verified to bite (see report):
+  //   Remove the `|| "—"` → group key is `undefined` → test finds `undefined` group
+  //   → `expect(undefined).toBeUndefined()` passes but the positive assertions about
+  //   the "—" group fail → test goes red.
+  // ---------------------------------------------------------------------------
+  it("[FIX3] records missing a source field group under '—', not undefined", () => {
+    const p = {
+      ...emptyProgress(),
+      copy: [
+        { t: 1, pct: 75 },        // no source field
+        { t: 2, pct: 85 },        // no source field
+        { t: 3, source: "words", pct: 90 },
+      ],
+    };
+    const trend = copyTrend(p);
+
+    // The sourceless records must NOT create an undefined-keyed group.
+    const undefinedGroup = trend.find((g) => g.source === undefined);
+    expect(undefinedGroup).toBeUndefined();
+
+    // They MUST appear under the fallback key "—".
+    const fallbackGroup = trend.find((g) => g.source === "—");
+    expect(fallbackGroup).toBeDefined();
+    expect(fallbackGroup.recent).toEqual([75, 85]);
+
+    // Records with a real source are unaffected.
+    const wordsGroup = trend.find((g) => g.source === "words");
+    expect(wordsGroup).toBeDefined();
+    expect(wordsGroup.lastPct).toBe(90);
+  });
 });
 
 // ---------------------------------------------------------------------------

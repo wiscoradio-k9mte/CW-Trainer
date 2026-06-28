@@ -495,6 +495,15 @@ const BUG_KEY_ENABLED = false;
 // machine-gun rate or a very low WPM causes stutter or premature stop.
 const BUG_DIT_KEEPALIVE_MS = 160;
 
+// QSO send auto-grade idle-pause threshold (ms).
+// After the operator stops keying, the auto-grade fires if this much time passes
+// with no new decoded characters. Armed as max(QSO_SEND_PAUSE_MS, 8*unit) so:
+//   • the floor (1500ms) governs at normal/fast WPM (≥~7 wpm)
+//   • 8u raises the threshold at slow WPM so a mid-over word-gap (7u) can't
+//     accidentally trigger a grade — same max(floor, k·u) idiom as BUG_DIT_KEEPALIVE_MS.
+// Travis: dial this on your real key if the grade fires too early or too late.
+const QSO_SEND_PAUSE_MS = 1500;
+
 /* ================= KEY DECODER ================= */
 function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError, modeB = false }) {
   const [decoded, setDecoded] = useState("");
@@ -906,9 +915,18 @@ function useCountdown() {
     }, 1000);
   }, []);
 
+  // cancel() stops a running countdown without firing its callback.
+  // Called on QSO advance() and ABANDON so a DX countdown started mid-step
+  // doesn't fire playDx() into a later step after the user moves on.
+  const cancel = useCallback(() => {
+    clearInterval(intervalRef.current);
+    intervalRef.current = null;
+    setCountdown(null);
+  }, []);
+
   useEffect(() => () => clearInterval(intervalRef.current), []);
 
-  return { countdown, start };
+  return { countdown, start, cancel };
 }
 
 /* ================= SHARED UI ================= */
@@ -2184,7 +2202,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const [log, setLog] = useState([]);
   const [fillMsg, setFillMsg] = useState(null);
   const fillTimer = useRef(null);
-  const { countdown, start: startCountdown } = useCountdown();
+  const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
 
   // E5: intro paragraph collapsed state — persisted via store so returning users skip it.
   // Default: expanded (false) on first run; once dismissed, stays collapsed.
@@ -2213,12 +2231,15 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // can type their copy immediately. Ref is attached to the <input> in the DX panel.
   const qsoCopyInputRef = useRef(null);
 
-  // Auto-grade guard for QSO send steps.
-  // qsoAutoGradeFired: true = the auto-grade effect has already called checkSend()
-  // this step. Disarmed (→false) on decoded < suggested length (HH path: HH wipes
-  // decoded to "", effect sees 0 < target → disarms → clean re-send grades).
-  // Reset in advance() and in the CLEAR handler.
+  // Auto-grade guard and pause timer for QSO send steps.
+  // qsoAutoGradeFired: true = checkSend() has already been called this step.
+  //   Disarmed (→false) in the empty-decoded branch so HH wipe → clean re-send grades.
+  //   Reset in advance(), CLEAR, both ABANDON buttons, and on unmount.
+  // qsoPauseTimer: the pending setTimeout that fires checkSend() after the idle pause.
+  //   Cleared on EVERY teardown path (advance, CLEAR, ABANDON, unmount, empty-decoded
+  //   branch) so no stray grade can fire into a later step.
   const qsoAutoGradeFired = useRef(false);
+  const qsoPauseTimer = useRef(null);
 
   const showFill = (msg) => {
     setFillMsg(msg);
@@ -2312,6 +2333,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const advance = (entry) => {
     setLog((l) => [...l, entry]);
     const next = step + 1;
+    // Cancel any pending auto-grade pause and countdown before stepping forward.
+    // Without this, a pending setTimeout could fire checkSend() into the next step,
+    // and an orphaned countdown interval could fire playDx() ~5s later.
+    clearTimeout(qsoPauseTimer.current);
+    qsoPauseTimer.current = null;
+    cancelCountdown();
     qsoAutoGradeFired.current = false; // new step = new send attempt; reset guard
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
@@ -2353,8 +2380,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     }
   };
 
-  // Don't leave the fill-message timer running after unmount
-  useEffect(() => () => clearTimeout(fillTimer.current), []);
+  // Don't leave the fill-message timer or the auto-grade pause timer running after unmount.
+  // The countdown interval is already cleaned up by useCountdown's own unmount effect.
+  useEffect(() => () => {
+    clearTimeout(fillTimer.current);
+    clearTimeout(qsoPauseTimer.current);
+  }, []);
 
   const checkCopy = () => {
     const pct = Math.round(similarity(cur.text, copyAttempt) * 100);
@@ -2408,6 +2439,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   }, [keyer.decoded]);
 
   const checkSend = () => {
+    // Cancel the pending pause-timer and arm the guard BEFORE computing results.
+    // This ensures: (a) a manual CHECK cancels any pending auto-fire so the user
+    // can't get a double-grade by pressing CHECK then waiting out the pause; and
+    // (b) if the auto-fire calls us, the guard is set before we return so a
+    // concurrent re-render can't sneak in another call.
+    clearTimeout(qsoPauseTimer.current);
+    qsoPauseTimer.current = null;
+    qsoAutoGradeFired.current = true;
     const sent = keyer.decoded.toUpperCase();
     const sim = Math.round(similarity(cur.suggested, sent) * 100);
     const flat = sent.replace(/\s+/g, "");
@@ -2433,26 +2472,55 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setResultLive(liveMsg);
   };
 
-  // Auto-grade send step: separate effect from the break-in effect above (same
-  // keyer.decoded observable, different meaning: break-in fires on DX steps only;
-  // this fires on you-send steps only). Fires checkSend() exactly once when decoded
-  // reaches cur.suggested's normalised length on a you-step.
-  // normLen: local copy of the same one-liner as KeyTrainer (no shared util needed).
-  const normLen = (s) => s.trim().toUpperCase().replace(/\s+/g, " ").length;
+  // Auto-grade send step (PAUSE-BASED): replaces the old length-based trigger.
+  //
+  // WHY not length-based: cur.suggested is a 60–90 char verbose exchange script;
+  // a real over never reaches that length, so the old trigger never fired.
+  //
+  // HOW it works: on each keyer.decoded change, gated to you-send steps only:
+  //   • empty decoded (HH wipe or never-keyed) → cancel pending timer + disarm
+  //     guard (so a clean re-send after HH grades the clean attempt).
+  //   • non-empty decoded → (re)arm a fresh pause timer; on elapse, call checkSend()
+  //     exactly once (guard re-checked inside the callback in case a manual CHECK
+  //     fired between the arm and the elapse).
+  //
+  // Threshold = max(QSO_SEND_PAUSE_MS, 8*unit): the 8u arm exceeds the CW 7u
+  // inter-word gap at slow WPM so a natural word pause can't trigger a premature
+  // grade; the 1500ms floor keeps it responsive at fast WPM.
+  //
+  // Deps: [keyer.decoded] only. cur/checkSend read via closure; listing cur would
+  // re-run after advance() before the guard resets (false-fire risk).
   useEffect(() => {
-    if (!cur || cur.who === "dx" || !cur.suggested) return;
-    if (normLen(keyer.decoded) < normLen(cur.suggested)) {
-      qsoAutoGradeFired.current = false; // disarm — covers HH path
+    // Gate: only you-send steps with a suggested script.
+    if (!cur || cur.who === "dx" || !cur.suggested) {
+      // Not a you-send step — cancel any pending timer from a previous step.
+      clearTimeout(qsoPauseTimer.current);
+      qsoPauseTimer.current = null;
       return;
     }
-    if (!qsoAutoGradeFired.current) {
-      qsoAutoGradeFired.current = true;
-      checkSend();
+
+    if (!keyer.decoded || keyer.decoded.trim() === "") {
+      // Empty decoded: HH wipe or never-keyed.
+      // Cancel any pending grade and disarm the guard so the next real send grades.
+      clearTimeout(qsoPauseTimer.current);
+      qsoPauseTimer.current = null;
+      qsoAutoGradeFired.current = false;
+      return;
     }
+
+    // Non-empty: operator is sending. (Re)arm the idle-pause timer.
+    clearTimeout(qsoPauseTimer.current);
+    const unit = 1200 / settings.keyWpm;
+    const delay = Math.max(QSO_SEND_PAUSE_MS, 8 * unit);
+    qsoPauseTimer.current = setTimeout(() => {
+      qsoPauseTimer.current = null;
+      // Guard re-check: manual CHECK may have fired between arm and elapse.
+      if (!qsoAutoGradeFired.current) {
+        checkSend();
+      }
+    }, delay);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyer.decoded]);
-  // Deps: keyer.decoded only. cur and checkSend are read via closure; listing cur
-  // would re-run after advance() before the guard resets, risking a false fire.
 
   const done = qso && step >= qso.steps.length;
 
@@ -2739,7 +2807,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             <button
               aria-label="Abandon this contact and return to setup"
               style={{ ...S.btn, color: S.text.dim, fontSize: "0.6875rem" }}
-              onClick={() => { player.stop(); setQso(null); keyer.clear(); }}
+              onClick={() => {
+                player.stop();
+                cancelCountdown();
+                clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
+                qsoAutoGradeFired.current = false;
+                setQso(null); keyer.clear();
+              }}
             >✕ ABANDON CONTACT / back to setup</button>
           </div>
         </div>
@@ -2763,7 +2837,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
-            <button style={S.btn} onClick={() => { qsoAutoGradeFired.current = false; keyer.clear(); }}>✕ CLEAR</button>
+            <button style={S.btn} onClick={() => {
+              clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
+              qsoAutoGradeFired.current = false; keyer.clear();
+            }}>✕ CLEAR</button>
           </div>
           {sendResult && (
             <div style={{ marginTop: 12 }}>
@@ -2792,7 +2869,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             <button
               aria-label="Abandon this contact and return to setup"
               style={{ ...S.btn, color: S.text.dim, fontSize: "0.6875rem" }}
-              onClick={() => { player.stop(); setQso(null); keyer.clear(); }}
+              onClick={() => {
+                player.stop();
+                cancelCountdown();
+                clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
+                qsoAutoGradeFired.current = false;
+                setQso(null); keyer.clear();
+              }}
             >✕ ABANDON CONTACT / back to setup</button>
           </div>
         </div>
