@@ -240,7 +240,23 @@ jobs:
         run: |
           SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
           echo "Uploading ${SNAP_FILE} and releasing to the stable channel..."
-          snapcraft upload "${SNAP_FILE}" --release=stable
+          # Retry the upload: the Snap Store connection can drop mid-transfer
+          # (RemoteDisconnected) — a transient network failure that clears on retry.
+          # Don't fail a built-and-tested release (and fire a false escalation) over a
+          # flaky upload; only surface a real failure after 3 attempts. (Added 2026-06-28
+          # after a transient RemoteDisconnected failed a 2.2.1 upload that succeeded on retry.)
+          for attempt in 1 2 3; do
+            if snapcraft upload "${SNAP_FILE}" --release=stable; then
+              echo "Upload succeeded on attempt ${attempt}."
+              break
+            fi
+            if [ "${attempt}" = "3" ]; then
+              echo "Upload failed after 3 attempts — surfacing as a real failure."
+              exit 1
+            fi
+            echo "Upload attempt ${attempt} failed (likely transient); retrying in 30s..."
+            sleep 30
+          done
           echo ""
           echo "Upload complete. The revision has been released to stable;"
           echo "it goes live once the store's automated review passes."
