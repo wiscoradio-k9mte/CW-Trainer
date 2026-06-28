@@ -504,6 +504,12 @@ const BUG_DIT_KEEPALIVE_MS = 160;
 // Travis: dial this on your real key if the grade fires too early or too late.
 const QSO_SEND_PAUSE_MS = 1500;
 
+// QSO auto-advance review window (ms): how long after a 100% grade the step
+// advances automatically when qsoAutoAdvance is ON. Long enough to read the
+// green 100% verdict; short enough not to feel stuck.
+// Travis: dial on the real key if it feels rushed or sticky.
+const QSO_AUTO_ADVANCE_MS = 4000;
+
 /* ================= KEY DECODER ================= */
 function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError, modeB = false }) {
   const [decoded, setDecoded] = useState("");
@@ -2238,8 +2244,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // qsoPauseTimer: the pending setTimeout that fires checkSend() after the idle pause.
   //   Cleared on EVERY teardown path (advance, CLEAR, ABANDON, unmount, empty-decoded
   //   branch) so no stray grade can fire into a later step.
+  // qsoAdvanceTimer: the pending setTimeout for auto-advance after a 100% grade.
+  //   Two timers now coexist; both must be cancelled at every teardown point.
+  //   Arm discipline: armAutoAdvance() is the ONLY place that sets this ref.
+  //   Cancel discipline: folded into every qsoPauseTimer teardown block so they
+  //   can't drift apart. Never armed when pct < 100 or when qsoAutoAdvance is OFF.
   const qsoAutoGradeFired = useRef(false);
   const qsoPauseTimer = useRef(null);
+  const qsoAdvanceTimer = useRef(null);
 
   const showFill = (msg) => {
     setFillMsg(msg);
@@ -2317,6 +2329,9 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setLiveText("");
     setFillMsg(null);
     keyer.clear();
+    // Cancel any pending auto-advance from the previous contact before starting fresh.
+    clearTimeout(qsoAdvanceTimer.current);
+    qsoAdvanceTimer.current = null;
     // Reset per-conversation score arrays (B4)
     setCopyScores([]); setSendScores([]);
     if (difficulty === "real") player.startNoise(noiseGain(noise), settings.freq, settings.rxFilter);
@@ -2333,11 +2348,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const advance = (entry) => {
     setLog((l) => [...l, entry]);
     const next = step + 1;
-    // Cancel any pending auto-grade pause and countdown before stepping forward.
-    // Without this, a pending setTimeout could fire checkSend() into the next step,
-    // and an orphaned countdown interval could fire playDx() ~5s later.
+    // Cancel any pending timers and countdown before stepping forward.
+    // Without this, a pending setTimeout could fire checkSend() or an auto-advance
+    // into the next step, and an orphaned countdown interval could fire playDx() ~5s later.
     clearTimeout(qsoPauseTimer.current);
     qsoPauseTimer.current = null;
+    clearTimeout(qsoAdvanceTimer.current);
+    qsoAdvanceTimer.current = null;
     cancelCountdown();
     qsoAutoGradeFired.current = false; // new step = new send attempt; reset guard
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
@@ -2380,12 +2397,40 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     }
   };
 
-  // Don't leave the fill-message timer or the auto-grade pause timer running after unmount.
+  // Don't leave any timers running after unmount (fill, auto-grade pause, auto-advance).
   // The countdown interval is already cleaned up by useCountdown's own unmount effect.
   useEffect(() => () => {
     clearTimeout(fillTimer.current);
     clearTimeout(qsoPauseTimer.current);
+    clearTimeout(qsoAdvanceTimer.current);
   }, []);
+
+  // Arm the auto-advance timer after a perfect grade.
+  //
+  // Called at the end of checkCopy() and checkSend() with the just-computed pct/sim
+  // and a closure over the advance() call the CONTINUE/TRANSMIT button would make.
+  // Using the same advance() path means the timer does exactly what the button does —
+  // no divergence between manual and auto flows.
+  //
+  // Guard discipline (double-fire prevention):
+  //   • The unconditional clearTimeout at the top ensures re-grading the same step
+  //     (manual CHECK after pause-auto-grade, or vice versa) can't stack two timers.
+  //   • advance() also clears this ref, so a CONTINUE/TRANSMIT during the window kills
+  //     the pending timer before it fires.
+  //
+  // Toggle-off-mid-window: if qsoAutoAdvance is turned OFF after this timer is already
+  // armed, the pending timer runs to completion (recommendation A from the design).
+  // The toggle only governs future grades — keep it simple.
+  const armAutoAdvance = (pct, advanceFn) => {
+    clearTimeout(qsoAdvanceTimer.current);   // cancel any prior pending advance (double-fire guard)
+    qsoAdvanceTimer.current = null;
+    if (!settings.qsoAutoAdvance) return;     // toggle OFF → never arm
+    if (pct !== 100) return;                  // HARD 100%-ONLY GATE — <100% never arms
+    qsoAdvanceTimer.current = setTimeout(() => {
+      qsoAdvanceTimer.current = null;
+      advanceFn();                            // fires the exact same advance the button calls
+    }, QSO_AUTO_ADVANCE_MS);
+  };
 
   const checkCopy = () => {
     const pct = Math.round(similarity(cur.text, copyAttempt) * 100);
@@ -2396,7 +2441,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setCopyScores((prev) => [...prev, pct]);
     // Announce to AT via the always-mounted resultLive region (design §0).
     // Score is aria-hidden; this is the only AT path for the copy result.
-    setResultLive(`Copy: ${pct}% — ${verdict}`);
+    // Append the auto-advance notice ONLY when actually armed so AT isn't surprised.
+    const copyLiveMsg = `Copy: ${pct}% — ${verdict}`;
+    setResultLive(
+      settings.qsoAutoAdvance && pct === 100
+        ? `${copyLiveMsg} Advancing automatically.`
+        : copyLiveMsg
+    );
+    armAutoAdvance(pct, () => advance({ who: qso.dx, text: cur.text }));
   };
 
   // Break-in: interpret what the user keys during a DX transmission as
@@ -2469,7 +2521,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     let liveMsg = `Send: ${sim}% — ${verdict}. Sent: ${hits.length > 0 ? hits.join(", ") : "none"}`;
     if (missing.length > 0) liveMsg += `; missing: ${missing.join(", ")}`;
     liveMsg += ".";
-    setResultLive(liveMsg);
+    // Append the auto-advance notice ONLY when actually armed so AT isn't surprised.
+    setResultLive(
+      settings.qsoAutoAdvance && sim === 100
+        ? `${liveMsg} Advancing automatically.`
+        : liveMsg
+    );
+    armAutoAdvance(sim, () => advance({ who: settings.myCall, text: keyer.decoded || "(sent)" }));
   };
 
   // Auto-grade send step (PAUSE-BASED): replaces the old length-based trigger.
@@ -2629,6 +2687,28 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           </div>
         </div>
       )}
+
+      {/* Auto-advance toggle — opt-in, default OFF (see qsoAutoAdvance in DEFAULT_SETTINGS).
+          When ON: a 100% grade starts a QSO_AUTO_ADVANCE_MS countdown, then fires the
+          exact same advance() the CONTINUE/TRANSMIT button calls. <100% never arms.
+          WCAG 2.2.1 "Timing Adjustable" satisfied by design: toggle is OFF by default
+          and the manual CONTINUE/TRANSMIT is always present during the window. */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div>
+            <div style={S.label}>Auto-advance on a perfect over</div>
+            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+              When you score 100% on an over, automatically continue after a few seconds — no click needed.
+            </div>
+          </div>
+          <button
+            aria-pressed={settings.qsoAutoAdvance}
+            onClick={() => setSettings((s) => ({ ...s, qsoAutoAdvance: !s.qsoAutoAdvance }))}
+            style={{ ...S.btn, padding: "8px 14px", flexShrink: 0, ...(settings.qsoAutoAdvance ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
+            {settings.qsoAutoAdvance ? "AUTO ON" : "AUTO OFF"}
+          </button>
+        </div>
+      </div>
 
       {/* Start button — label adapts: activator starts by calling CQ */}
       <button style={S.btnAmber} onClick={start}>
@@ -2811,6 +2891,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 player.stop();
                 cancelCountdown();
                 clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
+                clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
                 qsoAutoGradeFired.current = false;
                 setQso(null); keyer.clear();
               }}
@@ -2839,6 +2920,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
             <button style={S.btn} onClick={() => {
               clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
+              clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
               qsoAutoGradeFired.current = false; keyer.clear();
             }}>✕ CLEAR</button>
           </div>
@@ -2873,6 +2955,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 player.stop();
                 cancelCountdown();
                 clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
+                clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
                 qsoAutoGradeFired.current = false;
                 setQso(null); keyer.clear();
               }}
@@ -2900,6 +2983,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: 22, letterSpacing: 3 }}>QSO COMPLETE — 73</div>
             <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif" }}>{qso.summary}</p>
             {scoreSummary}
+            {/* Simulation reminder — shown on every completed contact as a calm footer note.
+                Muted color (#8A929C on #191C21 = AA for this size) with a faint top border
+                to read as a footer, not an alarm. No dismiss state — it cannot be "dismissed
+                forever" — which is fine for one calm sentence. */}
+            <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.6, marginTop: 14, marginBottom: 0, paddingTop: 12, borderTop: "1px solid #2E343C" }}>
+              {/* Exact approved text — mind the straight quotes around "right" */}
+              Remember: this is just a simulation. Every real QSO is a little different — there&apos;s no single &quot;right&quot; way to run a contact. The goal here is simple: enough practice that you&apos;ll have the confidence to get on the air for real. 73!
+            </p>
             <button style={{ ...S.btnAmber, marginTop: 10 }} onClick={start}>▶ NEXT CONTACT</button>
           </div>
         );
@@ -4043,6 +4134,11 @@ const DEFAULT_SETTINGS = {
   // as the shipped default so existing users' muscle memory is unchanged.
   // Only applies when keyType === "paddle".
   iambicModeB: false,
+  // QSO auto-advance: when ON, a 100% grade automatically advances to the next
+  // step after QSO_AUTO_ADVANCE_MS — so the operator never has to leave the
+  // paddle to click CONTINUE/TRANSMIT on a perfect over. Default OFF so the
+  // manual flow is unchanged for users who haven't opted in.
+  qsoAutoAdvance: false,
 };
 
 export default function CWTrainer() {
