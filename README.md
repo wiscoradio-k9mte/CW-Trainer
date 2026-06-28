@@ -66,19 +66,23 @@ reports, numbers, prosigns, Q-codes, common words, or full QSO lines) and climb 
 improve. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
 paddle — with selectable iambic **Mode A or B**), or with **your own key or paddle** through a USB adapter (the `[` / `]` brackets a
 VBand-style adapter sends; flip the dit/dah swap if your levers come out reversed). Afterward you
-get **fist feedback** — your estimated speed and how tight your letter/word spacing reads.
+get **fist feedback** — your estimated speed and how tight your letter/word spacing reads. Finish
+the word and it grades **automatically** — no button to press.
 
 ### 📻 QSO
 A simulated contact, set up the way you'd actually operate: pick the **activity** (Ragchew, POTA,
 SOTA, or IOTA), your **role** (Activator or Hunter/Chaser; or, for a ragchew, Call CQ or Answer a
 CQ), and the **difficulty**. Then work the whole exchange — call, signal report, the back-and-forth,
 and the sign-off — copying by ear and sending with your key. Real-life difficulty adds QSB fading,
-band noise, and on-air break-in fills (`?`, `AGN`, `QRS`).
+band noise, and on-air break-in fills (`?`, `AGN`, `QRS`). Both **how you copy and how you send**
+are scored each contact — the type box auto-focuses when it's your turn, your over grades when you
+pause, and it all feeds the Progress view.
 
 ### 📈 Progress
-A running history of how you're doing — your Koch-lesson accuracy, your sending sessions (speed and
-fist), and your copy — tracked across sessions with simple trends and dates, so you can see whether
-today beat last week. Saved locally; it never leaves your machine.
+A running history of how you're doing — your Koch-lesson accuracy, your sending (speed and fist),
+your copy, and your **QSO** contacts (both how you copy and how you send) — shown as **color-coded
+bar charts with a 90% mastery line** and dates, so you can see whether today beat last week. Saved
+locally; it never leaves your machine.
 
 **Plus:** built-in reference guides (CW lingo, on-air procedure, and the history of the code), and a
 Settings panel for speed, Farnsworth timing, sidetone pitch, and band conditions (receiver

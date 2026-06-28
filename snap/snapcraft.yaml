@@ -14,7 +14,7 @@ description: |
 
   • A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — pick your role (activator, hunter, chaser, or call/answer CQ), with on-air break-in fills, honest signal reports, varied CQ calls, and a 5-second "get ready" countdown before the code starts.
 
-  • Cross-session progress tracking — your lessons, sending sessions, and copy accuracy are saved and charted with dates, so you can see whether today beat last week.
+  • Cross-session progress tracking — your lessons, sending, copy, and QSO accuracy (both how you copy and how you send) are saved and shown as color-coded bar charts with a 90% mastery line and dates, so you can see whether today beat last week.
 
   • A responsive layout that spreads across a desktop screen and collapses to a clean single column on a small one.
 
@@ -22,15 +22,15 @@ description: |
 
   • Reference guides on CW lingo, on-air procedure, and the history of the code.
 
-  What's new in 2.0 — from K9MTE:
+  What's new — from K9MTE:
 
-  • Progress tracking — a new Progress tab keeps a running history of your lessons, fist, and copy, with dates and trends.
+  • A color-coded Progress view — bar charts with a 90% mastery line across Learn, Key, Copy, and now QSO (tracking both your copy and your sending, per contact).
 
-  • Iambic Mode B for paddle operators (opt-in).
+  • Your sending grades itself the moment you finish an over — no button to press.
 
-  • A roomier desktop layout that puts your practice controls in one place.
+  • Faster speeds (up to 40 wpm); the copy box auto-focuses when it's your turn to type; Iambic Mode B for paddle operators.
 
-  • Sharper sending feedback, more realistic QSO roles and CQ calls, and a long list of fixes and polish.
+  • A long list of fixes and polish.
 
   This is actively developed — I'm a ham building the trainer I always wanted, and there's more on the way. 73, K9MTE.
 
