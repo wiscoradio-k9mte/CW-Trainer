@@ -1362,6 +1362,15 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   const [scoreLive, setScoreLive] = useState("");
   const noiseGain = (v) => (v / 100) * 0.5;
   const { countdown, start: startCountdown } = useCountdown();
+  // Auto-focus the copy input when a new target arrives so the user can type
+  // immediately without clicking. Guard against null (input not yet in the DOM
+  // on the first render before the target exists).
+  const copyInputRef = useRef(null);
+  useEffect(() => {
+    if (target && copyInputRef.current) {
+      copyInputRef.current.focus();
+    }
+  }, [target]);
 
   // Band noise runs while real-life conditions are selected on this tab
   useEffect(() => {
@@ -1533,6 +1542,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
 
       <div style={{ ...S.label, marginBottom: 6 }}>Your copy — type what you hear</div>
       <input
+        ref={copyInputRef}
         aria-label="Your copy"
         style={S.input}
         value={attempt}
@@ -1629,6 +1639,21 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // changes so the screen-reader user knows where they are in the ladder.
   const [catLive, setCatLive] = useState("");
   const errTimer = useRef(null);
+  // Two refs govern the auto-grade / record-write flow for this attempt:
+  //
+  //   autoGradeFired: true = the auto-grade effect has already called check() once.
+  //     Disarmed (→false) when decoded < target, which covers the HH path (HH wipes
+  //     decoded to "", effect sees length 0 < target, clears the flag so the clean
+  //     re-send can grade). Also reset in newTarget/pickCat/CLEAR.
+  //
+  //   recordWritten: true = check() has already written a progress record for this
+  //     attempt. Prevents a re-CHECK from adding a second record. Reset ONLY in
+  //     newTarget/pickCat/CLEAR — never disarmed by the decoded-length comparison
+  //     (disarming on short-decoded would let re-CHECKs write again after a partial
+  //     send that already recorded).
+  const autoGradeFired = useRef(false);
+  const recordWritten = useRef(false);
+
   const flashErr = () => {
     setResult(null);
     setAnalysis(null);
@@ -1664,9 +1689,42 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // to fire on keyType changes, not on every render — listing only keyType here
   // is intentional and correct.
 
+  // normLen: normalise then measure — matches similarity()'s own normalisation so
+  // a trailing decoder space doesn't falsely overshoot the length comparison.
+  const normLen = (s) => s.trim().toUpperCase().replace(/\s+/g, " ").length;
+
+  // Auto-grade effect: fires check() the first time decoded reaches the target's
+  // normalised length. Uses >= so an overshoot still grades at the first crossing.
+  //
+  // Uses autoGradeFired ref (not recordWritten) so the HH disarm works correctly:
+  //   decoded < target → autoGradeFired = false (disarm — HH wipes decoded to "",
+  //                      so the clean re-send can trigger auto-grade again)
+  //   decoded >= target AND !autoGradeFired AND target non-empty → call check()
+  //
+  // recordWritten (gated in check()) is NOT disarmed here — only by explicit user
+  // actions — so a re-CHECK after a short send that already recorded cannot write
+  // a second record even when decoded remains below target length.
+  useEffect(() => {
+    if (!target) return;
+    if (normLen(keyer.decoded) < normLen(target)) {
+      autoGradeFired.current = false;
+      return;
+    }
+    if (!autoGradeFired.current) {
+      autoGradeFired.current = true;
+      check();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyer.decoded]);
+  // Deps: keyer.decoded is the only trigger. `target` and `check` are read inside
+  // the callback through closure; listing them would re-run on target change before
+  // the guard reset in newTarget() fires, risking a false grade on stale data.
+
   const newTarget = () => {
     const cat = DRILL_CATEGORIES[catIdx];
     const t = cat.gen(settings);
+    autoGradeFired.current = false; // new target = new attempt; reset both guards
+    recordWritten.current = false;
     setTarget(t);
     setResult(null);
     setAnalysis(null);
@@ -1682,9 +1740,12 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     setAnalysis(fist);
 
     // Persist to cross-session progress history (v2.0 §1).
-    // Only record when there are actual elements (fist.elements > 0) to avoid
-    // writing empty CHECKs (user hits CHECK without sending anything).
-    if (record && fist.elements > 0) {
+    // §6 guard: recordWritten ensures record() fires at most once per attempt.
+    // The guard is set here after the write and reset only by newTarget/pickCat/CLEAR,
+    // never by the auto-grade effect's decoded-length check (which would let a
+    // re-CHECK write again after a short send that already recorded).
+    // Also requires fist.elements > 0 to skip empty CHECKs (no elements keyed).
+    if (record && fist.elements > 0 && !recordWritten.current) {
       const cat = DRILL_CATEGORIES[catIdx];
       record("key", {
         t:               Date.now(),
@@ -1699,6 +1760,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
         weightingVerdict: fist.weighting.verdict,
         weightingRatio:   fist.weighting.ratio,
       });
+      recordWritten.current = true; // mark: record written for this attempt
     }
 
     // Build the sr-only announcement: score + fist summary in plain English.
@@ -1729,6 +1791,8 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // narrow panel — extracted here (not inside the JSX) to avoid recreating it.
   const pickCat = (newIdx) => {
     setCatIdx(newIdx);
+    autoGradeFired.current = false; // new category = new attempt; reset both guards
+    recordWritten.current = false;
     setTarget(""); setResult(null); setAnalysis(null); keyer.clear();
     // Announce to screen readers (C2). The catLive region is always
     // mounted — setting its text here is a change the AT will speak.
@@ -1840,7 +1904,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
           <button style={S.btn} onClick={() => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq })}>
             ♪ HEAR IT
           </button>
-          <button style={S.btn} onClick={() => { keyer.clear(); setResult(null); setAnalysis(null); }}>✕ CLEAR</button>
+          <button style={S.btn} onClick={() => { autoGradeFired.current = false; recordWritten.current = false; keyer.clear(); setResult(null); setAnalysis(null); }}>✕ CLEAR</button>
         </div>
         <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
         <Display>{target || "press NEW TEXT"}</Display>
@@ -2145,6 +2209,17 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const [copyScores, setCopyScores] = useState([]);
   const [sendScores, setSendScores] = useState([]);
 
+  // Auto-focus: copy input gets focus when a DX step becomes active so the user
+  // can type their copy immediately. Ref is attached to the <input> in the DX panel.
+  const qsoCopyInputRef = useRef(null);
+
+  // Auto-grade guard for QSO send steps.
+  // qsoAutoGradeFired: true = the auto-grade effect has already called checkSend()
+  // this step. Disarmed (→false) on decoded < suggested length (HH path: HH wipes
+  // decoded to "", effect sees 0 < target → disarms → clean re-send grades).
+  // Reset in advance() and in the CLEAR handler.
+  const qsoAutoGradeFired = useRef(false);
+
   const showFill = (msg) => {
     setFillMsg(msg);
     clearTimeout(fillTimer.current);
@@ -2196,6 +2271,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qso, step, difficulty, settings.freq, settings.rxFilter]);
 
+  // Auto-focus copy input when a dx step is active (normal/real mode shows the
+  // copy input; easy mode shows CONTINUE instead). Guard: qsoCopyInputRef.current
+  // is null when the input isn't rendered (easy mode, you-step, or before start).
+  const cur = qso?.steps[step];
+  useEffect(() => {
+    if (cur && cur.who === "dx" && qsoCopyInputRef.current) {
+      qsoCopyInputRef.current.focus();
+    }
+  }, [cur]);
+
   const start = () => {
     const builder = ACTIVITY_BUILDERS[activity];
     const profile = {
@@ -2224,11 +2309,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     // panel shows immediately and the user calls CQ.
   };
 
-  const cur = qso?.steps[step];
-
   const advance = (entry) => {
     setLog((l) => [...l, entry]);
     const next = step + 1;
+    qsoAutoGradeFired.current = false; // new step = new send attempt; reset guard
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
     setFillMsg(null);
@@ -2348,6 +2432,27 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     liveMsg += ".";
     setResultLive(liveMsg);
   };
+
+  // Auto-grade send step: separate effect from the break-in effect above (same
+  // keyer.decoded observable, different meaning: break-in fires on DX steps only;
+  // this fires on you-send steps only). Fires checkSend() exactly once when decoded
+  // reaches cur.suggested's normalised length on a you-step.
+  // normLen: local copy of the same one-liner as KeyTrainer (no shared util needed).
+  const normLen = (s) => s.trim().toUpperCase().replace(/\s+/g, " ").length;
+  useEffect(() => {
+    if (!cur || cur.who === "dx" || !cur.suggested) return;
+    if (normLen(keyer.decoded) < normLen(cur.suggested)) {
+      qsoAutoGradeFired.current = false; // disarm — covers HH path
+      return;
+    }
+    if (!qsoAutoGradeFired.current) {
+      qsoAutoGradeFired.current = true;
+      checkSend();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyer.decoded]);
+  // Deps: keyer.decoded only. cur and checkSend are read via closure; listing cur
+  // would re-run after advance() before the guard resets, risking a false fire.
 
   const done = qso && step >= qso.steps.length;
 
@@ -2611,7 +2716,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           ) : (
             <>
               <div style={{ ...S.label, marginBottom: 6 }}>Your copy (optional — check it or just answer)</div>
-              <input style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
+              <input ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") checkCopy(); }}
                 aria-label="Your copy of what you heard"
                 placeholder="type what you hear..." autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
@@ -2658,7 +2763,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
-            <button style={S.btn} onClick={() => keyer.clear()}>✕ CLEAR</button>
+            <button style={S.btn} onClick={() => { qsoAutoGradeFired.current = false; keyer.clear(); }}>✕ CLEAR</button>
           </div>
           {sendResult && (
             <div style={{ marginTop: 12 }}>
