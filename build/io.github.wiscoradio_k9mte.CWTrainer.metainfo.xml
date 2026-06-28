@@ -74,6 +74,14 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.2.2" date="2026-06-28" type="stable">
+      <description>
+        <p>A small fix:</p>
+        <ul>
+          <li>The support ("Coffee?") link now points to Venmo.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.2.1" date="2026-06-28" type="stable">
       <description>
         <p>Fixes:</p>

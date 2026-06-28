@@ -4302,7 +4302,7 @@ export default function CWTrainer() {
               the gear's toggle affordance. */}
           <div style={{ display: "flex", alignItems: "center", gap: S.space.sm }}>
             {/*
-              Opens the Buy Me a Coffee page in the user's real browser.
+              Opens the developer's Venmo page in the user's real browser.
               Must be window.open(..., "_blank") — NOT a same-window href — because
               an href would navigate the Electron SPA away from the app.
               The setWindowOpenHandler in electron/main.cjs intercepts _blank opens,
@@ -4313,7 +4313,7 @@ export default function CWTrainer() {
             <button
               type="button"
               className="wr-coffee"
-              aria-label="Support the developer on Buy Me a Coffee — opens in your web browser"
+              aria-label="Support the developer via Venmo — opens in your web browser"
               style={{
                 background: "transparent",
                 border: S.border.amber,
@@ -4326,7 +4326,7 @@ export default function CWTrainer() {
                 fontWeight: 600,
                 cursor: "pointer",
               }}
-              onClick={() => window.open("https://buymeacoffee.com/wiscoradiolabs", "_blank", "noopener,noreferrer")}
+              onClick={() => window.open("https://venmo.com/u/K9MTE", "_blank", "noopener,noreferrer")}
             >
               <span aria-hidden="true" style={{ marginRight: S.space.xs }}>☕</span>Coffee?
             </button>
