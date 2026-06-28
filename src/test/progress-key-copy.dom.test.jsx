@@ -71,15 +71,28 @@ describe("PROGRESS — KEY records a fist session on CHECK (round-trip)", () => 
     // Get a target so the keyer is enabled.
     await user.click(screen.getByRole("button", { name: /NEW TEXT/ }));
 
-    // Send one element with the straight key (Space down→up). A short tap decodes
-    // as a dit; what matters for the record is fist.elements > 0.
+    // Send one element with the straight key, but with a KNOWN held duration so the
+    // persisted estWpm is a pinnable value (not whatever a zero-duration synchronous
+    // tap produces). The keyer measures durMs via performance.now(), which vitest's
+    // fake timers also drive. Default keyWpm = 20 → unit = 1200/20 = 60ms; a 60ms
+    // hold is < 2u (120ms) so it classifies as a dit with durMs = 60. analyzeFist
+    // then computes estWpm = round(1200 / medianDit) = round(1200/60) = 20, and
+    // wpmDelta = 20 - 20 = 0 → wpmVerdict "on target".
+    vi.useFakeTimers();
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true, cancelable: true }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(60); // advances performance.now() by 60ms
+    });
+    act(() => {
       window.dispatchEvent(new KeyboardEvent("keyup", { code: "Space", bubbles: true, cancelable: true }));
     });
 
-    // CHECK grades it and (if wired) records a `key` session.
-    await user.click(screen.getByRole("button", { name: "CHECK" }));
+    // CHECK grades it and records a `key` session (synchronous fireEvent under fake
+    // timers — userEvent needs real timers).
+    fireEvent.click(screen.getByRole("button", { name: "CHECK" }));
+    vi.useRealTimers();
 
     // (a) The record is in localStorage — the actual persisted output.
     const raw = window.localStorage.getItem("wrcw:progress");
@@ -88,6 +101,10 @@ describe("PROGRESS — KEY records a fist session on CHECK (round-trip)", () => 
     expect(parsed.key.length).toBeGreaterThan(0);
     // Default category is "words"; STRAIGHT KEY persists keyType "straight".
     expect(parsed.key[0]).toMatchObject({ category: "words", keyType: "straight" });
+    // VALUE assertions: the persisted fist estimate matches the known 60ms hold —
+    // estWpm 20, "on target" — not a hardcoded or mis-derived value.
+    expect(parsed.key[0].estWpm).toBe(20);
+    expect(parsed.key[0].wpmVerdict).toBe("on target");
 
     // (b) Visible round-trip: the PROGRESS tab shows the persisted session, and a
     // FRESH remount (new component tree reading from the store) shows it too.
@@ -163,22 +180,29 @@ describe("PROGRESS — COPY records a session on CHECK (round-trip)", () => {
     const { user } = await freshApp();
     await gotoTab(user, "COPY");
 
+    // Pin the generated target so the persisted pct is a KNOWN value. The default
+    // COPY source is "single": newTarget() does t = pick(easyPool) where easyPool =
+    // KOCH.slice(0,14).filter(alnum) and pick uses Math.floor(random*len). Stubbing
+    // random→0 forces t = easyPool[0] = "K" (KOCH[0]). Typing "K" is then a perfect
+    // copy → similarity("K","K") = 1 → pct 100, an exact value to assert.
+    const randSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+
     // CHECK is disabled until a target exists. NEW runs a 5-second countdown then
     // sets the target. Switch to fake timers (after the real-timer nav above) and
-    // advance the countdown so a target lands; the score doesn't matter for the
-    // record — only that check() ran and persisted a `copy` record.
+    // advance the countdown so a target lands.
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole("button", { name: /▶ NEW/ }));
     act(() => {
       vi.advanceTimersByTime(6000); // 5×1000ms countdown ticks + margin
     });
 
-    // Type an answer into the copy input and CHECK it (synchronous fireEvent so we
-    // don't need real-timer userEvent under fake timers).
+    // Type the (pinned) target into the copy input and CHECK it (synchronous
+    // fireEvent so we don't need real-timer userEvent under fake timers).
     const input = screen.getByRole("textbox", { name: /Your copy/i });
-    fireEvent.change(input, { target: { value: "E" } });
+    fireEvent.change(input, { target: { value: "K" } });
     fireEvent.click(screen.getByRole("button", { name: "CHECK" }));
     vi.useRealTimers();
+    randSpy.mockRestore();
 
     // (a) Persisted output in localStorage.
     const raw = window.localStorage.getItem("wrcw:progress");
@@ -187,6 +211,9 @@ describe("PROGRESS — COPY records a session on CHECK (round-trip)", () => {
     expect(parsed.copy.length).toBeGreaterThan(0);
     expect(parsed.copy[0]).toHaveProperty("source");
     expect(parsed.copy[0]).toHaveProperty("pct");
+    // VALUE assertion: a perfect copy of the pinned target persists pct 100, not a
+    // hardcoded constant (a `pct = 42` in check() sailed through 26 tests before).
+    expect(parsed.copy[0].pct).toBe(100);
 
     // (b) Visible round-trip via a fresh remount + PROGRESS tab. The COPY section
     // groups by source rung; the first rung's stored source value renders as a

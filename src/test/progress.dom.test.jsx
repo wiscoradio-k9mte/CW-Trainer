@@ -61,22 +61,31 @@ describe("PROGRESS — LEARN records on BACK", () => {
     }
 
     // Now answer a question to get an attempt into history, then BACK.
+    // Pin the played character so the answer is deterministically CORRECT and the
+    // persisted pct/correct VALUES can be asserted (not just the identifying
+    // fields). nextDrill() uses Math.random() < 0.25 ? newChars[last] : rand(pool);
+    // for lesson 1, newChars = ["K","M"], so random→0 forces the played char to
+    // "M" (0 < 0.25 → newChars[1]). Answering "M" is then a correct attempt.
+    const randSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     await user.click(screen.getByRole("button", { name: /START DRILL/i }));
-    // Lesson 1 pool = K + M. Clicking either constitutes an attempt.
-    await user.click(screen.getByRole("button", { name: "K" }));
-    // Wait for the flash timer to clear the lock (600ms / 1200ms) — we need to
-    // advance time. Use waitFor to avoid real delay in CI.
-    // Actually we don't need to wait — we just need to see history.length > 0.
+    // Lesson 1 pool = K + M; the played char is pinned to "M" above, so clicking
+    // "M" is a single CORRECT attempt → correct 1 / 1 → pct 100.
+    await user.click(screen.getByRole("button", { name: "M" }));
     // The flash setTimeout doesn't prevent BACK from being clicked (lock only
     // blocks answer(), not the BACK handler). BACK handler reads history which
     // was updated synchronously by setHistory in answer() before the timer.
     await user.click(screen.getByRole("button", { name: /← BACK|BACK/i }));
+    randSpy.mockRestore();
 
     raw = window.localStorage.getItem("wrcw:progress");
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw);
     expect(parsed.learn.length).toBeGreaterThan(0);
     expect(parsed.learn[0]).toMatchObject({ lesson: 1, attempts: 1 });
+    // VALUE assertions: an all-correct single-attempt drill persists the exact
+    // computed correct/pct, not a hardcoded or off-by-one value.
+    expect(parsed.learn[0].correct).toBe(1);
+    expect(parsed.learn[0].pct).toBe(100);
   });
 });
 

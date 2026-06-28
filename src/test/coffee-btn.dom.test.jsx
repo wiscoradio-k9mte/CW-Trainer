@@ -26,7 +26,7 @@ describe("coffee button — presence and accessible name", () => {
     await renderApp();
     // getByRole throws if not found — this doubles as an existence assertion.
     const btn = screen.getByRole("button", {
-      name: "Support the developer on Buy Me a Coffee — opens in your web browser",
+      name: "Support the developer via Venmo — opens in your web browser",
     });
     expect(btn).toBeInTheDocument();
   });
@@ -36,7 +36,7 @@ describe("coffee button — presence and accessible name", () => {
     await gotoTab(user, "KEY");
     expect(
       screen.getByRole("button", {
-        name: "Support the developer on Buy Me a Coffee — opens in your web browser",
+        name: "Support the developer via Venmo — opens in your web browser",
       })
     ).toBeInTheDocument();
   });
@@ -46,7 +46,7 @@ describe("coffee button — presence and accessible name", () => {
     await gotoTab(user, "QSO");
     expect(
       screen.getByRole("button", {
-        name: "Support the developer on Buy Me a Coffee — opens in your web browser",
+        name: "Support the developer via Venmo — opens in your web browser",
       })
     ).toBeInTheDocument();
   });
@@ -54,7 +54,7 @@ describe("coffee button — presence and accessible name", () => {
   it("hides the ☕ glyph from assistive tech so it does not double-announce", async () => {
     await renderApp();
     const btn = screen.getByRole("button", {
-      name: "Support the developer on Buy Me a Coffee — opens in your web browser",
+      name: "Support the developer via Venmo — opens in your web browser",
     });
     // The cup is decorative; the aria-label carries the name. The glyph span must
     // be aria-hidden so AT reads "Coffee?" (the label), not the emoji name on top
@@ -81,7 +81,7 @@ describe("coffee button — window.open call", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
 
     const btn = screen.getByRole("button", {
-      name: "Support the developer on Buy Me a Coffee — opens in your web browser",
+      name: "Support the developer via Venmo — opens in your web browser",
     });
     await user.click(btn);
 
@@ -90,7 +90,7 @@ describe("coffee button — window.open call", () => {
     const [url, target, features] = openSpy.mock.calls[0];
 
     // Exact URL — wrong destination is a user-facing defect.
-    expect(url).toBe("https://buymeacoffee.com/wiscoradiolabs");
+    expect(url).toBe("https://venmo.com/u/K9MTE");
 
     // Must be _blank so setWindowOpenHandler intercepts it; _self would navigate
     // the Electron window away from the app.
