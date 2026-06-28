@@ -74,6 +74,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.3.0" date="2026-06-28" type="stable">
+      <description>
+        <p>Smoother QSO practice:</p>
+        <ul>
+          <li>New optional QSO auto-advance — turn it on and a perfect (100%) over continues to the next step on its own, so a clean exchange flows hands-free without leaving the key.</li>
+          <li>A friendly reminder at the end of every contact that real QSOs vary — it's all about building your confidence to get on the air.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.2.2" date="2026-06-28" type="stable">
       <description>
         <p>A small fix:</p>
