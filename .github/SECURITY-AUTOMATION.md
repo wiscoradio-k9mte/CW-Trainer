@@ -100,56 +100,30 @@ SHA pin is itself the strong control). Travis's call — note it, don't block on
 
 ---
 
-## Snyk — verify/finish the dashboard config
+## Snyk — DROPPED (2026-06-29)
 
-Travis **linked the repo to Snyk on 2026-06-22** but believes the settings aren't
-fully configured. This is **his** verification pass in the Snyk dashboard — the
-security-engineer can't see Snyk's state, and nothing below was fabricated.
+Travis linked the repo to Snyk on 2026-06-22 and then **decided not to use it
+(2026-06-29).** The GitHub-native automation already covers the same ground:
+**Dependabot** (alerts + update PRs), **CodeQL** (`codeql.yml`), **dependency-review**
+(`dependency-review.yml`), and the weekly **`npm audit`** sweep in `security-audit.yml`
+with email escalation. Layering Snyk on top was redundant scanning (and Snyk-code
+per-PR was already on the shop's "skip / theater" list for an offline app).
 
-**Recommended approach: rely on the Snyk dashboard integration, NOT a Snyk Action
-step in CI** — for this product. Reasons:
-- The dashboard integration runs Snyk's import on its own schedule and opens fix
-  PRs without a `SNYK_TOKEN` secret living in the repo (one fewer secret to leak).
-- An offline app with only `react` + `react-dom` shipping doesn't need per-PR
-  Snyk gating on top of CodeQL + dependency-review + `npm audit`. That would be
-  redundant scanning (and Snyk-code per-PR is on the "skip / theater" list in the
-  shop baseline for offline apps).
-- `npm audit` in `security-audit.yml` already gives an in-Actions weekly signal
-  with email escalation.
-
-**What Travis should verify in the Snyk dashboard (https://app.snyk.io):**
-
-1. **Project imported & target correct** — the `wiscoradio-k9mte/CW-Trainer`
-   repo shows up under the right org, pointed at the `main` branch.
-2. **Manifest detected** — Snyk found `package.json` + `package-lock.json` (not
-   just one). If only `package.json` imported, re-import so it reads the lockfile.
-3. **Recurring test ON** — Settings → the project has a daily/weekly re-test
-   enabled so new disclosures surface without a code change (this is the "weekly
-   report" loop the brief describes).
-4. **PR checks** — decide whether Snyk's own PR status check is enabled. With
-   `ci.yml` + `dependency-review.yml` already gating PRs, the Snyk PR check is
-   **optional**; if enabled, do NOT make it a *required* status check (avoid a
-   third-party SaaS as a hard merge gate for a solo maintainer).
-5. **Fix PRs / upgrade PRs** — enable if wanted; they overlap with Dependabot, so
-   pick a lead. Recommendation: **Dependabot leads dependency PRs** (native,
-   already configured); use Snyk for its deeper vuln *database + reachability* in
-   the weekly report, not as a second PR-opener (don't stack Renovate-style).
-6. **Notifications** — set Snyk to email Travis on new high/critical so the weekly
-   report actually reaches him.
-
-**If Travis instead wants Snyk results in the Actions log** (not recommended for
-this product, but documented): add a `SNYK_TOKEN` repo secret (Snyk account →
-Account settings → Auth Token) and a `snyk/actions/node` step pinned to a commit
-SHA in `security-audit.yml`, running `snyk test --severity-threshold=high`. Then
-`SNYK_TOKEN` joins the secrets list below. **Not added by default** — the
-dashboard integration is the right call here.
+- **No repo change is needed** — nothing in CI ever called Snyk; there is no
+  `SNYK_TOKEN` and none is wanted.
+- The Snyk app **may still be linked** to the repo until Travis unlinks it in the
+  Snyk dashboard (https://app.snyk.io → the project → remove/deactivate). Optional
+  tidy-up; nothing depends on it.
+- **Do NOT** make any `security/snyk` status check a *required* check on `main` — an
+  abandoned third-party check would block merges. (See the branch-protection note
+  below.) Don't reintroduce Snyk without a deliberate decision to.
 
 ---
 
 ## Complete list of secrets + settings Travis must provide
 
-**Actions secrets** (Settings → Secrets and variables → Actions) — five already
-documented in `RELEASING.md`, no new ones unless Snyk-in-CI is chosen:
+**Actions secrets** (Settings → Secrets and variables → Actions) — five, all already
+documented in `RELEASING.md`:
 
 | Secret | For | Status |
 |--------|-----|--------|
@@ -158,7 +132,6 @@ documented in `RELEASING.md`, no new ones unless Snyk-in-CI is chosen:
 | `MAIL_PORT` | escalation email | required |
 | `MAIL_USERNAME` | escalation email | required |
 | `MAIL_PASSWORD` | escalation email (Gmail App Password) | required |
-| `SNYK_TOKEN` | **only if** Snyk-in-CI is added | NOT needed (use the dashboard) |
 
 **Repo settings** (web UI, this document, section by section):
 1. Secret scanning + push protection — ON
@@ -167,5 +140,6 @@ documented in `RELEASING.md`, no new ones unless Snyk-in-CI is chosen:
 3. Default `GITHUB_TOKEN` — read-only
 4. (Optional) Actions allow-list — strict or all-actions-with-SHA-pins
 
-**Snyk:** verify the six dashboard items above. No repo change required for the
-dashboard-integration path.
+**Snyk:** dropped (2026-06-29) — no action required. Optionally unlink the app in
+the Snyk dashboard, and make sure no `security/snyk` check is a *required* status
+check on `main`.

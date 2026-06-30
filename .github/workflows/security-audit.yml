@@ -1,10 +1,9 @@
 # Security Audit — weekly dependency-vulnerability sweep with email escalation
 #
 # Runs `npm audit` on a schedule (and on demand). This is the scheduled
-# security workflow the brief calls for, and the hook for the weekly Snyk loop
-# (see SECURITY-AUTOMATION.md — the Snyk dashboard integration runs on its own;
-# an optional Snyk Action step can be added here if Travis wants Snyk results
-# in the Actions log).
+# security workflow the brief calls for. Vulnerability coverage is GitHub-native:
+# Dependabot (alerts + update PRs), CodeQL (codeql.yml), and dependency-review
+# (dependency-review.yml). Snyk was trialed and dropped 2026-06-29 — not used.
 #
 # Behaviour:
 #   - npm audit at the configured threshold.
