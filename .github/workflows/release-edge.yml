@@ -1,0 +1,350 @@
+# Edge Release — CW Trainer
+#
+# Publishes a snap to the Snap Store EDGE channel for opt-in tester builds.
+# This workflow is COMPLETELY separate from release.yml (stable) and NEVER
+# touches the stable, candidate, or beta channels.
+#
+# TRIGGER: workflow_dispatch (manual only) from GitHub → Actions → "Edge Release"
+# → "Run workflow". The deliberate trigger is the human's build authorization.
+# A separate `confirm_publish` input gates the actual store upload, so Travis can
+# build and test the snap locally without publishing to the store.
+#
+# WHY workflow_dispatch on main (not a tag pattern):
+# workflow_dispatch workflows must live on the default branch (main) to be
+# triggerable via the GitHub UI or gh CLI. A vX.Y.Z-edge tag pattern would require
+# the workflow file to exist at the tagged commit — but feature branches that
+# haven't merged to main wouldn't have it. workflow_dispatch with a `ref` input
+# lives cleanly on main and checks out any branch for the build. See RELEASING.md
+# for the full trigger tradeoff discussion.
+#
+# STABLE RELEASE ISOLATION:
+# - release.yml triggers ONLY on 'v*.*.*' push tags — this workflow never pushes tags
+# - This workflow triggers ONLY on workflow_dispatch — release.yml cannot fire from it
+# - --release=edge is hardcoded; stable/candidate/beta are never touched here
+# - An input validation step rejects bare X.Y.Z versions without a pre-release suffix
+#
+# SECRETS REQUIRED:
+#   SNAPCRAFT_STORE_CREDENTIALS — must include the `edge` channel scope.
+#     The 2.3.0 credential covers stable + candidate only. Re-export with edge added
+#     before the first edge run (see RELEASING.md § Edge channel prerequisites).
+#   MAIL_* secrets — shared with the stable workflow; no new secrets needed.
+
+name: Edge Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit SHA to build (e.g. feature/international-dx)'
+        required: true
+        default: 'feature/international-dx'
+      version:
+        description: >
+          Snap version string for this edge build. Must include a pre-release suffix
+          to distinguish it from stable. Increment the trailing number for each new
+          edge build from the same branch (e.g. 2.4.0-edge.1, 2.4.0-edge.2, ...).
+        required: true
+        default: '2.4.0-edge.1'
+      confirm_publish:
+        description: >
+          Set to "true" to upload the snap to the Snap Store edge channel.
+          Leave as "false" (the default) to build and run tests only — the snap
+          artifact is available as a workflow artifact but is NOT published.
+          Setting this to "true" IS the firm publish checkpoint; the upload runs
+          automatically once the test gate passes.
+        required: true
+        default: 'false'
+
+# Serialize edge builds — only one at a time. Never cancel a running edge release
+# mid-flight; that can leave a partial upload with no clean retry state.
+concurrency:
+  group: edge-release
+  cancel-in-progress: false
+
+# Default to no permissions; each job declares only what it needs.
+permissions: {}
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 1: Check out the target ref, patch the version, build, test,
+  # and produce the snap artifact.
+  # Always runs when the workflow is dispatched (both build-only and publish).
+  # ──────────────────────────────────────────────────────────────────────
+  build-and-test:
+    name: Build, Test & Package Snap (Edge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read   # checkout only
+
+    outputs:
+      snap-path: ${{ steps.find-snap.outputs.snap-path }}
+      version:   ${{ inputs.version }}
+
+    steps:
+      - name: Validate inputs
+        # Fail fast before any expensive work if the inputs look wrong.
+        # The key guard: reject a bare X.Y.Z that looks like a stable version.
+        # Edge builds MUST carry a pre-release suffix (e.g. -edge.1) so they
+        # cannot be confused with a stable release in the store.
+        run: |
+          VERSION="${{ inputs.version }}"
+          REF="${{ inputs.ref }}"
+
+          if [ -z "${VERSION}" ]; then
+            echo "ERROR: version input is empty."
+            exit 1
+          fi
+          if [ -z "${REF}" ]; then
+            echo "ERROR: ref input is empty."
+            exit 1
+          fi
+
+          # Reject bare MAJOR.MINOR.PATCH (no pre-release suffix).
+          # Pattern: digits.digits.digits and NOTHING else.
+          if echo "${VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: version '${VERSION}' looks like a stable version (X.Y.Z with no pre-release suffix)."
+            echo "Edge builds must carry a pre-release suffix, e.g. 2.4.0-edge.1."
+            echo "This guard prevents accidentally occupying a version number that a future stable release would claim."
+            exit 1
+          fi
+
+          echo "Inputs validated."
+          echo "  ref:     ${REF}"
+          echo "  version: ${VERSION}"
+          echo "  publish: ${{ inputs.confirm_publish }}"
+
+      - name: Checkout target ref
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Node 22
+        # actions/setup-node v6.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Patch version for edge build
+        # Injects the edge version string into snapcraft.yaml and package.json
+        # at build time only — these changes are NOT committed and exist solely
+        # in the runner's working directory for this build.
+        #
+        # WHY grade:stable (not grade:devel):
+        # A snap built with grade:devel can ONLY be released to edge or beta —
+        # it can never be promoted to stable or candidate without rebuilding.
+        # Since an edge build is a candidate for eventual stable promotion, it
+        # must be built with grade:stable. This workflow validates that the
+        # snapcraft.yaml already carries grade:stable and refuses to proceed
+        # if someone changed it.
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          echo "--- Patching snap/snapcraft.yaml ---"
+          sed -i "s/^version: .*/version: \"${VERSION}\"/" snap/snapcraft.yaml
+          grep "^version:" snap/snapcraft.yaml
+
+          GRADE=$(grep "^grade:" snap/snapcraft.yaml | awk '{print $2}')
+          if [ "${GRADE}" != "stable" ]; then
+            echo "ERROR: snap/snapcraft.yaml grade is '${GRADE}', expected 'stable'."
+            echo "Edge builds intended for later promotion to stable must use grade:stable."
+            echo "grade:devel locks a snap to edge/beta and cannot be promoted without rebuilding."
+            exit 1
+          fi
+          echo "Grade check passed: grade:stable (safe to promote to stable later)"
+
+          echo "--- Patching package.json ---"
+          # patch via node so JSON formatting is preserved
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${VERSION}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          node -p "require('./package.json').version"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite (the gate)
+        # A broken build never reaches the Snap Store — not even the edge channel.
+        run: npm test
+
+      - name: Build renderer (Vite)
+        run: npm run build
+
+      - name: Build Electron unpacked tree
+        # electron-builder --dir → release/linux-unpacked/
+        # This is the source directory that snapcraft.yaml's `dump` plugin uses.
+        run: npm run pack
+
+      - name: Build snap (snapcore/action-build v1.3.0)
+        # snapcore/action-build v1.3.0 — provisions LXD on the runner and invokes
+        # real snapcraft inside an LXD container. Same toolchain as the stable builds.
+        # snapcraft-channel: stable refers to the snapcraft TOOL version to use,
+        # not the target channel for the snap being built.
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79
+        id: snapcraft
+        with:
+          snapcraft-channel: stable
+
+      - name: Locate snap artifact
+        id: find-snap
+        run: |
+          SNAP_PATH="${{ steps.snapcraft.outputs.snap }}"
+          if [ ! -f "${SNAP_PATH}" ]; then
+            echo "ERROR: snap artifact not found at ${SNAP_PATH}"
+            exit 1
+          fi
+          echo "snap-path=${SNAP_PATH}" >> "$GITHUB_OUTPUT"
+          echo "Snap built: ${SNAP_PATH}"
+          ls -lh "${SNAP_PATH}"
+
+      - name: Upload snap artifact
+        # Stash the snap between jobs. Also available as a downloadable artifact
+        # for manual testing (sudo snap install --dangerous wr-cw-trainer_*.snap)
+        # even when confirm_publish is false.
+        # actions/upload-artifact v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: snap-edge-artifact
+          path: ${{ steps.find-snap.outputs.snap-path }}
+          retention-days: 7
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 2: Upload the snap to the Snap Store EDGE channel.
+  #
+  # FIRM CHECKPOINT: this job runs ONLY when confirm_publish is explicitly
+  # set to "true" at dispatch. The test gate (Job 1) must also pass.
+  # Both conditions must be true for any store upload to occur.
+  #
+  # --release=edge is hardcoded. This workflow can never release to stable,
+  # candidate, or beta — those channels are owned exclusively by release.yml.
+  # ──────────────────────────────────────────────────────────────────────
+  upload-edge:
+    name: Upload Snap to Snap Store — Edge Channel
+    needs: build-and-test
+    if: ${{ inputs.confirm_publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+
+    steps:
+      - name: Download snap artifact
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: snap-edge-artifact
+          path: ./dist-snap
+
+      - name: Locate downloaded snap
+        id: snap-loc
+        run: |
+          SNAP_FILE=$(ls ./dist-snap/*.snap | head -1)
+          if [ -z "${SNAP_FILE}" ]; then
+            echo "ERROR: no .snap file found in ./dist-snap"
+            exit 1
+          fi
+          echo "snap-file=${SNAP_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Snap file: ${SNAP_FILE}"
+          ls -lh "${SNAP_FILE}"
+
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Upload snap and release to edge channel
+        # Uploads the snap revision and releases it to the `edge` channel ONLY.
+        # Never touches stable, candidate, or beta.
+        #
+        # Authorization path:
+        #   1. Travis set confirm_publish=true at dispatch (explicit human confirm)
+        #   2. The full test suite passed in Job 1 (the gate)
+        #   Both conditions must be true for this step to execute.
+        #
+        # Retry logic mirrors the stable workflow: the Snap Store connection can
+        # drop mid-transfer (RemoteDisconnected) — a transient failure that clears
+        # on retry. 3 attempts with 30s backoff catches flaky uploads without
+        # masking real failures.
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
+          VERSION="${{ inputs.version }}"
+          REF="${{ inputs.ref }}"
+          echo "Uploading ${SNAP_FILE} to edge channel..."
+          echo "  Version:  ${VERSION}"
+          echo "  Built from: ${REF}"
+          echo ""
+          for attempt in 1 2 3; do
+            if snapcraft upload "${SNAP_FILE}" --release=edge; then
+              echo "Upload succeeded on attempt ${attempt}."
+              break
+            fi
+            if [ "${attempt}" = "3" ]; then
+              echo "Upload failed after 3 attempts — surfacing as a real failure."
+              exit 1
+            fi
+            echo "Upload attempt ${attempt} failed (likely transient); retrying in 30s..."
+            sleep 30
+          done
+          echo ""
+          echo "Snap released to edge channel. Testers install with:"
+          echo "  snap install wr-cw-trainer --edge"
+          echo "Or switch from stable:"
+          echo "  snap refresh wr-cw-trainer --channel=edge"
+          echo ""
+          echo "To later promote this revision to stable (after validation):"
+          echo "  snapcraft release wr-cw-trainer <REVISION_NUMBER> stable"
+          echo "  (Find the revision number in this job's log above, or in the Snap Store dashboard.)"
+
+      - name: Push text + icon metadata to Snap Store
+        # Updates the store listing's summary, description, and icon to match
+        # what's embedded in the snap. Non-fatal: runs after the irreversible
+        # upload, so a metadata hiccup must never mark a successful edge publish
+        # as failed. The snap is already on edge if we reach this step.
+        # Icon limit: 256kB (snap/local/icon.png is kept under this).
+        continue-on-error: true
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
+          snapcraft upload-metadata "${SNAP_FILE}" --force \
+            && echo "Metadata (summary, description, icon) pushed to the Snap Store." \
+            || echo "WARNING: metadata push failed (non-fatal — the snap is already on edge)."
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 3: Email Travis if any job in this workflow failed.
+  # Fires only on failure — not on a skipped upload-edge (confirm_publish=false).
+  # ──────────────────────────────────────────────────────────────────────
+  notify-on-failure:
+    name: Notify on edge release failure
+    needs: [build-and-test, upload-edge]
+    if: failure()
+    uses: ./.github/workflows/notify-escalation.yml
+    with:
+      subject: 'Edge release ${{ inputs.version }} FAILED — action needed'
+      severity: 'high'
+      body: |
+        The edge release workflow failed.
+
+        Version: ${{ inputs.version }}
+        Ref:     ${{ inputs.ref }}
+        Publish: ${{ inputs.confirm_publish }}
+
+        Check the run log for details:
+        ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+        Common causes:
+        - Test suite failure on the target branch (fix on the branch, then re-run)
+        - snapcraft build failure (check LXD setup or snapcraft.yaml for errors)
+        - SNAPCRAFT_STORE_CREDENTIALS does not include the edge channel scope
+          (re-export with: snapcraft export-login --snaps wr-cw-trainer
+           --channels stable,candidate,edge - | base64 -w 0)
+        - Version string already claimed on the store (increment: e.g. 2.4.0-edge.2)
+        - Network drop mid-upload (a plain re-run usually clears this)
+
+        The snap was NOT uploaded to the edge channel. No user-visible change occurred.
+    secrets: inherit
