@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
-  COMMON_WORD_POOL, WIDE_WORD_POOL,
+  drillCommonWords, drillWiderWords,
   US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
   INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
@@ -1496,11 +1496,12 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
         Array.from({ length: 3 + Math.floor(Math.random() * 2) }, () => pick(alnum)).join("")
       ).join(" ");
     } else if (source === "words") {
-      // Words are lowercase in the frequency JSON; uppercase for CW display.
-      t = Array.from({ length: 4 }, () => rand(COMMON_WORD_POOL).toUpperCase()).join(" ");
+      // Route through the tested generator (same pool as KEY; count=4 for COPY).
+      t = drillCommonWords(4);
     } else if (source === "wordswide") {
-      t = Array.from({ length: 4 }, () => rand(WIDE_WORD_POOL).toUpperCase()).join(" ");
+      t = drillWiderWords(4);
     } else if (source === "hamwords") {
+      // COMMON_WORDS is already uppercase; no .toUpperCase() needed.
       t = Array.from({ length: 4 }, () => rand(COMMON_WORDS)).join(" ");
     } else if (source === "calls") {
       t = Array.from({ length: 3 }, () => randCall()).join(" ");

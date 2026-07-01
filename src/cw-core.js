@@ -322,13 +322,21 @@ export function drillQCodes() {
 // Words are lowercase in the JSON; uppercase them for the CW display.
 // Was rand(COMMON_WORDS): that curated ham-vocabulary pool is now the KEY/COPY
 // "hamwords" rung (unchanged); this rung is now English frequency content.
-export function drillCommonWords() {
-  return Array.from({ length: 3 }, () => rand(COMMON_WORD_POOL).toUpperCase()).join(" ");
+//
+// `n` defaults to 3 (KEY); COPY passes 4 for a slightly longer target.
+// DRILL_CATEGORIES calls cat.gen(settings) with a settings object — the typeof
+// guard treats any non-number first arg as "use default count=3", keeping the
+// calling convention compatible without a separate function per surface.
+export function drillCommonWords(n = 3) {
+  const count = typeof n === 'number' ? n : 3;
+  return Array.from({ length: count }, () => rand(COMMON_WORD_POOL).toUpperCase()).join(" ");
 }
 
-// Drill: wider English vocabulary — ranks 1001–5000 (harder rung).
-export function drillWiderWords() {
-  return Array.from({ length: 3 }, () => rand(WIDE_WORD_POOL).toUpperCase()).join(" ");
+// Drill: wider English vocabulary — ranks 1001-5000 (harder rung).
+// Same n parameterization as drillCommonWords (KEY default=3, COPY passes 4).
+export function drillWiderWords(n = 3) {
+  const count = typeof n === 'number' ? n : 3;
+  return Array.from({ length: count }, () => rand(WIDE_WORD_POOL).toUpperCase()).join(" ");
 }
 
 // Drill: full QSO line — verbatim from the original KeyTrainer branch.
