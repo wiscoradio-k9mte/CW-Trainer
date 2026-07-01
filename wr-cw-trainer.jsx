@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
+  COMMON_WORD_POOL, WIDE_WORD_POOL,
   US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
   INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
@@ -1429,12 +1430,14 @@ function Tag({ verdict, children }) {
 /* ================= COPY TRAINER ================= */
 // Graduated copy ladder — each rung is a real step up in difficulty, simplest first.
 const COPY_LEVELS = [
-  ["single", "1 character", "One character at a time. The first rung — just match the sound to the letter."],
-  ["pairs", "2-char groups", "Two characters together. Start hearing letters in sequence, not isolation."],
-  ["groups", "Letter groups", "Short random groups of 3-4. No meaning to lean on — pure character recognition."],
-  ["words", "Ham words", "Real on-air vocabulary — TNX, FER, RST. Words start to arrive as whole sounds."],
-  ["calls", "Callsigns", "The hardest everyday copy: random letters and numbers, no rhythm to predict."],
-  ["phrases", "QSO phrases", "Full exchange fragments, the way they come over the air."],
+  ["single",    "1 character",      "One character at a time. The first rung — just match the sound to the letter."],
+  ["pairs",     "2-char groups",    "Two characters together. Start hearing letters in sequence, not isolation."],
+  ["groups",    "Letter groups",    "Short random groups of 3-4. No meaning to lean on — pure character recognition."],
+  ["words",     "Common words",     "The 500 most common English words — familiar words that arrive as whole sounds."],
+  ["wordswide", "Wider vocabulary", "Less common English words (ranks 1001–5000) — a harder vocabulary rung."],
+  ["hamwords",  "Ham words",        "Real on-air vocabulary — TNX, FER, RST, QTH. Words start to arrive as whole sounds."],
+  ["calls",     "Callsigns",        "The hardest everyday copy: random letters and numbers, no rhythm to predict."],
+  ["phrases",   "QSO phrases",      "Full exchange fragments, the way they come over the air."],
 ];
 
 // CopyTrainer — Phase 2 of the responsive-layout refactor.
@@ -1493,6 +1496,11 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
         Array.from({ length: 3 + Math.floor(Math.random() * 2) }, () => pick(alnum)).join("")
       ).join(" ");
     } else if (source === "words") {
+      // Words are lowercase in the frequency JSON; uppercase for CW display.
+      t = Array.from({ length: 4 }, () => rand(COMMON_WORD_POOL).toUpperCase()).join(" ");
+    } else if (source === "wordswide") {
+      t = Array.from({ length: 4 }, () => rand(WIDE_WORD_POOL).toUpperCase()).join(" ");
+    } else if (source === "hamwords") {
       t = Array.from({ length: 4 }, () => rand(COMMON_WORDS)).join(" ");
     } else if (source === "calls") {
       t = Array.from({ length: 3 }, () => randCall()).join(" ");

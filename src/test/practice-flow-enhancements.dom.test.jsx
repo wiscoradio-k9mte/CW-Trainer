@@ -162,10 +162,10 @@ describe("Enhancement #2 — auto-grade on key completion (KEY tab)", () => {
   // normLen(decoded) >= normLen(target). With 20 wpm and u=60ms the char-finalize
   // timer is 150ms; advancing 160ms per tap finalizes one "E" per tap.
   //
-  // All targets from DRILL_CATEGORIES[0] (Common words) are at most 20 chars
-  // ("DIPOLE DIPOLE DIPOLE" — verified by enumeration). Driving 25 taps guarantees
-  // normLen(decoded) = 25 >= any possible normLen(target from the words category),
-  // so the auto-grade fires without knowing the exact target.
+  // drillCommonWords() was repointed to the top-500 English frequency pool (Phase 3).
+  // Max word in that pool is "everything" (10 chars); max target = 3×10+2 spaces = 32.
+  // Driving 40 taps guarantees normLen(decoded) = 40 >= 32 = any possible normLen(target
+  // from the words category), so the auto-grade fires without knowing the exact target.
   //
   // Mutation verified to bite:
   //   M1 (verified): comment out the `check()` call in the auto-grade useEffect
@@ -179,8 +179,8 @@ describe("Enhancement #2 — auto-grade on key completion (KEY tab)", () => {
     // Switch to fake timers AFTER navigation (userEvent needs real timers to animate).
     vi.useFakeTimers();
 
-    // Drive 25 dits. Each tap finalizes to "E"; 25 > any words-category target length.
-    for (let i = 0; i < 25; i++) tapAndFinalize();
+    // Drive 40 dits. Each tap finalizes to "E"; 40 > max possible target length (32).
+    for (let i = 0; i < 40; i++) tapAndFinalize();
 
     // Allow any residual React state flushes.
     await act(async () => {});
