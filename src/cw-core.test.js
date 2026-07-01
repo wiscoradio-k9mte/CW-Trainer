@@ -16,7 +16,7 @@ import {
   learnTrend, keyTrend, copyTrend,
   toneFor, qsoTrend,
   splashSignature,
-  INTL_PREFIXES, POTA_COUNTRY_PREFIXES, INTL_SUMMITS,
+  DX_GENERATION_POOL, POTA_COUNTRY_PREFIXES, INTL_SUMMITS,
   randDxStation, randPark, zoneToken, reciprocalCall,
   drillDxCallsigns, drillDxExchange, drillContestFragments,
   drillSplitPileup, drillReciprocalCalls,
@@ -2242,71 +2242,103 @@ describe("splashSignature", () => {
 // Phase 1 — International / DX data model
 // ---------------------------------------------------------------------------
 
-// ---- INTL_PREFIXES integrity ----
-describe("INTL_PREFIXES integrity", () => {
-  it("every row has prefix, entity, continent, and cqZone", () => {
-    for (const row of INTL_PREFIXES) {
+// ---- DX_GENERATION_POOL integrity ----
+// The pool is built from the real bundled DXCC dataset at module load.
+// These tests verify the structure AND assert against sourced values so they
+// bite if the dataset or pool builder regresses.
+describe("DX_GENERATION_POOL integrity", () => {
+  it("every row has required fields with valid types and zone range", () => {
+    for (const row of DX_GENERATION_POOL) {
       expect(typeof row.prefix).toBe("string");
       expect(row.prefix.length).toBeGreaterThan(0);
+      expect(typeof row.entityPrefix).toBe("string");
+      expect(row.entityPrefix.length).toBeGreaterThan(0);
       expect(typeof row.entity).toBe("string");
       expect(row.entity.length).toBeGreaterThan(0);
       expect(typeof row.continent).toBe("string");
-      expect(row.continent.length).toBeGreaterThan(0);
       expect(typeof row.cqZone).toBe("number");
-      expect(row.cqZone).toBeGreaterThan(0);
+      // All valid CQ zones are 1–40
+      expect(row.cqZone).toBeGreaterThanOrEqual(1);
       expect(row.cqZone).toBeLessThanOrEqual(40);
     }
   });
 
-  it("no duplicate prefixes", () => {
-    const prefixes = INTL_PREFIXES.map((r) => r.prefix);
-    const unique = new Set(prefixes);
-    expect(unique.size).toBe(prefixes.length);
-  });
-
   it("has at least one entry from each inhabited continent", () => {
-    const continents = new Set(INTL_PREFIXES.map((r) => r.continent));
-    // Phase 1 starter set covers EU, AS, OC, SA, AF, NA
+    const continents = new Set(DX_GENERATION_POOL.map((r) => r.continent));
     for (const c of ["EU", "AS", "OC", "SA", "AF", "NA"]) {
       expect(continents.has(c)).toBe(true);
     }
+  });
+
+  it("Germany (DL) is present with dataset-sourced CQ zone 14", () => {
+    // Verifies the pool is from the real dataset, not a hand-rolled guess.
+    const dl = DX_GENERATION_POOL.find((r) => r.entityPrefix === "DL");
+    expect(dl).toBeDefined();
+    expect(dl.entity).toMatch(/Germany/);
+    expect(dl.cqZone).toBe(14);
+    expect(dl.continent).toBe("EU");
+  });
+
+  it("Australia VK2 entry has CQ zone 30 (not the entity default null)", () => {
+    // Confirms multi-zone call-area expansion: VK2 = NSW = zone 30.
+    // Zone 29 is Western Australia (VK6/VK8) — a wrong zone here means the
+    // expansion didn't happen and a generated VK2 call would carry the wrong zone.
+    const vk2 = DX_GENERATION_POOL.find((r) => r.prefix === "VK2");
+    expect(vk2).toBeDefined();
+    expect(vk2.cqZone).toBe(30);
+    expect(vk2.entityPrefix).toBe("VK");
+    expect(vk2.entity).toMatch(/Australia/);
+  });
+
+  it("Canada VE7 entry has CQ zone 3 (British Columbia)", () => {
+    // cty.csv misses VE7=CQ3; the generator supplements from k0swe.
+    // If VE7 were still at zone 5 (the cty.csv default), this bites.
+    const ve7 = DX_GENERATION_POOL.find((r) => r.prefix === "VE7");
+    expect(ve7).toBeDefined();
+    expect(ve7.cqZone).toBe(3);
+    expect(ve7.entityPrefix).toBe("VE");
   });
 });
 
 // ---- randDxStation() coherence ----
 describe("randDxStation()", () => {
-  it("returns call, entity, continent, cqZone, and prefix fields", () => {
+  it("returns call, entity, continent, cqZone, prefix, and entityPrefix fields", () => {
     const s = randDxStation();
     expect(typeof s.call).toBe("string");
     expect(typeof s.entity).toBe("string");
     expect(typeof s.continent).toBe("string");
     expect(typeof s.cqZone).toBe("number");
     expect(typeof s.prefix).toBe("string");
+    expect(typeof s.entityPrefix).toBe("string");
   });
 
-  it("call starts with the entity row's prefix — no mismatch", () => {
-    // Run many draws: every call must start with the prefix from the same row.
-    // This is the coherence invariant: a VK call always reports Australia, zone 29.
+  it("call starts with the pool entry's prefix — zone is never null", () => {
+    // Every draw: call must start with the prefix of the pool row drawn, and
+    // cqZone must be a real number (not null — multi-zone entity defaults are null
+    // but call-area expansion gives a concrete zone).
     for (let i = 0; i < 50; i++) {
       const s = randDxStation();
-      const row = INTL_PREFIXES.find((r) => r.prefix === s.prefix);
+      const row = DX_GENERATION_POOL.find((r) => r.prefix === s.prefix);
       expect(row).toBeDefined();
       expect(s.call.startsWith(s.prefix)).toBe(true);
       expect(s.entity).toBe(row.entity);
       expect(s.cqZone).toBe(row.cqZone);
       expect(s.continent).toBe(row.continent);
+      expect(typeof s.cqZone).toBe("number"); // never null from pool
     }
   });
 
   it("accepts a custom pool and only draws from it", () => {
-    // Single-entry pool — every draw must return that entry's data.
-    const pool = [{ prefix: "VK", entity: "Australia", continent: "OC", cqZone: 29 }];
+    // Single-entry pool — every draw must return that entry's data exactly.
+    // VK6 = zone 29 (Western Australia) — confirms the data-layer CQ zone is used.
+    const pool = [{ prefix: "VK6", entityPrefix: "VK", entity: "Australia", continent: "OC", cqZone: 29 }];
     for (let i = 0; i < 10; i++) {
       const s = randDxStation(pool);
-      expect(s.prefix).toBe("VK");
+      expect(s.prefix).toBe("VK6");
+      expect(s.entityPrefix).toBe("VK");
       expect(s.entity).toBe("Australia");
       expect(s.cqZone).toBe(29);
-      expect(s.call.startsWith("VK")).toBe(true);
+      expect(s.call.startsWith("VK6")).toBe(true);
     }
   });
 });
@@ -2396,33 +2428,41 @@ describe("reciprocalCall()", () => {
 // ---- DX drill generators ----
 const DX_SETTINGS_CUT_ON  = { myCall: "W1AW", cutNumbers: true };
 const DX_SETTINGS_CUT_OFF = { myCall: "W1AW", cutNumbers: false };
-const INTL_PREFIXES_SET   = new Set(INTL_PREFIXES.map((r) => r.prefix));
+// Set of call-area prefixes used to generate callsigns ("VK2", "DL", "JA", …).
+// Used to verify that generated calls start with a real pool prefix.
+const DX_CALL_PREFIX_SET  = new Set(DX_GENERATION_POOL.map((r) => r.prefix));
+// Set of entity-level prefixes used for reciprocal calls ("VK", "DL", "JA", …).
+const DX_ENTITY_PREFIX_SET = new Set(DX_GENERATION_POOL.map((r) => r.entityPrefix));
 
 describe("drillDxCallsigns()", () => {
   it("returns a non-empty string", () => {
     expect(drillDxCallsigns(DX_SETTINGS_CUT_OFF).length).toBeGreaterThan(0);
   });
 
-  it("every call token starts with a prefix from INTL_PREFIXES", () => {
+  it("every call token starts with a prefix from DX_GENERATION_POOL", () => {
     // Run many draws; split on space and check each token's prefix.
+    // The pool contains call-area prefixes like "VK2", "VE3", "DL" —
+    // each generated call must start with one of them.
     for (let i = 0; i < 30; i++) {
       const result = drillDxCallsigns(DX_SETTINGS_CUT_OFF);
       const calls = result.split(" ");
       for (const call of calls) {
-        // At least one INTL_PREFIXES prefix must be the start of the call.
-        const matched = [...INTL_PREFIXES_SET].some((p) => call.startsWith(p));
+        const matched = [...DX_CALL_PREFIX_SET].some((p) => call.startsWith(p));
         expect(matched).toBe(true);
       }
     }
   });
 
-  it("never generates a domestic DX_PREFIXES call (no W9, K0, etc.)", () => {
-    const DOMESTIC = new Set(["W9","K0","N8","KD9","W1","K4","N5","VE3","W7","K6","AC9","KB0","N2","W4"]);
+  it("never generates a US domestic call (no W9, K0, etc.)", () => {
+    // VE3 was previously in this list as a "domestic" prefix but VE is Canadian —
+    // it's a legitimate DX target from a US operator's perspective and IS in the
+    // generation pool.  Only truly US-assigned prefixes belong here.
+    const US_DOMESTIC = new Set(["W9","K0","N8","KD9","W1","K4","N5","W7","K6","AC9","KB0","N2","W4"]);
     for (let i = 0; i < 30; i++) {
       const calls = drillDxCallsigns(DX_SETTINGS_CUT_OFF).split(" ");
       for (const call of calls) {
-        const isDomestic = [...DOMESTIC].some((p) => call.startsWith(p));
-        expect(isDomestic).toBe(false);
+        const isUsDomestic = [...US_DOMESTIC].some((p) => call.startsWith(p));
+        expect(isUsDomestic).toBe(false);
       }
     }
   });
@@ -2449,12 +2489,12 @@ describe("drillDxExchange()", () => {
     expect(saw599).toBe(true);
   });
 
-  it("zone comes from INTL_PREFIXES (no invented zone numbers)", () => {
-    const validZones = new Set(INTL_PREFIXES.map((r) => r.cqZone));
+  it("zone comes from DX_GENERATION_POOL — no invented zone numbers", () => {
+    const validZones = new Set(DX_GENERATION_POOL.map((r) => r.cqZone));
     // The zone in the exchange is zero-padded; extract the numeric value.
     for (let i = 0; i < 30; i++) {
       const r = drillDxExchange({ myCall: "W1AW", cutNumbers: false });
-      // Match zero-padded 2-digit zone, e.g. "599 29" or "599 05"
+      // Match zero-padded 2-digit zone in RST+zone variant, e.g. "599 30" or "599 03"
       const m = r.match(/\d{3} (\d{2})/);
       if (m) {
         const zone = Number(m[1]);
@@ -2512,7 +2552,7 @@ describe("drillSplitPileup()", () => {
     }
   });
 
-  it("generated bare-call output starts with an INTL_PREFIXES prefix", () => {
+  it("generated bare-call output starts with a DX_GENERATION_POOL prefix", () => {
     // The generator uses randDxStation().call, so bare calls must be DX calls.
     // Over many runs, at least some outputs will be bare DX calls.
     let sawDxCall = false;
@@ -2520,7 +2560,7 @@ describe("drillSplitPileup()", () => {
       const r = drillSplitPileup(DX_SETTINGS_CUT_OFF);
       const mightBeBareCall = !r.startsWith("UP") && !r.startsWith("QRZ");
       if (mightBeBareCall && !r.includes("?")) {
-        const matched = [...INTL_PREFIXES_SET].some((p) => r.startsWith(p));
+        const matched = [...DX_CALL_PREFIX_SET].some((p) => r.startsWith(p));
         if (matched) sawDxCall = true;
       }
     }
@@ -2539,6 +2579,8 @@ describe("drillSplitPileup()", () => {
 
 describe("drillReciprocalCalls()", () => {
   it("produces a host-prefix-first reciprocal call containing the operator's call", () => {
+    // The reciprocal call uses entityPrefix (e.g. "VK", "DL"), not the call-area
+    // prefix (e.g. "VK2") — the LEARN guide teaches country-level reciprocal format.
     for (let i = 0; i < 20; i++) {
       const r = drillReciprocalCalls(DX_SETTINGS_CUT_OFF);
       expect(r).toContain("W1AW");
@@ -2546,7 +2588,7 @@ describe("drillReciprocalCalls()", () => {
       const slashIdx = r.indexOf("/");
       expect(slashIdx).toBeGreaterThan(0);
       const prefix = r.slice(0, slashIdx);
-      expect(INTL_PREFIXES_SET.has(prefix)).toBe(true);
+      expect(DX_ENTITY_PREFIX_SET.has(prefix)).toBe(true);
     }
   });
 

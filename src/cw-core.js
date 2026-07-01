@@ -5,6 +5,13 @@
    Dependency order is intentional: each symbol is defined before anything
    that uses it. Do not reorder without re-checking the transitive deps. */
 
+// DX generation pool and randDxStation are in a separate module because they
+// import from the bundled DXCC dataset (src/data/dxcc_dataset.json via
+// dxcc-resolve.js).  Keeping dataset imports out of the core avoids pulling the
+// 286 kB JSON into unit-test environments that don't need it for non-DX tests.
+import { DX_GENERATION_POOL, randDxStation } from './data/dxcc-generation.js';
+export { DX_GENERATION_POOL, randDxStation };
+
 /* ================= MORSE DATA ================= */
 // PROSIGN_CODES: atomic codes for prosigns that must sound run-together (no 3u
 // inter-character gap between their elements).  Kept SEPARATE from MORSE so the
@@ -120,38 +127,11 @@ export const glyphs = (code) => code.split("").map((c) => (c === "." ? "·" : "�
 export const SUMMITS = ["W9/UP-001","W7A/AE-040","W0C/FR-063","W4G/NG-006","W6/CT-225","W2/GA-010"];
 export const IOTA_REFS = ["NA-128","EU-005","OC-001","NA-067","EU-115","AF-004"];
 
-/* ================= INTERNATIONAL / DX DATA (Phase 1) ================= */
+/* ================= INTERNATIONAL / DX DATA ================= */
 //
-// INTL_PREFIXES — one representative record per DXCC entity, curated for variety
-// across all continents.  cqZone is the most common zone for that entity; entities
-// spanning zone boundaries carry the primary one.
-//
-// NEEDS-SOURCING: every row must be validated against the ARRL DXCC list + ITU
-// allocation table before ship.  This is a REPRESENTATIVE STARTER, not a vetted
-// dataset.  Do not invent 1x/Qx non-authorized prefixes.
-export const INTL_PREFIXES = [
-  // Europe — 14 countries, CQ zones 14–15
-  { prefix: "DL", entity: "Germany",      continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
-  { prefix: "G",  entity: "England",      continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
-  { prefix: "F",  entity: "France",       continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
-  { prefix: "EA", entity: "Spain",        continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
-  { prefix: "I",  entity: "Italy",        continent: "EU", cqZone: 15 }, // NEEDS-SOURCING
-  { prefix: "OH", entity: "Finland",      continent: "EU", cqZone: 18 }, // NEEDS-SOURCING
-  { prefix: "SM", entity: "Sweden",       continent: "EU", cqZone: 18 }, // NEEDS-SOURCING
-  // Asia
-  { prefix: "JA", entity: "Japan",        continent: "AS", cqZone: 25 }, // NEEDS-SOURCING
-  { prefix: "JY", entity: "Jordan",       continent: "AS", cqZone: 20 }, // NEEDS-SOURCING (rarer flavor)
-  // Oceania
-  { prefix: "VK", entity: "Australia",    continent: "OC", cqZone: 29 }, // NEEDS-SOURCING
-  { prefix: "ZL", entity: "New Zealand",  continent: "OC", cqZone: 32 }, // NEEDS-SOURCING
-  // South America
-  { prefix: "PY", entity: "Brazil",       continent: "SA", cqZone: 11 }, // NEEDS-SOURCING
-  { prefix: "LU", entity: "Argentina",    continent: "SA", cqZone: 13 }, // NEEDS-SOURCING
-  // Africa
-  { prefix: "ZS", entity: "South Africa", continent: "AF", cqZone: 38 }, // NEEDS-SOURCING
-  // North America (non-US)
-  { prefix: "VE", entity: "Canada",       continent: "NA", cqZone:  5 }, // NEEDS-SOURCING
-];
+// DX_GENERATION_POOL and randDxStation are imported from src/data/dxcc-generation.js
+// (re-exported above).  The pool is built from the real bundled DXCC dataset —
+// no hand-rolled table, no NEEDS-SOURCING markers.
 
 // POTA program prefixes beyond the US.  "K" is the US POTA program prefix.
 // NEEDS-SOURCING: validate against the POTA program reference list before ship.
@@ -171,26 +151,6 @@ export const INTL_SUMMITS = [
 // NEEDS-SOURCING: validate non-US prefix strings against the POTA program list.
 export const randPark = (prefix = "K") =>
   `${prefix}-${String(1 + Math.floor(Math.random() * 9999)).padStart(4, "0")}`;
-
-// randDxStation(pool) — picks one entry from INTL_PREFIXES, builds a realistic
-// callsign using randCall's suffix logic, and returns a coherent bundle.
-// The call prefix always matches the entity — a VK call always reports Australia,
-// zone 29.  Single source of truth so drills and QSO builders can't mismatch.
-export function randDxStation(pool = INTL_PREFIXES) {
-  const row = rand(pool);
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  // Generate a suffix of 1–3 letters, weighted toward 2–3 (realistic on-air).
-  const suffixLen = [1, 2, 2, 2, 3, 3][Math.floor(Math.random() * 6)];
-  let suffix = "";
-  for (let i = 0; i < suffixLen; i++) suffix += letters[Math.floor(Math.random() * 26)];
-  return {
-    call:      row.prefix + suffix,
-    entity:    row.entity,
-    continent: row.continent,
-    cqZone:    row.cqZone,
-    prefix:    row.prefix,  // carried so callers can test coherence without regex
-  };
-}
 
 // zoneToken(zone, cut) — formats a CQ zone for a contest exchange.
 // Zero-pads to two digits, then applies cut-number substitution consistently
@@ -360,7 +320,7 @@ export function drillQsoLine(settings) {
 // domestic callsigns because they combine international prefixes, cut numbers,
 // and split/pileup conventions that require DX-specific knowledge.
 
-// Drill: 1–3 DX callsigns drawn from INTL_PREFIXES.  Mirrors drillCallsign
+// Drill: 1–3 DX callsigns drawn from DX_GENERATION_POOL.  Mirrors drillCallsign
 // but uses international prefixes so every call is a real foreign station.
 export function drillDxCallsigns(settings) {
   const count = [1, 1, 2, 2, 3][Math.floor(Math.random() * 5)];
@@ -368,12 +328,12 @@ export function drillDxCallsigns(settings) {
 }
 
 // Drill: DX signal-report exchanges.  5NN is the near-universal DX convention
-// (not an honest report); the zone drawn from INTL_PREFIXES is a real zone,
+// (not an honest report); the zone comes from the generation pool — a real zone,
 // so "5NN 25" is Japan (zone 25), not an invented number.
 export function drillDxExchange(settings) {
   const cut = settings.cutNumbers;
   const rst = cutNum("599", cut);      // 5NN with cut on, 599 with cut off
-  const zone = zoneToken(rand(INTL_PREFIXES).cqZone, cut);
+  const zone = zoneToken(randDxStation().cqZone, cut);
   const variants = [
     rst,                                // bare report — simplest
     `${rst} ${zone}`,                   // RST + CQ zone (CQ WW style)
@@ -417,10 +377,11 @@ export function drillSplitPileup(settings) {
 
 // Drill: reciprocal / abroad callsigns.  Teaches the host-prefix-FIRST convention
 // using the operator's own call so the format is immediately personal.
-// Picks a random international prefix and optionally appends an activity suffix.
+// Uses entityPrefix (e.g. "VK", "DL") not a call-area prefix (e.g. "VK2") —
+// the reciprocal format targets the country, which is what the LEARN guide teaches.
 export function drillReciprocalCalls(settings) {
   const myCall = settings.myCall || "W1AW";
-  const hostPrefix = rand(INTL_PREFIXES).prefix;
+  const hostPrefix = rand(DX_GENERATION_POOL).entityPrefix;
   const suffixOptions = ["", "", "/P", "/M"];   // blank weighted — bare is most common
   const suffix = rand(suffixOptions);
   return reciprocalCall(hostPrefix, myCall, suffix);

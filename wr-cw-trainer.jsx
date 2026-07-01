@@ -4,7 +4,7 @@ import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
-  INTL_PREFIXES, INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
+  INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
   randDxStation, zoneToken, reciprocalCall,
   buildRagchew, buildPota, buildSota, buildIota, isReadyToAdvance,
   DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
@@ -224,8 +224,9 @@ const POTA_WALKTHROUGH = [
 ];
 
 // ON AIR DX guide — the complete worked-example DX QSO, line by line.
-// Uses VK2XX (Australia, zone 29) as the DX station — a real on-air prefix,
+// Uses VK2XX (Australia, zone 30) as the DX station — a real on-air prefix,
 // a real CQ zone, chosen to make the DXCC / zone concepts concrete.
+// VK2 = New South Wales = CQ zone 30.  Zone 29 is Western Australia (VK6/VK8).
 // The user's call ({ME}) is substituted at render time via sub().
 // Source: research-international-dx-operating.md §2 worked example.
 const DX_WALKTHROUGH = [
@@ -3254,7 +3255,7 @@ function OnAirGuide({ player, settings }) {
           <div style={S.panel}>
             <div style={{ ...S.label, marginBottom: 10 }}>A complete DX contact, line by line</div>
             <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", marginTop: 0, marginBottom: 14, lineHeight: 1.6 }}>
-              VK2XX is a real Australian prefix (zone 29). The whole exchange may take fifteen seconds. That's the DX way.
+              VK2XX is a real Australian prefix (CQ zone 30 — New South Wales). The whole exchange may take fifteen seconds. That's the DX way.
             </p>
             {DX_WALKTHROUGH.map((l) => <WalkLine key={l.text} who={l.who} text={sub(l.text)} why={l.why} onHear={say} />)}
             <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
