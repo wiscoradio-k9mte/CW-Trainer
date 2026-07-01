@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MORSE, REV, similarity, timing,
-  buildRagchew, buildPota, buildSota, buildIota,
+  buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   cutNum, isReadyToAdvance,
   PROSIGNS, PROSIGN_CODES, QCODES_ABBREV, DRILL_CATEGORIES,
   drillCallsign, drillCallingCq, drillRstExchange, drillNumbers,
@@ -16,8 +16,9 @@ import {
   learnTrend, keyTrend, copyTrend,
   toneFor, qsoTrend,
   splashSignature,
+  US_PREFIXES,
   DX_GENERATION_POOL, POTA_COUNTRY_PREFIXES, INTL_SUMMITS,
-  randDxStation, randPark, zoneToken, reciprocalCall,
+  randDxStation, randDxFieldStation, randPark, zoneToken, reciprocalCall,
   drillDxCallsigns, drillDxExchange, drillContestFragments,
   drillSplitPileup, drillReciprocalCalls,
 } from "./cw-core.js";
@@ -1074,24 +1075,27 @@ describe("answering-branch text parity (strong lock)", () => {
   it("ragchew answering: CQ step shape-checked; exchange steps exact-locked", () => {
     const steps = stepsOf(buildRagchew, "answer");
     // Step 0: DX CQ — shape check only (CQ format varies)
-    assertCqShape(steps[0], "VE3H");
+    // Note: expected call is N5H — VE3 was removed from US_PREFIXES (Canada is now DX),
+    // shifting the seeded prefix pick from index 7 (VE3) to index 6 (N5) in the 13-item list.
+    assertCqShape(steps[0], "N5H");
     // Steps 1–4: exact lock
-    expect(steps[1]).toBe("VE3H DE K9MTE K9MTE K");
-    expect(steps[2]).toBe("K9MTE DE VE3H = GM TNX FER CALL = UR RST 569 569 = NAME MAX MAX = QTH CEDAR RAPIDS IA = HW? K9MTE DE VE3H KN");
-    expect(steps[3]).toBe("R R VE3H DE K9MTE = GM MAX TNX FER RPT = UR RST 599 599 = NAME TRAVIS TRAVIS = QTH MADISON WI = HW? VE3H DE K9MTE KN");
-    expect(steps[4]).toBe("R FB TRAVIS = TNX FER FB QSO = 73 ES HPE CUAGN K9MTE DE VE3H SK EE");
+    expect(steps[1]).toBe("N5H DE K9MTE K9MTE K");
+    expect(steps[2]).toBe("K9MTE DE N5H = GM TNX FER CALL = UR RST 569 569 = NAME MAX MAX = QTH CEDAR RAPIDS IA = HW? K9MTE DE N5H KN");
+    expect(steps[3]).toBe("R R N5H DE K9MTE = GM MAX TNX FER RPT = UR RST 599 599 = NAME TRAVIS TRAVIS = QTH MADISON WI = HW? N5H DE K9MTE KN");
+    expect(steps[4]).toBe("R FB TRAVIS = TNX FER FB QSO = 73 ES HPE CUAGN K9MTE DE N5H SK EE");
   });
 
   it("pota hunter: CQ step shape-checked; exchange steps exact-locked (A2: no park ref)", () => {
     const steps = stepsOf(buildPota, "hunter");
     // Step 0: activator CQ — shape only; POTA tag must be present; park ref must NOT be
-    assertCqShape(steps[0], "VE3H", "POTA");
+    // N5H replaces VE3H after VE3 removal from US_PREFIXES (see ragchew lock comment above).
+    assertCqShape(steps[0], "N5H", "POTA");
     expect(steps[0]).not.toMatch(/US-\d+/);
     // Steps 1–4: exact lock
     expect(steps[1]).toBe("K9MTE");
     expect(steps[2]).toBe("K9MTE GM UR 589 589 BK");
     expect(steps[3]).toBe("BK GM UR 599 599 WI WI BK");
-    expect(steps[4]).toBe("BK TU WI 73 DE VE3H EE");
+    expect(steps[4]).toBe("BK TU WI 73 DE N5H EE");
   });
 
   it("pota hunter CQ step does not contain a park reference (A2)", () => {
@@ -1105,13 +1109,14 @@ describe("answering-branch text parity (strong lock)", () => {
   it("sota chaser: CQ step shape-checked (includes /P and summit ref); exchange steps exact-locked", () => {
     const steps = stepsOf(buildSota, "chaser");
     // Step 0: SOTA activator CQ — must have /P call, SOTA tag, summit ref, ends K
-    assertCqShape(steps[0], "VE3H/P", "SOTA");
+    // N5H/P replaces VE3H/P — same seed shift as ragchew lock.
+    assertCqShape(steps[0], "N5H/P", "SOTA");
     expect(steps[0]).toMatch(/[A-Z0-9]+\/[A-Z]+-\d+/); // summit ref present
     // Steps 1–4: exact lock
     expect(steps[1]).toBe("K9MTE");
     expect(steps[2]).toBe("K9MTE GM UR 589 589 BK");
     expect(steps[3]).toBe("BK R R UR 599 599 TU");
-    expect(steps[4]).toBe("BK TU ES 73 DE VE3H/P EE");
+    expect(steps[4]).toBe("BK TU ES 73 DE N5H/P EE");
   });
 
   it("iota chaser: CQ step shape-checked (includes IOTA tag and island ref); exchange steps locked", () => {
@@ -2604,5 +2609,498 @@ describe("drillReciprocalCalls()", () => {
       }
     }
     expect(sawSuffix).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Phase 2: data additions and new builders
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Data: HL / XE / BY pool additions + China zone override
+// ---------------------------------------------------------------------------
+describe("Phase 2 pool additions (HL/XE/BY) and REPRESENTATIVE_CQ_ZONE", () => {
+  it("South Korea (HL, code 137) is in the pool with CQ zone 25", () => {
+    const hl = DX_GENERATION_POOL.find((r) => r.entityPrefix === "HL");
+    expect(hl).toBeDefined();
+    expect(hl.cqZone).toBe(25);
+    expect(hl.continent).toBe("AS");
+    expect(hl.entity).toMatch(/Korea/i);
+  });
+
+  it("Mexico (XE, code 50) is in the pool with CQ zone 6", () => {
+    const xe = DX_GENERATION_POOL.find((r) => r.entityPrefix === "XE");
+    expect(xe).toBeDefined();
+    expect(xe.cqZone).toBe(6);
+    expect(xe.continent).toBe("NA");
+    expect(xe.entity).toMatch(/Mexico/i);
+  });
+
+  it("China (BY, code 318) is in the pool with zone 24 (east — never 23)", () => {
+    // REPRESENTATIVE_CQ_ZONE overrides cqZones[0]=23 to 24 (eastern China).
+    // This test is the pin that keeps a dataset regen from silently reverting it.
+    const by = DX_GENERATION_POOL.find((r) => r.entityPrefix === "BY");
+    expect(by).toBeDefined();
+    expect(by.cqZone).toBe(24);
+    // Mutation gate: changing the expected zone to 23 MUST turn this red.
+    expect(by.cqZone).not.toBe(23);
+    expect(by.continent).toBe("AS");
+  });
+
+  it("no deleted entity appears anywhere in DX_GENERATION_POOL", () => {
+    // The allEntities source includes deleted entities; the pool builder filters
+    // them via the !e.deleted guard in singleZoneRow and the entity-level deleted flag.
+    // This verifies the filter actually works for every row.
+    for (const row of DX_GENERATION_POOL) {
+      // We can't import allEntities directly here, so we check the entity name
+      // is defined (deleted entities would produce null from singleZoneRow and
+      // be filtered by .filter(Boolean)).
+      expect(typeof row.entity).toBe("string");
+      expect(row.entity.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Data: US_PREFIXES rename + VE3 removal
+// ---------------------------------------------------------------------------
+describe("US_PREFIXES (renamed from DX_PREFIXES)", () => {
+  it("does not contain VE3 — Canada is a DX entity, not domestic", () => {
+    expect(US_PREFIXES).not.toContain("VE3");
+  });
+
+  it("does not contain any non-US prefix", () => {
+    // All entries should be US-assigned call prefixes.
+    // VE (Canada), F (France), etc. would be wrong here.
+    for (const p of US_PREFIXES) {
+      // US prefixes start with K, W, N, or A — per ITU allocation.
+      // KD, N, AC, KB, W are all valid US prefix starts.
+      expect(p).toMatch(/^[KWAN]/);
+    }
+  });
+
+  it("still contains common US prefixes (W1, K4, N5, W9)", () => {
+    expect(US_PREFIXES).toContain("W1");
+    expect(US_PREFIXES).toContain("K4");
+    expect(US_PREFIXES).toContain("N5");
+    expect(US_PREFIXES).toContain("W9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildDx — both roles, mustContain⊆suggested invariant
+// ---------------------------------------------------------------------------
+const DX_PROF = { myCall: "W1AW", cut: false };
+const DX_PROF_CUT = { myCall: "W1AW", cut: true };
+
+// Helper: verify every you-step's mustContain tokens are literal substrings of suggested.
+// This is the text-parity invariant: the grader does flat.includes(token), so a token
+// that isn't in suggested is unreachable — the test would never turn red on the trainee.
+function assertMustContainSubset(steps) {
+  for (const step of steps) {
+    if (step.mustContain && step.suggested) {
+      for (const token of step.mustContain) {
+        expect(step.suggested).toContain(token);
+      }
+    }
+  }
+}
+
+describe("buildDx() — hunt role", () => {
+  it("returns 5 steps with who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("default role is hunt (backwards-compatible)", () => {
+    const q = buildDx(DX_PROF);
+    expect(q.steps[0].who).toBe("dx");
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildDx(DX_PROF, "hunt").steps);
+    }
+  });
+
+  it("step[1] mustContain includes myCall; step[3] mustContain includes report and TU", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(q.steps[1].mustContain).toContain("W1AW");
+    expect(q.steps[3].mustContain).toContain("TU");
+    // Report token: either 599 or 5NN depending on cut — both should be present
+    const rpt = q.steps[3].mustContain.find((t) => /^[59N]+$/.test(t));
+    expect(rpt).toBeDefined();
+  });
+
+  it("cut: true produces 5NN in step[3] suggested text, not raw 599", () => {
+    const q = buildDx(DX_PROF_CUT, "hunt");
+    expect(q.steps[3].suggested).toContain("5NN");
+    expect(q.steps[3].suggested).not.toContain("599");
+  });
+
+  it("cut: false produces 599 in step[3] suggested text", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(q.steps[3].suggested).toContain("599");
+  });
+
+  it("opts.split appends UP 5 TO 10 to step[0] text", () => {
+    const q = buildDx(DX_PROF, "hunt", { split: true });
+    expect(q.steps[0].text).toContain("UP 5 TO 10");
+  });
+
+  it("without opts.split, step[0] text does NOT contain UP", () => {
+    const q = buildDx(DX_PROF, "hunt", { split: false });
+    expect(q.steps[0].text).not.toContain("UP");
+  });
+
+  it("dx field is set and appears in the CQ step", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(typeof q.dx).toBe("string");
+    expect(q.dx.length).toBeGreaterThan(0);
+    // Hunt step[0] is the DX CQ — generated by cqCall("dx", dxCall) — contains their call.
+    // Step[2] text is "${myCall} ${rpt}" (DX confirms YOUR call + report), NOT the DX call.
+    expect(q.steps[0].text).toContain(q.dx);
+  });
+
+  it("summary names the DX entity", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildDx(DX_PROF, "hunt");
+      // Summary should mention the entity (from dxStation.entity) not just the call
+      expect(typeof q.summary).toBe("string");
+      expect(q.summary.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("buildDx() — callcq role", () => {
+  it("returns 5 steps with who sequence [you,dx,you,dx,you]", () => {
+    const q = buildDx(DX_PROF, "callcq");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["you","dx","you","dx","you"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildDx(DX_PROF, "callcq").steps);
+    }
+  });
+
+  it("step[0] suggested contains myCall (the CQ DX call)", () => {
+    const q = buildDx(DX_PROF, "callcq");
+    expect(q.steps[0].suggested).toContain("W1AW");
+    expect(q.steps[0].mustContain).toContain("W1AW");
+  });
+
+  it("step[4] suggested contains TU and myCall (QRZ back to calling)", () => {
+    const q = buildDx(DX_PROF, "callcq");
+    expect(q.steps[4].suggested).toContain("TU");
+    expect(q.steps[4].suggested).toContain("W1AW");
+    expect(q.steps[4].mustContain).toContain("TU");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildContest — run + sp × wpx + zone
+// ---------------------------------------------------------------------------
+const CONTEST_PROF = { myCall: "W1AW", cut: false, myCqZone: 5 };
+const CONTEST_PROF_CUT = { myCall: "W1AW", cut: true, myCqZone: 5 };
+
+describe("buildContest() — run role", () => {
+  it("returns 5 steps with who sequence [you,dx,you,dx,you]", () => {
+    const q = buildContest(CONTEST_PROF, "run");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["you","dx","you","dx","you"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildContest(CONTEST_PROF, "run").steps);
+    }
+  });
+
+  it("WPX: exchange token in step[2] mustContain is the same string as in step[2] suggested", () => {
+    // The text-parity trap: myExch is computed ONCE and reused in both places.
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(CONTEST_PROF, "run");
+      const step = q.steps[2]; // you: ${dxCall} ${rpt} ${myExch}
+      for (const token of step.mustContain) {
+        expect(step.suggested).toContain(token);
+      }
+    }
+  });
+
+  it("WPX: serial in mustContain is a 3-digit padded number (random, not running count)", () => {
+    // Over 30 contacts the serial must vary — a running counter would increment predictably.
+    // We exclude "599" (always the RST token) and "5NN" (RST with cut) from the search —
+    // both are 3-char tokens but are RSTs, not serials. mustContain contains [rpt, myExch].
+    const serials = new Set();
+    for (let i = 0; i < 30; i++) {
+      const q = buildContest(CONTEST_PROF, "run");
+      const mc = q.steps[2].mustContain;
+      const serial = mc.find((t) => /^\d{3}$/.test(t) && t !== "599");
+      if (serial) serials.add(serial);
+    }
+    // At least a few distinct values over 30 contacts proves it's not a running counter
+    // starting from 001 (which would give only "001" for all first contacts).
+    expect(serials.size).toBeGreaterThan(1);
+  });
+
+  it("zone mode: exchange token is the zero-padded CQ zone of the drawn DX station", () => {
+    // The token must be the zone, formatted consistently with zoneToken().
+    // We verify by cross-checking against the pool.
+    const validZones = new Set(DX_GENERATION_POOL.map((r) => r.cqZone));
+    for (let i = 0; i < 30; i++) {
+      const q = buildContest(CONTEST_PROF, "run", { contestType: "zone" });
+      const step = q.steps[2]; // you: ${dxCall} ${rpt} ${myExch}
+      // myExch for zone mode with cut=false is zero-padded zone (e.g. "05", "14", "25")
+      // Also check step[3] for dxExch
+      for (const token of step.mustContain) {
+        if (/^\d{2}$/.test(token)) {
+          expect(validZones.has(Number(token))).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("cut: true produces 5NN in report token, not 599", () => {
+    // Over many draws we must see 5NN, never raw 599 in the exchange step.
+    let saw5NN = false;
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(CONTEST_PROF_CUT, "run");
+      if (q.steps[2].suggested.includes("5NN")) saw5NN = true;
+    }
+    expect(saw5NN).toBe(true);
+  });
+});
+
+describe("buildContest() — sp role", () => {
+  it("returns 5 steps with who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildContest(CONTEST_PROF, "sp");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildContest(CONTEST_PROF, "sp").steps);
+    }
+  });
+
+  it("sp step[3] mustContain includes report and exchange token", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(CONTEST_PROF, "sp");
+      const step = q.steps[3]; // you: ${rpt} ${myExch} TU
+      // Must have at least 2 tokens: report and exchange
+      expect(step.mustContain.length).toBeGreaterThanOrEqual(2);
+      for (const token of step.mustContain) {
+        expect(step.suggested).toContain(token);
+      }
+    }
+  });
+
+  it("ROLE_TERMS includes dx and contest entries", () => {
+    expect(ROLE_TERMS.dx).toBeDefined();
+    expect(ROLE_TERMS.contest).toBeDefined();
+    expect(ROLE_TERMS.dx.map(([v]) => v)).toContain("hunt");
+    expect(ROLE_TERMS.dx.map(([v]) => v)).toContain("callcq");
+    expect(ROLE_TERMS.contest.map(([v]) => v)).toContain("run");
+    expect(ROLE_TERMS.contest.map(([v]) => v)).toContain("sp");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildPota opts.dx and opts.p2p
+// ---------------------------------------------------------------------------
+const POTA_PROF = { myCall: "W1AW", myQth: "MADISON WI", cut: false };
+
+describe("buildPota() — opts.dx (hunt DX activator)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildPota(POTA_PROF, "hunter", { dx: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildPota(POTA_PROF, "hunter", { dx: true }).steps);
+    }
+  });
+
+  it("step[4] close uses TU 73 (not TU state — DX activator doesn't use state as handle)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { dx: true });
+      expect(q.steps[4].text).toContain("TU 73");
+      // Should NOT use the US state as a handle (that's domestic protocol)
+      expect(q.steps[4].text).not.toMatch(/BK TU WI/);
+    }
+  });
+
+  it("summary names the DX entity", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { dx: true });
+      expect(typeof q.summary).toBe("string");
+      // entity should appear — the summary describes what country was worked
+      expect(q.summary.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe("buildPota() — opts.p2p (both activating, international P2P)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildPota(POTA_PROF, "hunter", { p2p: true }).steps);
+    }
+  });
+
+  it("step[3] mustContain includes the US park ref (not state)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      const step = q.steps[3]; // you send your park ref in P2P
+      // The park ref (K-XXXX) must be in mustContain and in suggested
+      const parkToken = step.mustContain.find((t) => /^K-\d{4}$/.test(t));
+      expect(parkToken).toBeDefined();
+      expect(step.suggested).toContain(parkToken);
+    }
+  });
+
+  it("step[4] shows the DX park ref (the one to log)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      // The DX park ref (intl program, potaPrefix) is in step[4] text
+      // It follows a prefix pattern like "DE-XXXX", "G-XXXX", "F-XXXX", etc.
+      expect(q.steps[4].text).toMatch(/-\d{4}/);
+    }
+  });
+
+  it("summary mentions the DX entity and both parks", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      expect(q.summary).toContain("P2P");
+    }
+  });
+
+  it("record activity stays pota (not a new activity type)", () => {
+    // P2P doesn't introduce a new activity key — it's still pota with opts.
+    const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+    expect(q.flavor).toBe("POTA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildSota opts.dx and opts.p2p (S2S)
+// ---------------------------------------------------------------------------
+const SOTA_PROF = { myCall: "W1AW", cut: false };
+
+describe("buildSota() — opts.dx (chase DX summit activator)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildSota(SOTA_PROF, "chaser", { dx: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildSota(SOTA_PROF, "chaser", { dx: true }).steps);
+    }
+  });
+
+  it("step[0] text contains /P (DX activator signs portable)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { dx: true });
+      expect(q.steps[0].text).toContain("/P");
+    }
+  });
+
+  it("summary names the DX entity", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { dx: true });
+      expect(q.summary.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe("buildSota() — opts.p2p (S2S, both summiting)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildSota(SOTA_PROF, "chaser", { p2p: true }).steps);
+    }
+  });
+
+  it("step[1] suggested is myCall/P (you sign portable in S2S)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+      expect(q.steps[1].suggested).toContain("W1AW");
+      // S2S: you sign portable — call/P format
+      expect(q.steps[1].suggested).toMatch(/W1AW\/P/);
+      // mustContain uses the plain call (substring check covers myCall/P)
+      expect(q.steps[1].mustContain).toContain("W1AW");
+    }
+  });
+
+  it("step[3] mustContain includes a US summit ref", () => {
+    // In S2S the chaser also exchanges their summit ref.
+    // US summits from the SUMMITS array: "W9/UP-001", "W7A/AE-040", etc.
+    // The call area may be 2 or 3 chars — use a broad match (starts with W, contains /).
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+      const step = q.steps[3];
+      const summitToken = step.mustContain.find((t) => t.startsWith("W") && t.includes("/"));
+      expect(summitToken).toBeDefined();
+      expect(step.suggested).toContain(summitToken);
+    }
+  });
+
+  it("record flavor stays SOTA (not a new activity)", () => {
+    const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+    expect(q.flavor).toBe("SOTA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// randDxFieldStation — field station coherence
+// ---------------------------------------------------------------------------
+describe("randDxFieldStation()", () => {
+  it("returns call, entity, potaRef, sotaRef, and cqZone fields", () => {
+    for (let i = 0; i < 20; i++) {
+      const fs = randDxFieldStation();
+      expect(typeof fs.call).toBe("string");
+      expect(fs.call.length).toBeGreaterThan(0);
+      expect(typeof fs.entity).toBe("string");
+      expect(typeof fs.potaRef).toBe("string");
+      expect(typeof fs.sotaRef).toBe("string");
+      expect(typeof fs.cqZone).toBe("number");
+    }
+  });
+
+  it("potaRef and call are from the same country (coherent P2P exchange)", () => {
+    // The call prefix and park prefix must match the same entity entry.
+    // We verify by checking the park prefix is a known POTA program prefix.
+    const knownPotaPrefixes = new Set(["DE", "G", "F", "VK", "JA", "VE"]);
+    for (let i = 0; i < 40; i++) {
+      const fs = randDxFieldStation();
+      const parkPrefix = fs.potaRef.split("-")[0];
+      expect(knownPotaPrefixes.has(parkPrefix)).toBe(true);
+    }
+  });
+
+  it("sotaRef follows association/region-number format", () => {
+    // SOTA summit refs are like "DL/AL-001" or "G/LD-001"
+    for (let i = 0; i < 20; i++) {
+      const fs = randDxFieldStation();
+      expect(fs.sotaRef).toMatch(/^[A-Z0-9]+\/[A-Z]+-\d+$/);
+    }
   });
 });

@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
-  DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
+  US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
   INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
-  randDxStation, zoneToken, reciprocalCall,
-  buildRagchew, buildPota, buildSota, buildIota, isReadyToAdvance,
+  randDxStation, zoneToken, reciprocalCall, resolveUSState,
+  buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
+  isReadyToAdvance,
   DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
   toCodes,
   emptyProgress, appendProgress, migrateProgress,
@@ -2211,6 +2212,8 @@ const ACTIVITY_BUILDERS = {
   pota:    buildPota,
   sota:    buildSota,
   iota:    buildIota,
+  dx:      buildDx,
+  contest: buildContest,
 };
 
 // Display labels for activities shown in the setup panel.
@@ -2219,6 +2222,8 @@ const ACTIVITY_LABELS = {
   pota:    "POTA",
   sota:    "SOTA",
   iota:    "IOTA",
+  dx:      "Work DX",
+  contest: "Contest",
 };
 
 // D1: one-liner description for each activity, shown as a sub-line under the label.
@@ -2228,6 +2233,8 @@ const ACTIVITY_DESCS = {
   pota:    "Parks on the Air",
   sota:    "Summits on the Air",
   iota:    "Islands on the Air",
+  dx:      "terse pileup exchange — 5NN and QRZ",
+  contest: "CQ TEST — serial or zone exchange",
 };
 
 // D1: role descriptions, keyed by activity + role value.
@@ -2248,6 +2255,14 @@ const ROLE_DESCS = {
   iota: {
     activator: "you're on the island — you call CQ and run the pile",
     chaser:    "you call the activator and give a report",
+  },
+  dx: {
+    callcq: "you call CQ DX and work the station that answers",
+    hunt:   "you answer a DX station calling CQ — terse pileup exchange",
+  },
+  contest: {
+    run: "you call CQ TEST and work the stations that answer",
+    sp:  "you search & pounce — find a running station and pounce",
   },
 };
 
@@ -2270,6 +2285,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // same as the old random behavior (which also skewed toward answering).
   const [activity, setActivity] = useState("ragchew");
   const [role, setRole] = useState("answer");
+
+  // Per-activity variant state — one lightweight control each.
+  // Split: presentational UP directive (hunt only); Serial/Zone toggle;
+  // Contact type: domestic / dx / p2p (pota + sota only).
+  const [dxSplit, setDxSplit] = useState(false);
+  const [contestType, setContestType] = useState("wpx");
+  const [contactType, setContactType] = useState("domestic");
 
   const [qso, setQso] = useState(null);
   const [step, setStep] = useState(0);
@@ -2388,13 +2410,28 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
 
   const start = () => {
     const builder = ACTIVITY_BUILDERS[activity];
+    // myCqZone: contest exchange needs the operator's CQ zone, computed from
+    // their configured QTH state.  Defaults to 5 (W1/W2 eastern US) when the
+    // QTH state isn't resolved — an honest fallback that won't crash the builder.
+    const myCqZone = resolveUSState(stateOf(settings.myQth))?.cq ?? 5;
     const profile = {
-      myCall: settings.myCall,
-      myName: settings.myName,
-      myQth:  settings.myQth,
-      cut:    settings.cutNumbers,
+      myCall:   settings.myCall,
+      myName:   settings.myName,
+      myQth:    settings.myQth,
+      cut:      settings.cutNumbers,
+      myCqZone,
     };
-    const q = builder(profile, role);
+    // Build per-activity opts (defaults to {} for builders that don't use it).
+    let opts = {};
+    if (activity === "dx") {
+      opts = { split: dxSplit };
+    } else if (activity === "contest") {
+      opts = { contestType };
+    } else if (activity === "pota" || activity === "sota") {
+      if (contactType === "p2p") opts = { p2p: true };
+      else if (contactType === "dx") opts = { dx: true };
+    }
+    const q = builder(profile, role, opts);
 
     setQso(q); setStep(0); setLog([]);
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
@@ -2699,8 +2736,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             aria-pressed={activity === v}
             onClick={() => {
               setActivity(v);
-              // Reset role to the default answering role for this activity
-              setRole(ROLE_TERMS[v][1][0]);
+              // Default to the last role in the list: for every existing and new
+              // activity this is the "listener / responder" role (answer, hunter,
+              // chaser, hunt, sp) — the more natural starting point for a learner.
+              const terms = ROLE_TERMS[v];
+              setRole(terms[terms.length - 1][0]);
             }}
             style={{
               ...S.btn, textAlign: "left", padding: "10px 14px",
@@ -2782,9 +2822,61 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
         </div>
       </div>
 
-      {/* Start button — label adapts: activator starts by calling CQ */}
+      {/* Variant controls — one lightweight control per activity that has options.
+          Shown only when the relevant activity is selected. */}
+      {activity === "dx" && role === "hunt" && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div>
+              <div style={S.label}>Split (UP)</div>
+              <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+                DX CQ includes a QSX directive — practice copying "UP 5 TO 10".
+              </div>
+            </div>
+            <button
+              aria-pressed={dxSplit}
+              onClick={() => setDxSplit((v) => !v)}
+              style={{ ...S.btn, padding: "8px 14px", flexShrink: 0, ...(dxSplit ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
+              {dxSplit ? "SPLIT ON" : "SPLIT OFF"}
+            </button>
+          </div>
+        </div>
+      )}
+      {activity === "contest" && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Exchange type</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[["wpx", "Serial (WPX)"], ["zone", "Zone (CQ WW)"]].map(([v, l]) => (
+              <button key={v} aria-pressed={contestType === v} onClick={() => setContestType(v)}
+                style={{ ...S.btn, flex: 1, padding: "8px 10px", ...(contestType === v ? { borderColor: "#F2A93B" } : {}) }}>
+                <span style={{ color: contestType === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.75rem" }}>{l}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {(activity === "pota" || activity === "sota") && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Contact type</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[
+              ["domestic", "Domestic", "work a US activator"],
+              ["dx",       "DX",       "work an international activator"],
+              ["p2p",      activity === "sota" ? "S2S" : "P2P", "both stations activating — exchange refs"],
+            ].map(([v, l, desc]) => (
+              <button key={v} aria-pressed={contactType === v} onClick={() => setContactType(v)}
+                style={{ ...S.btn, textAlign: "left", padding: "8px 14px", ...(contactType === v ? { borderColor: "#F2A93B" } : {}) }}>
+                <span style={{ color: contactType === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.75rem" }}>{l}</span>
+                <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>{desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Start button — label adapts: certain roles start by calling CQ themselves */}
       <button style={S.btnAmber} onClick={start}>
-        {role === "activator" || role === "call" ? "📻 CALL CQ" : "📻 LISTEN FOR CQ"}
+        {["activator", "call", "callcq", "run"].includes(role) ? "📻 CALL CQ" : "📻 LISTEN FOR CQ"}
       </button>
     </>
   );
