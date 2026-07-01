@@ -41,7 +41,9 @@
     "dist": "npm run build && electron-builder --linux",
     "dist:snap": "npm run pack && snapcraft pack",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:dxcc": "node scripts/build-dxcc-dataset.mjs",
+    "validate:dxcc": "node scripts/validate-dxcc.mjs"
   },
   "dependencies": {
     "react": "^19.2.7",
