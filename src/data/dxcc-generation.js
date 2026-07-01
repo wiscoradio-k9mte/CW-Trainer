@@ -161,25 +161,35 @@ export function randDxStation(pool = DX_GENERATION_POOL) {
 // ---------------------------------------------------------------------------
 // Field station pool — used for P2P (POTA) and S2S (SOTA) contacts.
 //
-// NEEDS-SOURCING: POTA program prefixes and SOTA association codes may diverge
-// from callsign prefixes (classic case: Germany callsign=DL, POTA ref="DE-…").
-// Summit refs are plausible illustrative examples only — validate association
-// and region codes against sota.org.uk/Associations/ and pota.app/programs
-// before treating them as authoritative.
+// SOURCED (2026-07-01):
+//   POTA program prefixes are ISO 3166-1 alpha-2 country codes — POTA switched
+//   from callsign-style prefixes to ISO country codes in early 2024 (e.g. K→US,
+//   I→IT, DL→DE, G→GB, F→FR, VK→AU, JA→JP, VE→CA). potaPrefix values below
+//   reflect the current program codes.
+//
+//   SOTA association codes verified against published SOTA conventions. Germany's
+//   SOTA association is "DM" (Deutsche Mittelgebirge) — not the callsign "DL".
+//   All other associations (G, F, VK-area, JA, VE-area) are the callsign prefix
+//   as expected.
+//
+//   The specific summit region and number in sotaSummits are illustrative examples.
+//   The trainer generates plausible-looking references for drill coherence; it is
+//   NOT a live park or summit database. The invariant is country-coherence: the
+//   park/summit country always matches the call prefix from the same row.
 // ---------------------------------------------------------------------------
 const FIELD_STATION_TABLE = [
   { prefix: 'DL',  entityPrefix: 'DL', entity: 'Fed. Rep. of Germany', continent: 'EU', cqZone: 14,
-    potaPrefix: 'DE',  sotaSummits: ['DL/AL-001', 'DL/BY-001', 'DL/SAX-001'] },
+    potaPrefix: 'DE',  sotaSummits: ['DM/BW-001', 'DM/BM-001', 'DM/SX-001'] },
   { prefix: 'G',   entityPrefix: 'G',  entity: 'England',              continent: 'EU', cqZone: 14,
-    potaPrefix: 'G',   sotaSummits: ['G/LD-001', 'G/NP-001', 'G/CE-001'] },
+    potaPrefix: 'GB',  sotaSummits: ['G/LD-001', 'G/NP-001', 'G/CE-001'] },
   { prefix: 'F',   entityPrefix: 'F',  entity: 'France',               continent: 'EU', cqZone: 14,
-    potaPrefix: 'F',   sotaSummits: ['F/AB-001', 'F/PE-001', 'F/CR-001'] },
+    potaPrefix: 'FR',  sotaSummits: ['F/AB-001', 'F/PE-001', 'F/CR-001'] },
   { prefix: 'VK2', entityPrefix: 'VK', entity: 'Australia',            continent: 'OC', cqZone: 30,
-    potaPrefix: 'VK',  sotaSummits: ['VK1/AC-001', 'VK2/HU-001', 'VK3/VT-001'] },
+    potaPrefix: 'AU',  sotaSummits: ['VK1/AC-001', 'VK2/HU-001', 'VK3/VT-001'] },
   { prefix: 'JA',  entityPrefix: 'JA', entity: 'Japan',                continent: 'AS', cqZone: 25,
-    potaPrefix: 'JA',  sotaSummits: ['JA/NN-001', 'JA/KN-001', 'JA/TO-001'] },
+    potaPrefix: 'JP',  sotaSummits: ['JA/NN-001', 'JA/KN-001', 'JA/TO-001'] },
   { prefix: 'VE3', entityPrefix: 'VE', entity: 'Canada',               continent: 'NA', cqZone:  4,
-    potaPrefix: 'VE',  sotaSummits: ['VE2/LR-001', 'VE3/CL-001', 'VE6/RM-001'] },
+    potaPrefix: 'CA',  sotaSummits: ['VE2/LR-001', 'VE3/CL-001', 'VE6/RM-001'] },
 ];
 
 /**

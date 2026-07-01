@@ -3087,8 +3087,9 @@ describe("randDxFieldStation()", () => {
 
   it("potaRef and call are from the same country (coherent P2P exchange)", () => {
     // The call prefix and park prefix must match the same entity entry.
-    // We verify by checking the park prefix is a known POTA program prefix.
-    const knownPotaPrefixes = new Set(["DE", "G", "F", "VK", "JA", "VE"]);
+    // POTA uses ISO 3166-1 alpha-2 country codes (switched early 2024):
+    // DL→DE, G→GB, F→FR, VK→AU, JA→JP, VE→CA
+    const knownPotaPrefixes = new Set(["DE", "GB", "FR", "AU", "JP", "CA"]);
     for (let i = 0; i < 40; i++) {
       const fs = randDxFieldStation();
       const parkPrefix = fs.potaRef.split("-")[0];
