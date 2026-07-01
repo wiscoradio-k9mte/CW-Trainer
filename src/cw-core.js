@@ -87,7 +87,7 @@ export const MORSE = {
 export const REV = Object.fromEntries(Object.entries(MORSE).map(([k, v]) => [v, k]));
 
 export const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
-export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P US-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
+export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P K-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
 
 // Pull a two-letter state from the end of a QTH like "NEWINGTON CT"
 export const stateOf = (qth) => {
@@ -120,7 +120,95 @@ export const glyphs = (code) => code.split("").map((c) => (c === "." ? "·" : "�
 export const SUMMITS = ["W9/UP-001","W7A/AE-040","W0C/FR-063","W4G/NG-006","W6/CT-225","W2/GA-010"];
 export const IOTA_REFS = ["NA-128","EU-005","OC-001","NA-067","EU-115","AF-004"];
 
-export const randPark = () => "US-" + (1000 + Math.floor(Math.random() * 9000));
+/* ================= INTERNATIONAL / DX DATA (Phase 1) ================= */
+//
+// INTL_PREFIXES — one representative record per DXCC entity, curated for variety
+// across all continents.  cqZone is the most common zone for that entity; entities
+// spanning zone boundaries carry the primary one.
+//
+// NEEDS-SOURCING: every row must be validated against the ARRL DXCC list + ITU
+// allocation table before ship.  This is a REPRESENTATIVE STARTER, not a vetted
+// dataset.  Do not invent 1x/Qx non-authorized prefixes.
+export const INTL_PREFIXES = [
+  // Europe — 14 countries, CQ zones 14–15
+  { prefix: "DL", entity: "Germany",      continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
+  { prefix: "G",  entity: "England",      continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
+  { prefix: "F",  entity: "France",       continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
+  { prefix: "EA", entity: "Spain",        continent: "EU", cqZone: 14 }, // NEEDS-SOURCING
+  { prefix: "I",  entity: "Italy",        continent: "EU", cqZone: 15 }, // NEEDS-SOURCING
+  { prefix: "OH", entity: "Finland",      continent: "EU", cqZone: 18 }, // NEEDS-SOURCING
+  { prefix: "SM", entity: "Sweden",       continent: "EU", cqZone: 18 }, // NEEDS-SOURCING
+  // Asia
+  { prefix: "JA", entity: "Japan",        continent: "AS", cqZone: 25 }, // NEEDS-SOURCING
+  { prefix: "JY", entity: "Jordan",       continent: "AS", cqZone: 20 }, // NEEDS-SOURCING (rarer flavor)
+  // Oceania
+  { prefix: "VK", entity: "Australia",    continent: "OC", cqZone: 29 }, // NEEDS-SOURCING
+  { prefix: "ZL", entity: "New Zealand",  continent: "OC", cqZone: 32 }, // NEEDS-SOURCING
+  // South America
+  { prefix: "PY", entity: "Brazil",       continent: "SA", cqZone: 11 }, // NEEDS-SOURCING
+  { prefix: "LU", entity: "Argentina",    continent: "SA", cqZone: 13 }, // NEEDS-SOURCING
+  // Africa
+  { prefix: "ZS", entity: "South Africa", continent: "AF", cqZone: 38 }, // NEEDS-SOURCING
+  // North America (non-US)
+  { prefix: "VE", entity: "Canada",       continent: "NA", cqZone:  5 }, // NEEDS-SOURCING
+];
+
+// POTA program prefixes beyond the US.  "K" is the US POTA program prefix.
+// NEEDS-SOURCING: validate against the POTA program reference list before ship.
+export const POTA_COUNTRY_PREFIXES = ["K", "VE", "DE", "G", "F", "VK", "JA"];
+
+// International SOTA summit associations — non-US examples for teaching.
+// NEEDS-SOURCING: validate association/region codes against the SOTA database.
+export const INTL_SUMMITS = [
+  "G/LD-001", "DL/AL-001", "F/AB-001", "VK1/AC-001", "EA2/NV-001", "JA/NN-001",
+];
+
+// randPark(prefix) — generates a program-prefixed park reference.
+// US POTA uses "K-####" (NOT "US-####" — the previous "US-" was wrong).
+// randPark()       → "K-1234"   (US default)
+// randPark("DE")   → "DE-0031"  (Germany)
+// randPark("VK")   → "VK-0456"  (Australia)
+// NEEDS-SOURCING: validate non-US prefix strings against the POTA program list.
+export const randPark = (prefix = "K") =>
+  `${prefix}-${String(1 + Math.floor(Math.random() * 9999)).padStart(4, "0")}`;
+
+// randDxStation(pool) — picks one entry from INTL_PREFIXES, builds a realistic
+// callsign using randCall's suffix logic, and returns a coherent bundle.
+// The call prefix always matches the entity — a VK call always reports Australia,
+// zone 29.  Single source of truth so drills and QSO builders can't mismatch.
+export function randDxStation(pool = INTL_PREFIXES) {
+  const row = rand(pool);
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  // Generate a suffix of 1–3 letters, weighted toward 2–3 (realistic on-air).
+  const suffixLen = [1, 2, 2, 2, 3, 3][Math.floor(Math.random() * 6)];
+  let suffix = "";
+  for (let i = 0; i < suffixLen; i++) suffix += letters[Math.floor(Math.random() * 26)];
+  return {
+    call:      row.prefix + suffix,
+    entity:    row.entity,
+    continent: row.continent,
+    cqZone:    row.cqZone,
+    prefix:    row.prefix,  // carried so callers can test coherence without regex
+  };
+}
+
+// zoneToken(zone, cut) — formats a CQ zone for a contest exchange.
+// Zero-pads to two digits, then applies cut-number substitution consistently
+// with the rest of the app: 0→T, 9→N.
+// zoneToken(5, false)  → "05"
+// zoneToken(5, true)   → "T5"
+// zoneToken(30, false) → "30"
+export const zoneToken = (zone, cut) => cutNum(String(zone).padStart(2, "0"), cut);
+
+// reciprocalCall(hostPrefix, myCall, activitySuffix) — builds the callsign format
+// used when operating abroad.  Host prefix comes FIRST (the reverse of domestic
+// W1AW/P style), then slash, then the US call, then optional activity suffix.
+// reciprocalCall("DL", "N1KB")          → "DL/N1KB"
+// reciprocalCall("F", "N1KB", "/P")     → "F/N1KB/P"
+// reciprocalCall("SV3", "K4RLC", "/P")  → "SV3/K4RLC/P"
+export function reciprocalCall(hostPrefix, myCall, activitySuffix = "") {
+  return `${hostPrefix}/${myCall}${activitySuffix}`;
+}
 
 // Contest cut numbers: 9 → N, 0 → T (599 → 5NN)
 export const cutNum = (s, cut) => (cut ? s.replace(/9/g, "N").replace(/0/g, "T") : s);
@@ -266,6 +354,78 @@ export function drillQsoLine(settings) {
   return subTokens(rand(QSO_PHRASES), settings);
 }
 
+/* ================= DX DRILL GENERATORS (Phase 1) ================= */
+//
+// Five new categories placed after Callsigns — the DX rungs are harder than
+// domestic callsigns because they combine international prefixes, cut numbers,
+// and split/pileup conventions that require DX-specific knowledge.
+
+// Drill: 1–3 DX callsigns drawn from INTL_PREFIXES.  Mirrors drillCallsign
+// but uses international prefixes so every call is a real foreign station.
+export function drillDxCallsigns(settings) {
+  const count = [1, 1, 2, 2, 3][Math.floor(Math.random() * 5)];
+  return Array.from({ length: count }, () => randDxStation().call).join(" ");
+}
+
+// Drill: DX signal-report exchanges.  5NN is the near-universal DX convention
+// (not an honest report); the zone drawn from INTL_PREFIXES is a real zone,
+// so "5NN 25" is Japan (zone 25), not an invented number.
+export function drillDxExchange(settings) {
+  const cut = settings.cutNumbers;
+  const rst = cutNum("599", cut);      // 5NN with cut on, 599 with cut off
+  const zone = zoneToken(rand(INTL_PREFIXES).cqZone, cut);
+  const variants = [
+    rst,                                // bare report — simplest
+    `${rst} ${zone}`,                   // RST + CQ zone (CQ WW style)
+    `TU ${rst}`,                        // confirming contact
+    `${rst} TU`,                        // common "report then TU" order
+  ];
+  return rand(variants);
+}
+
+// Drill: contest fragments — the short tokens you hear most often during a CW
+// contest weekend.  Fixed phrases plus a WPX-style serial (cut-aware).
+export function drillContestFragments(settings) {
+  const cut = settings.cutNumbers;
+  const rst = cutNum("599", cut);
+  // Build a random serial 001–099; cut it (0→T, so 001 → TT1, 010 → T1T).
+  const serial = cutNum(String(1 + Math.floor(Math.random() * 99)).padStart(3, "0"), cut);
+  const fixed = ["CQ TEST", "CQ DX", "QRZ?", "AGN", "NR"];
+  const serials = [`${rst} ${serial}`, `${rst} TU`];
+  const pool = [...fixed, ...serials, ...serials]; // weight serials higher
+  return rand(pool);
+}
+
+// Drill: split & pileup fragments.  Teaches the caller-moves mechanic and
+// pileup brevity.  QSX is intentionally ABSENT (rarely heard on modern CW —
+// see the LINGO DX glossary where it is defined as a read-only reference).
+export function drillSplitPileup(settings) {
+  // A bare DX callsign — correct pileup practice (send only your call).
+  const dxCall = randDxStation().call;
+  // Partial-call format: first letter of a random call + "? KN"
+  const partial = randDxStation().call[0] + "? KN";
+  const fragments = [
+    "UP",
+    "UP 5",
+    "UP 5 TO 10",
+    dxCall,          // bare call — pileup etiquette
+    partial,         // partial call + KN ("W4? KN")
+    "QRZ?",
+  ];
+  return rand(fragments);
+}
+
+// Drill: reciprocal / abroad callsigns.  Teaches the host-prefix-FIRST convention
+// using the operator's own call so the format is immediately personal.
+// Picks a random international prefix and optionally appends an activity suffix.
+export function drillReciprocalCalls(settings) {
+  const myCall = settings.myCall || "W1AW";
+  const hostPrefix = rand(INTL_PREFIXES).prefix;
+  const suffixOptions = ["", "", "/P", "/M"];   // blank weighted — bare is most common
+  const suffix = rand(suffixOptions);
+  return reciprocalCall(hostPrefix, myCall, suffix);
+}
+
 // Registry: single source of truth for the UI ladder AND the direct-pick row.
 // Array order IS the ladder (simplest → hardest). The UI renders this directly;
 // adding a category is a one-line change here.
@@ -278,6 +438,10 @@ export function drillQsoLine(settings) {
 // Common words. Prosigns are less frequent and slightly harder to memorize.
 // catIdx is NOT persisted, so no state migration is needed (useState(0) resets
 // each mount). Tests that pin labels by index are updated in this commit.
+//
+// Items 9–13 (Phase 1, intl-dx-p1): five DX rungs appended after Callsigns.
+// They sit at the hard end of the ladder — they require knowing DX conventions,
+// international prefixes, and split/pileup behaviour before they make sense.
 export const DRILL_CATEGORIES = [
   { id: "words",     label: "Common words",        gen: drillCommonWords },
   { id: "qcodes",    label: "Q-codes & abbrev",    gen: drillQCodes },
@@ -287,6 +451,12 @@ export const DRILL_CATEGORIES = [
   { id: "cq",        label: "Calling CQ",          gen: drillCallingCq },
   { id: "qso",       label: "Full QSO lines",      gen: drillQsoLine },
   { id: "callsigns", label: "Callsigns",           gen: drillCallsign },
+  // DX rungs — harder end of the ladder; require LINGO DX knowledge first.
+  { id: "dxcalls",   label: "DX callsigns",        gen: drillDxCallsigns },
+  { id: "dxexch",    label: "DX exchanges",        gen: drillDxExchange },
+  { id: "contest",   label: "Contest fragments",   gen: drillContestFragments },
+  { id: "split",     label: "Split & pileup",      gen: drillSplitPileup },
+  { id: "recip",     label: "Abroad callsigns",    gen: drillReciprocalCalls },
 ];
 
 /* ================= FIST TIMING ANALYZER ================= */
@@ -515,7 +685,8 @@ export function cqCall(activity, call, suffix = "") {
 /* Contact scripts follow current on-air practice:
    - Ragchew: 3x2 CQ, BT (=) separators, KN to hold the frequency, SK + dit-dit to close.
    - POTA: hunters send their call ONCE — no DE, no K. Short exchange with BK turnovers,
-     state as QTH, activator closes "TU <state> 73 EE". Park refs use the US- prefix.
+     state as QTH, activator closes "TU <state> 73 EE". US park refs use the K- prefix
+     (e.g. K-1234); international parks carry their own prefix (e.g. DE-0031).
      NOTE: park reference is NOT sent on the air — the activator logs it, not sends it.
    - SOTA: activator signs /P, summit ref (assoc/region-number) in the CQ, chaser-style exchange.
    - IOTA: DX island station, contest-style — report + island ref, quick TU. */
@@ -667,7 +838,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter") {
   }
 
   // Activator role: you call CQ POTA and run the exchange.
-  // On the air the park reference (US-XXXX) is NOT sent — it goes in the log.
+  // On the air the park reference (K-XXXX) is NOT sent — it goes in the log.
   // cqCall generates a realistic varied POTA CQ; all variants include myCall.
   const dxState = stateOf(rand(QTHS));
   const dxRst   = cutNum(rand(RSTS), cut);

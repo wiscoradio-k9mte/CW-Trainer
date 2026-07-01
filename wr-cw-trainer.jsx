@@ -4,6 +4,8 @@ import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   DX_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
+  INTL_PREFIXES, INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
+  randDxStation, zoneToken, reciprocalCall,
   buildRagchew, buildPota, buildSota, buildIota, isReadyToAdvance,
   DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
   toCodes,
@@ -145,6 +147,42 @@ const LINGO = [
       ["S2S", "Summit to summit"],
     ],
   },
+  // ---- DX vocabulary (added Phase 1, intl-dx-p1) ----
+  {
+    cat: "DX essentials",
+    blurb: "The terms you meet the moment you tune across a DX or DXpedition station. Every one of these shows up in the ON AIR DX guide.",
+    items: [
+      ["DXpedition", "Operators who travel to a rare DXCC entity specifically to put it on the air for others to contact. Common on islands, remote territories, and other hard-to-reach entities"],
+      ["DXCC entity", "A geographic entry on the ARRL DXCC list — may differ from national borders. Alaska (KL7), Hawaii (KH6), and Guantánamo Bay (KG4) are separate DXCC entities from the lower-48 US, even though all are US territory"],
+      ["Pileup", "Many stations calling a rare or DXpedition station at once. Send only your callsign — once. A too-long call gets you ignored. Honor directional calls ('NA only')"],
+      ["Split", "DX transmits on one frequency, listens on a range above it (e.g. 'UP 5 TO 10'). Your transmitter moves into that range; the DX stays put. You can't hear yourself being worked — that's normal"],
+      ["UP", "The DX instruction to call above their transmit frequency. 'UP 5' = at least 5 kHz up; 'UP 5 TO 10' = spread across a 5-kHz range, not a single parking spot"],
+      ["QSX", "'Listening on [frequency or range]' — the formal Q-code for split operation. Rarely heard spelled out on modern CW; the UP-style range call dominates. Defined here for reference; not a drill"],
+      ["UTC / Zulu", "Coordinated Universal Time — the standard for all DX operating, logging, and band-opening spots. 'Zulu' is the NATO phonetic for Z (zero UTC offset). 0000 UTC = midnight in London; 1200 UTC = noon"],
+    ],
+  },
+  {
+    cat: "Contest & zones",
+    blurb: "Contest CW has its own vocabulary and a zone geography that trips everyone up at first. These three zone systems are named alike and confused often — they are separate things.",
+    items: [
+      ["CQ TEST", "The contest CQ. Distinct from 'CQ CQ DE' — you hear this on busy contest weekends. Answered with just your callsign, then the exchange follows fast"],
+      ["NR", "Number — a running serial in a WPX or other serial-exchange contest (e.g. '5NN 001'). The answering station sends their own serial back"],
+      ["CQ zone", "One of 40 geographic zones worldwide, used in the CQ World Wide contest exchange (e.g. '5NN 14'). The contiguous US spans zones 3–5. NOT the same as ITU zones or ITU regions"],
+      ["ITU region", "One of 3 world regions that set band allocations (Region 1 = Europe/Africa/Middle East; Region 2 = the Americas; Region 3 = Asia-Pacific). 40 m CW is allocated in all three. NOT the same as CQ zones"],
+      ["ITU zone", "One of 90 zones used in the WAZ award and some ITU contests — a different numbering from the 40 CQ zones. The three systems (3 regions / 40 CQ zones / 90 ITU zones) are easy to confuse; name the system when you say 'zone'"],
+    ],
+  },
+  {
+    cat: "Operating abroad",
+    blurb: "Working DX from your US station needs no permit. Operating a transmitter from outside the US does. Three frameworks cover most of the world — CEPT is the easiest.",
+    items: [
+      ["CEPT", "European Conference of Postal & Telecommunications Administrations. A framework that lets US amateurs operate in participating countries by carrying documents — no advance application. US Extra (and grandfathered Advanced) get full privileges; US General gets limited 'CEPT Novice' privileges; Technicians and non-US-citizens get none. Not all of Europe is on the list (Turkey is a notable gap). NEEDS-SOURCING: verify current country list on the ARRL CEPT page before any trip"],
+      ["CEPT Novice", "The limited operating privileges available to US General licensees in CEPT countries that have adopted ECC Recommendation (05)06. Typically restricted bands/segments and/or lower power, varying by country — a General must not assume Extra-level access abroad"],
+      ["DA 16-1048", "FCC Public Notice (a free PDF from fcc.gov) that lists the CEPT countries accepting US amateurs under T/R 61-01. Carry it printed. Required document alongside your FCC license printout and US passport (citizenship required)"],
+      ["IARP", "Inter-American Amateur Radio Permit. Required before operating in most Americas signatory countries. Obtain through the ARRL — budget weeks, not days, before a trip. Class 1 covers HF/telegraphy (General, grandfathered Advanced/Extra); Class 2 covers above-30 MHz (today's Technician). NEEDS-SOURCING: verify current fee, turnaround, and country list on the ARRL IARP page"],
+      ["Reciprocal call", "When operating abroad, the host country's prefix goes FIRST, then your US callsign: DL/N1KB (Germany), I0/W1AW (Italy — I0 is the Rome/Lazio district). This is the reverse of domestic portable notation (W1AW/P). Activity suffix appends last: DL/N1KB/P (portable). Tech Plus (legacy since 2000) and Advanced (grandfathered) appear in older treaty text — the current exam path to full CEPT privileges is Extra"],
+    ],
+  },
 ];
 
 const CQ_ANATOMY = [
@@ -178,11 +216,44 @@ const QSO_WALKTHROUGH = [
 ];
 
 const POTA_WALKTHROUGH = [
-  { who: "ACTIVATOR", text: "CQ POTA CQ POTA DE W9ABC W9ABC US-4361 K", why: "An op in a park, calling for hunters. The US- number is the park reference." },
+  { who: "ACTIVATOR", text: "CQ POTA CQ POTA DE W9ABC W9ABC K-4361 K", why: "An op in a park, calling for hunters. K-4361 is a US POTA reference (US parks use the K- prefix, matching the US callsign block)." },
   { who: "YOU", text: "{ME}", why: "Your call. Once. No DE, no K. You're one voice in a pileup — brevity is the courtesy." },
   { who: "ACTIVATOR", text: "{ME} GM UR 559 559 BK", why: "Your report, twice. BK hands it straight back — no callsign ceremony." },
   { who: "YOU", text: "BK GM UR 599 599 {ST} {ST} BK", why: "BK to accept, greeting, their report, your state twice. That's your whole half." },
   { who: "ACTIVATOR", text: "BK TU {ST} 73 DE W9ABC EE", why: "TU, your state as your handle, 73, dit-dit — and they're listening for the next hunter. Thirty seconds, start to finish." },
+];
+
+// ON AIR DX guide — the complete worked-example DX QSO, line by line.
+// Uses VK2XX (Australia, zone 29) as the DX station — a real on-air prefix,
+// a real CQ zone, chosen to make the DXCC / zone concepts concrete.
+// The user's call ({ME}) is substituted at render time via sub().
+// Source: research-international-dx-operating.md §2 worked example.
+const DX_WALKTHROUGH = [
+  {
+    who: "VK2XX",
+    text: "CQ DX CQ DX DE VK2XX VK2XX K",
+    why: "A DX CQ — 'CQ DX' means this station is calling only distant/foreign contacts. The prefix VK identifies Australia. Grab the callsign: VK2XX. That's the whole job of this step.",
+  },
+  {
+    who: "YOU",
+    text: "{ME}",
+    why: "Your callsign. Once. No 'DE', no 'K' — in a pileup, brevity is the courtesy. The DX station is listening for a clean call in the noise, and extra words make it harder.",
+  },
+  {
+    who: "VK2XX",
+    text: "{ME} 5NN",
+    why: "5NN is 599 in cut numbers (9→N). In DX, 5NN is a near-universal convention — it means the contact is complete, not that your signal is actually perfect. Sending an honest '579' marks you as new to DX.",
+  },
+  {
+    who: "YOU",
+    text: "5NN TU",
+    why: "Confirm their report with 5NN and thank you. The whole DX exchange — two overs each — may take fifteen seconds. That's by design: the DX station has a pileup waiting.",
+  },
+  {
+    who: "VK2XX",
+    text: "QRZ?",
+    why: "QRZ? = 'who's next?' The DX is done with you and calling the next station in the pileup. It's not asking you to repeat anything. The contact is complete.",
+  },
 ];
 
 /* ================= AUDIO ENGINE ================= */
@@ -3073,7 +3144,7 @@ function OnAirGuide({ player, settings }) {
   return (
     <div>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-        {[["cq", "THE CQ"], ["rst", "RST"], ["qso", "FULL QSO"], ["pota", "POTA"]].map(([v, l]) => (
+        {[["cq", "THE CQ"], ["rst", "RST"], ["qso", "FULL QSO"], ["pota", "POTA"], ["dx", "WORK DX"]].map(([v, l]) => (
           <button key={v} onClick={() => { player.stop(); setGuide(v); }}
             style={{ ...S.btn, flex: 1, padding: "8px 4px", fontSize: "0.6875rem", ...(guide === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
             {l}
@@ -3141,6 +3212,55 @@ function OnAirGuide({ player, settings }) {
           <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
             Most new CW ops make their first real contact exactly this way — the exchange is short, the script is fixed, and activators are patient. Send ? whenever you need a repeat. Nobody minds.
           </p>
+        </div>
+      )}
+
+      {guide === "dx" && (
+        <div>
+          {/* Concept cards — define jargon before the walkthrough uses it */}
+          <div style={S.panel}>
+            <div style={{ ...S.label, marginBottom: 8 }}>Why CW is the DX mode</div>
+            <p style={{ color: "#C9CDD3", fontSize: "0.84375rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+              A CW exchange — callsigns and <button onClick={() => say("5NN")} aria-label="Hear 5NN in Morse" style={{ background: "transparent", border: "none", color: "#FFD89B", fontFamily: "ui-monospace, monospace", cursor: "pointer", padding: 0, fontSize: "0.8125rem" }}>5NN ♪</button> — completes a real contact between two operators who share no spoken language. Morse abbreviations are a shared protocol worldwide. That's why DX and CW belong together, and why this app's skill unlocks the whole world, not just the US.
+            </p>
+          </div>
+
+          <div style={S.panel}>
+            <div style={{ ...S.label, marginBottom: 8 }}>DXCC entities & prefixes</div>
+            <p style={{ color: "#C9CDD3", fontSize: "0.84375rem", fontFamily: "system-ui, sans-serif", marginTop: 0, lineHeight: 1.6 }}>
+              The ITU allocates a prefix block to each country — that prefix tells you where a station is. <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>VK</span> = Australia, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>DL</span> = Germany, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>JA</span> = Japan. The ARRL DXCC list is the DXer's "countries" list — a <em>DXCC entity</em> is a geographic entry that may differ from national borders. Alaska (<span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>KL7</span>), Hawaii (<span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>KH6</span>), and Guantánamo Bay (<span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>KG4</span>) are separate DXCC entities from the lower-48 US.
+            </p>
+            <p style={{ color: "#8A929C", fontSize: "0.78125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+              Working DX from your US station needs no special authorization — your existing license covers it. A <em>DXpedition</em> (traveling abroad to transmit) is a different matter — see the LINGO "Operating abroad" category.
+            </p>
+          </div>
+
+          <div style={S.panel}>
+            <div style={{ ...S.label, marginBottom: 8 }}>Zone systems, disambiguated</div>
+            <p style={{ color: "#C9CDD3", fontSize: "0.84375rem", fontFamily: "system-ui, sans-serif", marginTop: 0, lineHeight: 1.6 }}>
+              Three different zone systems are named alike and confused constantly:
+            </p>
+            <ul style={{ color: "#C9CDD3", fontSize: "0.84375rem", fontFamily: "system-ui, sans-serif", paddingLeft: 20, lineHeight: 1.8, margin: "0 0 8px" }}>
+              <li><span style={{ color: "#FFD89B" }}>3 ITU regions</span> — set band allocations worldwide (the US is Region 2). 40 m CW is allocated in all three.</li>
+              <li><span style={{ color: "#FFD89B" }}>40 CQ zones</span> — used in the CQ World Wide contest exchange. The contiguous US spans zones 3–5.</li>
+              <li><span style={{ color: "#FFD89B" }}>90 ITU zones</span> — used in the WAZ award and some ITU contests. Different numbering from the 40 CQ zones.</li>
+            </ul>
+            <p style={{ color: "#8A929C", fontSize: "0.78125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+              The DX exchange in the walkthrough below sends the CQ zone — the most common contest zone exchange. "Zone 05" is a common CQ zone for US stations.
+            </p>
+          </div>
+
+          {/* Worked-example QSO — the complete exchange, line by line */}
+          <div style={S.panel}>
+            <div style={{ ...S.label, marginBottom: 10 }}>A complete DX contact, line by line</div>
+            <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", marginTop: 0, marginBottom: 14, lineHeight: 1.6 }}>
+              VK2XX is a real Australian prefix (zone 29). The whole exchange may take fifteen seconds. That's the DX way.
+            </p>
+            {DX_WALKTHROUGH.map((l) => <WalkLine key={l.text} who={l.who} text={sub(l.text)} why={l.why} onHear={say} />)}
+            <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
+              <strong style={{ color: "#C9CDD3" }}>Worked vs confirmed:</strong> you've <em>worked</em> VK2XX — but you haven't <em>confirmed</em> it until you exchange a QSL (LoTW is the modern electronic standard). For DXCC credit, a confirmed QSL is required. This simulator does not log contacts — that would mean recording fake QSOs.
+            </p>
+          </div>
         </div>
       )}
     </div>
