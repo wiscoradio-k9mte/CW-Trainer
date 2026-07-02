@@ -24,9 +24,11 @@
 # - An input validation step rejects bare X.Y.Z versions without a pre-release suffix
 #
 # SECRETS REQUIRED:
-#   SNAPCRAFT_STORE_CREDENTIALS — must include the `edge` channel scope.
-#     The 2.3.0 credential covers stable + candidate only. Re-export with edge added
-#     before the first edge run (see RELEASING.md § Edge channel prerequisites).
+#   SNAPCRAFT_STORE_CREDENTIALS — must cover the `edge` channel. The live
+#     credential is unrestricted (exported without --channels → covers all
+#     channels; verified 2026-07-01), so it works as-is. Only a future
+#     re-export made WITH a --channels restriction must include `edge`
+#     (see RELEASING.md § Edge channel prerequisites).
 #   MAIL_* secrets — shared with the stable workflow; no new secrets needed.
 
 name: Edge Release

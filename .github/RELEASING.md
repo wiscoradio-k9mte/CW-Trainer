@@ -115,19 +115,16 @@ it could never be promoted to stable without a full rebuild. Since an edge
 build is a candidate for eventual stable promotion, `grade: stable` is required.
 The workflow validates this and fails if `snapcraft.yaml` carries `grade: devel`.
 
-### Prerequisite — update SNAPCRAFT_STORE_CREDENTIALS to include edge
+### Prerequisite — SNAPCRAFT_STORE_CREDENTIALS must cover the edge channel
 
-The credential set for 2.3.0 covers `stable` and `candidate` only. Before the
-first edge upload, re-export it with `edge` added:
+A credential exported **without** `--channels` has **no channel restriction**
+(covers every channel, edge included) — the flag only *adds* a restriction.
+The live credential was exported unrestricted (verified 2026-07-01:
+`snapcraft whoami` → `channels: no restrictions`), so **no re-export is needed
+before the first edge run.**
 
-```bash
-snapcraft export-login \
-  --snaps wr-cw-trainer \
-  --channels stable,candidate,edge \
-  - | base64 -w 0
-```
-
-Copy the output and update the secret:
+If the secret is ever regenerated *with* a `--channels` restriction, it must
+include `edge` or this workflow fails (safe) at the upload step:
 
 ```bash
 gh secret set SNAPCRAFT_STORE_CREDENTIALS \
@@ -138,9 +135,8 @@ gh secret set SNAPCRAFT_STORE_CREDENTIALS \
     - | base64 -w 0)"
 ```
 
-This replaces the existing secret in place. The stable workflow continues to
-work with the updated credential (it covers stable + candidate as before, plus
-edge for the new workflow).
+This replaces the existing secret in place; the stable workflow keeps working
+with it.
 
 ### Edge release runbook — step by step
 
@@ -277,10 +273,10 @@ gh secret set SNAPCRAFT_STORE_CREDENTIALS \
   --body "$(snapcraft export-login --snaps wr-cw-trainer --channels stable,candidate,edge - | base64 -w 0)"
 ```
 
-**Note:** The credential set for the 2.3.0 stable release covers only
-`stable,candidate`. Before running the first edge release, re-export with
-`edge` added (command above). The stable workflow continues to work with the
-updated credential.
+**Note:** the live credential was exported **unrestricted** (no `--channels`
+flag → `channels: no restrictions`), so it already covers edge. The
+`--channels` list above only matters if you deliberately restrict a future
+re-export — include `edge` if you do.
 
 **Expiry:** Snap Store credentials expire (typically 1 year). Re-export and update
 the secret before the old one expires or when you see a 401 in the upload step.
