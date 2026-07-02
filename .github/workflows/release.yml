@@ -19,12 +19,11 @@
 # The tag is a one-line deliberate act Travis can do from anywhere. See RELEASING.md.
 #
 # SNAP BUILD IN CI:
-# We use snapcore/action-build, which provisions LXD on the ubuntu-latest
-# runner and invokes real snapcraft inside an LXD container — the same
-# toolchain that produced the live v1.0.x snaps. This is the correct path
-# for a core22 + gnome-extension snap. electron-builder's snap target is
-# explicitly NOT used (see CLAUDE.md — it segfaults Electron 42 against the
-# gnome-3-28-1804 runtime).
+# We use snapcore/action-build, which provisions LXD on the runner and invokes
+# real snapcraft inside an LXD container — the same toolchain that produced
+# the live v1.0.x snaps. This is the correct path for a core22 + gnome-extension
+# snap. electron-builder's snap target is explicitly NOT used (see CLAUDE.md —
+# it segfaults Electron 42 against the gnome-3-28-1804 runtime).
 #
 # The snapcraft.yaml `dump` plugin references `release/linux-unpacked`, which
 # `npm run pack` (electron-builder --dir) produces. So the build order is:
@@ -33,6 +32,16 @@
 #   3. npm run build        (vite build → dist/)
 #   4. npm run pack         (electron-builder --dir → release/linux-unpacked/)
 #   5. snapcore/action-build (snapcraft → wr-cw-trainer_*.snap)
+#
+# ARCHITECTURE MATRIX (added 2026-07-02, ARM desktop-build work):
+# Every tag now builds amd64 (ubuntu-latest) AND arm64 (ubuntu-24.04-arm)
+# NATIVELY, one leg per arch — no qemu cross-build. Both revisions ship to
+# `stable` under the same version string; the Snap Store's channel map is
+# tracked per (channel, architecture), so this is collision-free. See
+# docs/design-arm64-builds.md for the researched rationale and sources.
+# This branch does NOT re-tag/re-release 2.3.0 — stable stays exactly as it
+# is until Travis tags the next version (2.4.0+), at which point that tag
+# is what first ships arm64 to stable, after arm64 has soaked on edge.
 #
 # SECRETS REQUIRED (see RELEASING.md for how to obtain and set each):
 #   SNAPCRAFT_STORE_CREDENTIALS  — snapcraft export-login output (base64 macaroon)
@@ -59,18 +68,22 @@ permissions: {}
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
-  # Job 1: Build, test, and package the snap.
+  # Job 1: Build, test, and package the snap — natively, once per architecture.
   # ──────────────────────────────────────────────────────────────────────
   build-and-package:
-    name: Build, Test & Package Snap
-    runs-on: ubuntu-latest
+    name: Build, Test & Package Snap (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
       contents: read   # checkout only
-
-    outputs:
-      snap-path: ${{ steps.find-snap.outputs.snap-path }}
-      version: ${{ steps.get-version.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
 
     steps:
       - name: Checkout
@@ -87,14 +100,22 @@ jobs:
       - name: Extract version from tag
         id: get-version
         # Strip the leading 'v' from the tag name so we get '2.0.0' not 'v2.0.0'.
+        # GITHUB_REF_NAME is an auto-exposed environment variable, not a
+        # user-supplied workflow_dispatch input, so no additional hardening
+        # is needed here (only push-access holders can create tags). ARCH is
+        # passed via env: (not inline ${{ }}) for consistency with the
+        # env-block hardening pattern used elsewhere in this change.
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Building version ${VERSION}"
+          echo "Building version ${VERSION} for ${ARCH}"
 
       - name: Validate version matches package.json
         # Fail fast if the tag and package.json are out of sync — prevents
-        # a release with the wrong version baked into the binary.
+        # a release with the wrong version baked into the binary. Runs on
+        # both arch legs; cheap and idempotent.
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           TAG_VERSION="${{ steps.get-version.outputs.version }}"
@@ -109,18 +130,24 @@ jobs:
         run: npm ci
 
       - name: Run tests
+        # Runs natively on both amd64 and arm64 via the matrix above.
         run: npm test
 
       - name: Build renderer (Vite)
         run: npm run build
 
       - name: Build Electron unpacked tree
-        # electron-builder --dir produces release/linux-unpacked/, which the
-        # snapcraft.yaml `dump` plugin uses as its source.
-        run: npm run pack
+        # electron-builder --dir produces release/linux-unpacked/, arch-matched
+        # to the runner (npm run pack = --x64 on ubuntu-latest; pack:arm64 =
+        # --arm64 on ubuntu-24.04-arm). This is the source directory that the
+        # snapcraft.yaml `dump` plugin uses.
+        run: ${{ matrix.arch == 'arm64' && 'npm run pack:arm64' || 'npm run pack' }}
 
       - name: Build snap (snapcore/action-build v1.3.0)
         # snapcore/action-build v1.3.0
+        # On the arm64 runner this builds a native arm64 LXD container;
+        # snapcraft auto-selects the matching build-on:[arm64] entry in
+        # snapcraft.yaml (see docs/design-arm64-builds.md).
         uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79
         id: snapcraft
         with:
@@ -140,28 +167,27 @@ jobs:
           echo "Snap built at: ${SNAP_PATH}"
           ls -lh "${SNAP_PATH}"
 
-      - name: Upload snap artifact (for release job)
+      - name: Upload snap artifact (for the release job)
         # Stash the snap so the release job can download it without rebuilding.
+        # One artifact per arch (name suffixed with matrix.arch).
         # actions/upload-artifact v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: snap-artifact
+          name: snap-artifact-${{ matrix.arch }}
           path: ${{ steps.find-snap.outputs.snap-path }}
           retention-days: 7
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────
-  # Job 2: Create GitHub Release and upload the snap to the store.
+  # Job 2: Create ONE GitHub Release carrying both arch snaps as assets.
   #
-  # Runs only after build-and-package succeeds (the test gate).
-  # The snap is uploaded and released to `stable` automatically — the deliberate
-  # version tag is the human's publish authorization; a failed build never reaches here.
+  # Runs only after build-and-package succeeds for BOTH arches (the test gate).
   # ──────────────────────────────────────────────────────────────────────
-  release-and-upload:
-    name: Create GitHub Release & Upload Snap Revision
+  create-github-release:
+    name: Create GitHub Release
     needs: build-and-package
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: write   # create GitHub Release and upload release assets
 
@@ -170,20 +196,24 @@ jobs:
         # actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
-      - name: Download snap artifact
+      - name: Download amd64 snap artifact
         # actions/download-artifact v8.0.1
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: snap-artifact
+          name: snap-artifact-amd64
           path: ./dist-snap
 
-      - name: Locate downloaded snap
-        id: snap-loc
+      - name: Download arm64 snap artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: snap-artifact-arm64
+          path: ./dist-snap
+
+      - name: Extract version from tag
+        id: get-version
         run: |
-          SNAP_FILE=$(ls ./dist-snap/*.snap | head -1)
-          echo "snap-file=${SNAP_FILE}" >> "$GITHUB_OUTPUT"
-          echo "Snap file: ${SNAP_FILE}"
-          ls -lh "${SNAP_FILE}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Extract release notes from metainfo.xml
         id: release-notes
@@ -198,7 +228,7 @@ jobs:
             echo "NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
         env:
-          VERSION: ${{ needs.build-and-package.outputs.version }}
+          VERSION: ${{ steps.get-version.outputs.version }}
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
       - name: Create GitHub Release
@@ -207,7 +237,7 @@ jobs:
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
         with:
           tag_name: ${{ github.ref_name }}
-          name: 'CW Trainer v${{ needs.build-and-package.outputs.version }}'
+          name: 'CW Trainer v${{ steps.get-version.outputs.version }}'
           body: |
             ${{ steps.release-notes.outputs.notes }}
 
@@ -216,30 +246,72 @@ jobs:
             ```
             snap install wr-cw-trainer
             ```
-            Or download the `.snap` file below and install manually:
+            Or download the matching `.snap` file below for your architecture
+            and install manually:
             ```
-            sudo snap install --dangerous wr-cw-trainer_*.snap
+            sudo snap install --dangerous wr-cw-trainer_*_amd64.snap
+            sudo snap install --dangerous wr-cw-trainer_*_arm64.snap
             ```
-          files: ${{ steps.snap-loc.outputs.snap-file }}
+            **ARM64 note:** built and tested natively in CI on every release, but
+            not yet validated on real ARM hardware — Travis doesn't own an ARM
+            device yet. Tester reports welcome.
+          files: ./dist-snap/*.snap
           draft: false
           prerelease: false
           generate_release_notes: false
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Job 3: Upload each arch's snap revision and release it to `stable`.
+  #
+  # Runs once per arch. The deliberate version tag is the human's publish
+  # authorization; a failed build (either arch) never reaches here.
+  # ──────────────────────────────────────────────────────────────────────
+  upload-to-stable:
+    name: Upload Snap Revision to Stable (${{ matrix.arch }})
+    needs: create-github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Download snap artifact
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: snap-artifact-${{ matrix.arch }}
+          path: ./dist-snap
+
+      - name: Locate downloaded snap
+        id: snap-loc
+        run: |
+          SNAP_FILE=$(ls ./dist-snap/*.snap | head -1)
+          echo "snap-file=${SNAP_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Snap file: ${SNAP_FILE}"
+          ls -lh "${SNAP_FILE}"
 
       - name: Install snapcraft
         run: |
           sudo snap install snapcraft --classic
 
       - name: Upload snap revision and release to stable (auto-publish on tag)
-        # Uploads the snap revision and releases it to the `stable` channel. The human's
-        # authorization is the DELIBERATE version tag that triggered this workflow; the
-        # full test gate above must pass before this step runs, so a broken build can
-        # never reach stable. (Model changed 2026-06-26 from human-promotes to
-        # auto-publish-on-tag, per Travis — see RELEASING.md.)
+        # Uploads this arch's snap revision and releases it to the `stable`
+        # channel. The human's authorization is the DELIBERATE version tag
+        # that triggered this workflow; the full test gate above must pass
+        # (for BOTH arches) before this step runs, so a broken build can never
+        # reach stable. Each arch becomes its own revision; the Store's
+        # channel map tracks revisions per (channel, architecture), so amd64
+        # and arm64 coexist under the same version with no collision (see
+        # docs/design-arm64-builds.md §4).
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_FILE: ${{ steps.snap-loc.outputs.snap-file }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
-          echo "Uploading ${SNAP_FILE} and releasing to the stable channel..."
+          echo "Uploading ${SNAP_FILE} (${ARCH}) and releasing to the stable channel..."
           # Retry the upload: the Snap Store connection can drop mid-transfer
           # (RemoteDisconnected) — a transient network failure that clears on retry.
           # Don't fail a built-and-tested release (and fire a false escalation) over a
@@ -258,7 +330,7 @@ jobs:
             sleep 30
           done
           echo ""
-          echo "Upload complete. The revision has been released to stable;"
+          echo "Upload complete (${ARCH}). The revision has been released to stable;"
           echo "it goes live once the store's automated review passes."
 
       - name: Push text metadata to Snap Store
@@ -268,23 +340,25 @@ jobs:
         # The --force flag overrides any store-side metadata conflicts.
         # NON-FATAL: this runs AFTER the snap is already released to stable, so a
         # metadata-push hiccup (e.g. an oversized icon) must never fail the release.
-        # The store-metadata icon limit is 256kB — keep snap/local/icon.png under it.
+        # Metadata is arch-independent, so running it from both matrix legs is a
+        # harmless idempotent overwrite. Store metadata-icon limit is 256kB —
+        # keep snap/local/icon.png under it.
         continue-on-error: true
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_FILE: ${{ steps.snap-loc.outputs.snap-file }}
         run: |
-          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
           snapcraft upload-metadata "${SNAP_FILE}" --force \
             && echo "Metadata (summary, description, icon) pushed to the Snap Store." \
             || echo "WARNING: metadata push failed (non-fatal — the snap is already released)."
 
   # ──────────────────────────────────────────────────────────────────────
-  # Job 3: Email Travis if the release failed.
+  # Job 4: Email Travis if the release failed.
   # Only fires if one of the previous jobs failed — not on success.
   # ──────────────────────────────────────────────────────────────────────
   notify-on-failure:
     name: Notify on release failure
-    needs: [build-and-package, release-and-upload]
+    needs: [build-and-package, create-github-release, upload-to-stable]
     if: failure()
     uses: ./.github/workflows/notify-escalation.yml
     with:
@@ -298,7 +372,8 @@ jobs:
 
         Common causes:
         - package.json / snapcraft.yaml version mismatch with the tag
-        - snapcraft build failure (LXD setup or snapcraft.yaml error)
+        - snapcraft build failure on either arch (LXD setup or snapcraft.yaml
+          error) — the arm64 leg is newer and less proven than the amd64 leg
         - SNAPCRAFT_STORE_CREDENTIALS expired (re-export and update the secret)
         - GitHub Release creation failure
 

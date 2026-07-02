@@ -23,6 +23,18 @@
 # - --release=edge is hardcoded; stable/candidate/beta are never touched here
 # - An input validation step rejects bare X.Y.Z versions without a pre-release suffix
 #
+# ARCHITECTURE MATRIX (added 2026-07-02, ARM desktop-build work):
+# Builds amd64 (ubuntu-latest) and arm64 (ubuntu-24.04-arm) NATIVELY, one leg
+# per arch — no qemu cross-build. Each leg produces its own .snap and (on
+# confirm_publish) uploads its own revision to edge under the SAME version
+# string; the Snap Store's channel map is tracked per (channel, architecture),
+# so two revisions land on the same channel with no collision. See
+# docs/design-arm64-builds.md for the researched rationale and sources.
+# ARM HARDWARE HONESTY: arm64 here is BUILT and TESTED natively in CI, but
+# UNVALIDATED on real ARM hardware — Travis has no ARM device yet. That's why
+# this ships to edge only; do not promote arm64 claims beyond "builds and
+# passes the suite on a native arm64 runner" until a real device confirms it.
+#
 # SECRETS REQUIRED:
 #   SNAPCRAFT_STORE_CREDENTIALS — must cover the `edge` channel. The live
 #     credential is unrestricted (exported without --channels → covers all
@@ -69,19 +81,26 @@ permissions: {}
 jobs:
   # ──────────────────────────────────────────────────────────────────────
   # Job 1: Check out the target ref, patch the version, build, test,
-  # and produce the snap artifact.
+  # and produce the snap artifact — natively, once per architecture.
   # Always runs when the workflow is dispatched (both build-only and publish).
   # ──────────────────────────────────────────────────────────────────────
   build-and-test:
-    name: Build, Test & Package Snap (Edge)
-    runs-on: ubuntu-latest
+    name: Build, Test & Package Snap (Edge, ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
       contents: read   # checkout only
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
 
     outputs:
-      snap-path: ${{ steps.find-snap.outputs.snap-path }}
-      version:   ${{ inputs.version }}
+      version: ${{ inputs.version }}
 
     steps:
       - name: Validate inputs
@@ -89,10 +108,14 @@ jobs:
         # The key guard: reject a bare X.Y.Z that looks like a stable version.
         # Edge builds MUST carry a pre-release suffix (e.g. -edge.1) so they
         # cannot be confused with a stable release in the store.
+        # Inputs are passed via env: (not inline ${{ }} in the script body) so
+        # a crafted input value can't break out of the shell string —
+        # security-engineer harden-soon, 2026-07-01.
+        env:
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.ref }}
+          CONFIRM_PUBLISH: ${{ inputs.confirm_publish }}
         run: |
-          VERSION="${{ inputs.version }}"
-          REF="${{ inputs.ref }}"
-
           if [ -z "${VERSION}" ]; then
             echo "ERROR: version input is empty."
             exit 1
@@ -114,7 +137,7 @@ jobs:
           echo "Inputs validated."
           echo "  ref:     ${REF}"
           echo "  version: ${VERSION}"
-          echo "  publish: ${{ inputs.confirm_publish }}"
+          echo "  publish: ${CONFIRM_PUBLISH}"
 
       - name: Checkout target ref
         # actions/checkout v7.0.0
@@ -141,9 +164,10 @@ jobs:
         # must be built with grade:stable. This workflow validates that the
         # snapcraft.yaml already carries grade:stable and refuses to proceed
         # if someone changed it.
+        # VERSION is passed via env: (hardening, see "Validate inputs" above).
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
-
           echo "--- Patching snap/snapcraft.yaml ---"
           sed -i "s/^version: .*/version: \"${VERSION}\"/" snap/snapcraft.yaml
           grep "^version:" snap/snapcraft.yaml
@@ -158,11 +182,12 @@ jobs:
           echo "Grade check passed: grade:stable (safe to promote to stable later)"
 
           echo "--- Patching package.json ---"
-          # patch via node so JSON formatting is preserved
-          node -e "
+          # patch via node so JSON formatting is preserved; VERSION comes from
+          # the process environment (not string-interpolated into the JS source).
+          VERSION="${VERSION}" node -e "
             const fs = require('fs');
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = '${VERSION}';
+            pkg.version = process.env.VERSION;
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           node -p "require('./package.json').version"
@@ -172,21 +197,27 @@ jobs:
 
       - name: Run full test suite (the gate)
         # A broken build never reaches the Snap Store — not even the edge channel.
+        # Runs natively on both amd64 and arm64 via the matrix above.
         run: npm test
 
       - name: Build renderer (Vite)
         run: npm run build
 
       - name: Build Electron unpacked tree
-        # electron-builder --dir → release/linux-unpacked/
-        # This is the source directory that snapcraft.yaml's `dump` plugin uses.
-        run: npm run pack
+        # electron-builder --dir → release/linux-unpacked/, arch-matched to the
+        # runner (npm run pack = --x64 on ubuntu-latest; pack:arm64 = --arm64
+        # on ubuntu-24.04-arm). This is the source directory that
+        # snapcraft.yaml's `dump` plugin uses.
+        run: ${{ matrix.arch == 'arm64' && 'npm run pack:arm64' || 'npm run pack' }}
 
       - name: Build snap (snapcore/action-build v1.3.0)
         # snapcore/action-build v1.3.0 — provisions LXD on the runner and invokes
         # real snapcraft inside an LXD container. Same toolchain as the stable builds.
-        # snapcraft-channel: stable refers to the snapcraft TOOL version to use,
-        # not the target channel for the snap being built.
+        # On the arm64 runner this builds a native arm64 LXD container; snapcraft
+        # auto-selects the matching build-on:[arm64] entry in snapcraft.yaml
+        # (see docs/design-arm64-builds.md). snapcraft-channel: stable refers to
+        # the snapcraft TOOL version to use, not the target channel for the snap
+        # being built.
         uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79
         id: snapcraft
         with:
@@ -205,41 +236,52 @@ jobs:
           ls -lh "${SNAP_PATH}"
 
       - name: Upload snap artifact
-        # Stash the snap between jobs. Also available as a downloadable artifact
-        # for manual testing (sudo snap install --dangerous wr-cw-trainer_*.snap)
-        # even when confirm_publish is false.
+        # Stash the snap between jobs, one artifact per arch (name suffixed
+        # with matrix.arch so the two legs don't collide). Also available as a
+        # downloadable artifact for manual testing
+        # (sudo snap install --dangerous wr-cw-trainer_*.snap) even when
+        # confirm_publish is false.
         # actions/upload-artifact v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: snap-edge-artifact
+          name: snap-edge-artifact-${{ matrix.arch }}
           path: ${{ steps.find-snap.outputs.snap-path }}
           retention-days: 7
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────────
-  # Job 2: Upload the snap to the Snap Store EDGE channel.
+  # Job 2: Upload each arch's snap to the Snap Store EDGE channel.
   #
   # FIRM CHECKPOINT: this job runs ONLY when confirm_publish is explicitly
-  # set to "true" at dispatch. The test gate (Job 1) must also pass.
-  # Both conditions must be true for any store upload to occur.
+  # set to "true" at dispatch. The test gate (Job 1, BOTH arch legs) must
+  # also pass. Both conditions must be true for any store upload to occur.
   #
   # --release=edge is hardcoded. This workflow can never release to stable,
   # candidate, or beta — those channels are owned exclusively by release.yml.
+  #
+  # Matrixed by arch too: each leg downloads its own artifact and uploads
+  # independently. The upload step itself needs no special hardware, so both
+  # legs run on ubuntu-latest (no arm64 runner minutes spent on a plain
+  # network upload) — only the BUILD (Job 1) needs the native arm64 runner.
   # ──────────────────────────────────────────────────────────────────────
   upload-edge:
-    name: Upload Snap to Snap Store — Edge Channel
+    name: Upload Snap to Snap Store — Edge Channel (${{ matrix.arch }})
     needs: build-and-test
     if: ${{ inputs.confirm_publish == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
 
     steps:
       - name: Download snap artifact
         # actions/download-artifact v8.0.1
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: snap-edge-artifact
+          name: snap-edge-artifact-${{ matrix.arch }}
           path: ./dist-snap
 
       - name: Locate downloaded snap
@@ -258,26 +300,33 @@ jobs:
         run: sudo snap install snapcraft --classic
 
       - name: Upload snap and release to edge channel
-        # Uploads the snap revision and releases it to the `edge` channel ONLY.
-        # Never touches stable, candidate, or beta.
+        # Uploads this arch's snap revision and releases it to the `edge`
+        # channel ONLY. Never touches stable, candidate, or beta. Each arch
+        # becomes its own revision on the Store; the channel map tracks
+        # revisions per (channel, architecture), so amd64 and arm64 coexist
+        # on edge under the same version string with no collision (see
+        # docs/design-arm64-builds.md §4).
         #
         # Authorization path:
         #   1. Travis set confirm_publish=true at dispatch (explicit human confirm)
-        #   2. The full test suite passed in Job 1 (the gate)
+        #   2. The full test suite passed in Job 1 for BOTH arches (the gate)
         #   Both conditions must be true for this step to execute.
         #
         # Retry logic mirrors the stable workflow: the Snap Store connection can
         # drop mid-transfer (RemoteDisconnected) — a transient failure that clears
         # on retry. 3 attempts with 30s backoff catches flaky uploads without
         # masking real failures.
+        # SNAP_FILE / VERSION / REF are passed via env: (hardening, see Job 1).
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_FILE: ${{ steps.snap-loc.outputs.snap-file }}
+          VERSION: ${{ inputs.version }}
+          REF: ${{ inputs.ref }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
-          VERSION="${{ inputs.version }}"
-          REF="${{ inputs.ref }}"
           echo "Uploading ${SNAP_FILE} to edge channel..."
-          echo "  Version:  ${VERSION}"
+          echo "  Arch:       ${ARCH}"
+          echo "  Version:    ${VERSION}"
           echo "  Built from: ${REF}"
           echo ""
           for attempt in 1 2 3; do
@@ -293,7 +342,7 @@ jobs:
             sleep 30
           done
           echo ""
-          echo "Snap released to edge channel. Testers install with:"
+          echo "Snap (${ARCH}) released to edge channel. Testers install with:"
           echo "  snap install wr-cw-trainer --edge"
           echo "Or switch from stable:"
           echo "  snap refresh wr-cw-trainer --channel=edge"
@@ -307,12 +356,15 @@ jobs:
         # what's embedded in the snap. Non-fatal: runs after the irreversible
         # upload, so a metadata hiccup must never mark a successful edge publish
         # as failed. The snap is already on edge if we reach this step.
-        # Icon limit: 256kB (snap/local/icon.png is kept under this).
+        # Icon limit: 256kB (snap/local/icon.png is kept under this). Metadata
+        # is arch-independent (summary/description/icon are the same across
+        # arches), so this is harmless to run once per arch leg — it's a no-op
+        # overwrite the second time.
         continue-on-error: true
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          SNAP_FILE: ${{ steps.snap-loc.outputs.snap-file }}
         run: |
-          SNAP_FILE="${{ steps.snap-loc.outputs.snap-file }}"
           snapcraft upload-metadata "${SNAP_FILE}" --force \
             && echo "Metadata (summary, description, icon) pushed to the Snap Store." \
             || echo "WARNING: metadata push failed (non-fatal — the snap is already on edge)."
@@ -340,8 +392,9 @@ jobs:
         ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
         Common causes:
-        - Test suite failure on the target branch (fix on the branch, then re-run)
-        - snapcraft build failure (check LXD setup or snapcraft.yaml for errors)
+        - Test suite failure on the target branch, on EITHER arch (fix on the branch, then re-run)
+        - snapcraft build failure (check LXD setup or snapcraft.yaml for errors) —
+          note the arm64 leg is newer and less proven than the amd64 leg
         - SNAPCRAFT_STORE_CREDENTIALS does not include the edge channel scope
           (re-export with: snapcraft export-login --snaps wr-cw-trainer
            --channels stable,candidate,edge - | base64 -w 0)

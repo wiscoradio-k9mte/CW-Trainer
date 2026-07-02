@@ -8,7 +8,15 @@
 # Scope: test + build only. CodeQL, Dependabot, dependency-review, and
 # secret scanning are owned by the security-engineer and live in separate
 # workflows — do not add them here.
-
+#
+# ARCHITECTURE MATRIX (added 2026-07-02, ARM desktop-build work):
+# Runs the full suite natively on BOTH amd64 (ubuntu-latest) and arm64
+# (ubuntu-24.04-arm). This is deliberately on EVERY PR and push to main, not
+# merge-only: the point of shipping arm64 is proving compatibility BEFORE
+# code lands on main, and GitHub's standard arm64 runner is free/unlimited on
+# this public repo (verified — see docs/design-arm64-builds.md §1), so there
+# is no cost reason to defer it. The two OS legs run in parallel, so PR
+# latency is max(amd64, arm64), not the sum.
 name: CI
 
 on:
@@ -29,9 +37,17 @@ permissions:
 
 jobs:
   test-and-build:
-    name: Test & Build
-    runs-on: ubuntu-latest
+    name: Test & Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
 
     steps:
       - name: Checkout
@@ -55,5 +71,5 @@ jobs:
       - name: Build renderer
         # vite build — confirms the production bundle compiles cleanly.
         # The snap build (electron-builder --dir + snapcraft) is only done
-        # on the release workflow; it requires a heavier build environment.
+        # on the release workflows; it requires a heavier build environment.
         run: npm run build
