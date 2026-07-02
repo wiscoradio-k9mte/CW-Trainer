@@ -6,11 +6,11 @@
 PR / push to main
     └── ci.yml
             ├── npm ci
-            ├── npm test        (vitest, 310 pass / 27 skipped)
+            ├── npm test        (vitest, 514 pass / 27 skipped as of 2.3.0 + DX branch)
             └── npm run build   (Vite renderer)
 
 push tag v*.*.*
-    └── release.yml
+    └── release.yml  ← STABLE CHANNEL ONLY
             ├── Job 1: build-and-package
             │       ├── npm ci
             │       ├── npm test
@@ -23,8 +23,26 @@ push tag v*.*.*
             │       ├── Download snap artifact
             │       ├── Extract release notes from metainfo.xml
             │       ├── Create GitHub Release  (with .snap attached)
-            │       ├── snapcraft upload         (to store — NO channel, NOT live)
+            │       ├── snapcraft upload --release=stable
             │       └── snapcraft upload-metadata (summary + description + icon from snap)
+            │
+            └── Job 3: notify-on-failure  (only if Job 1 or 2 failed)
+                    └── notify-escalation.yml → email to wiscoradio@gmail.com
+
+workflow_dispatch (manual trigger)
+    └── release-edge.yml  ← EDGE CHANNEL ONLY; never touches stable
+            ├── inputs: ref (branch/SHA), version (e.g. 2.4.0-edge.1), confirm_publish
+            │
+            ├── Job 1: build-and-test  (always runs)
+            │       ├── checkout at specified ref
+            │       ├── patch snapcraft.yaml + package.json version (build-time only, not committed)
+            │       ├── npm ci → npm test → npm run build → npm run pack
+            │       ├── snapcore/action-build  (snap artifact)
+            │       └── upload-artifact        (available even when confirm_publish=false)
+            │
+            ├── Job 2: upload-edge  (runs ONLY when confirm_publish="true")
+            │       ├── snapcraft upload --release=edge
+            │       └── snapcraft upload-metadata (non-fatal)
             │
             └── Job 3: notify-on-failure  (only if Job 1 or 2 failed)
                     └── notify-escalation.yml → email to wiscoradio@gmail.com
@@ -64,6 +82,166 @@ prints it, or check the Snap Store dashboard → Releases.
 
 ---
 
+## Edge releases — opt-in testing
+
+The `release-edge.yml` workflow publishes a snap to the **edge channel** for
+opt-in testers. It is entirely separate from `release.yml` and never touches
+stable. Use it to let testers try a feature branch (e.g. the International/DX
+enhancement) without merging it to `main` or touching the live stable release.
+
+### Channel isolation — why edge and stable can never cross-fire
+
+| Trigger | Workflow | Channel |
+|---------|----------|---------|
+| `git push origin vX.Y.Z` (tag) | `release.yml` | `stable` only |
+| `gh workflow run release-edge.yml` (manual) | `release-edge.yml` | `edge` only |
+
+`release.yml` triggers on `v*.*.*` push tags; `release-edge.yml` triggers only
+on `workflow_dispatch`. Neither can fire the other. The edge workflow hardcodes
+`--release=edge` and a validation step rejects bare `X.Y.Z` versions without a
+pre-release suffix, preventing version-number collisions with stable.
+
+### Version and grade
+
+**Version:** Use `2.4.0-edge.N` for the International/DX candidate (the next
+release after 2.3.0). Increment `N` for each new edge build from the same
+branch (2.4.0-edge.1, 2.4.0-edge.2, …). The `-edge.N` suffix is valid semver
+and makes the build visible as pre-release in both the store and the app's
+version display.
+
+**Grade:** The snap must be built with `grade: stable` (not `grade: devel`).
+`grade: devel` would lock the snap to the edge/beta channels permanently —
+it could never be promoted to stable without a full rebuild. Since an edge
+build is a candidate for eventual stable promotion, `grade: stable` is required.
+The workflow validates this and fails if `snapcraft.yaml` carries `grade: devel`.
+
+### Prerequisite — SNAPCRAFT_STORE_CREDENTIALS must cover the edge channel
+
+A credential exported **without** `--channels` has **no channel restriction**
+(covers every channel, edge included) — the flag only *adds* a restriction.
+The live credential was exported unrestricted (verified 2026-07-01:
+`snapcraft whoami` → `channels: no restrictions`), so **no re-export is needed
+before the first edge run.**
+
+If the secret is ever regenerated *with* a `--channels` restriction, it must
+include `edge` or this workflow fails (safe) at the upload step:
+
+```bash
+gh secret set SNAPCRAFT_STORE_CREDENTIALS \
+  --repo wiscoradio-k9mte/CW-Trainer \
+  --body "$(snapcraft export-login \
+    --snaps wr-cw-trainer \
+    --channels stable,candidate,edge \
+    - | base64 -w 0)"
+```
+
+This replaces the existing secret in place; the stable workflow keeps working
+with it.
+
+### Edge release runbook — step by step
+
+#### First time (one-time setup)
+
+1. Update `SNAPCRAFT_STORE_CREDENTIALS` to include the `edge` channel (above).
+   This is required only once; subsequent edge builds reuse the same secret.
+
+#### Publishing an edge build
+
+2. **Confirm the branch is testable.** The test suite must pass on the target
+   branch (e.g. `feature/international-dx`). The workflow runs the full suite
+   before any store upload; a failing suite blocks the upload cleanly.
+
+3. **Trigger the workflow.** From GitHub → Actions → "Edge Release" → "Run
+   workflow", or via the CLI:
+
+   ```bash
+   gh workflow run release-edge.yml \
+     --ref main \
+     --field ref=feature/international-dx \
+     --field version=2.4.0-edge.1 \
+     --field confirm_publish=false
+   ```
+
+   Start with `confirm_publish=false` for the first run to verify the build
+   succeeds and produces a working snap artifact. Download the artifact from the
+   workflow run and install it manually to confirm:
+
+   ```bash
+   sudo snap install --dangerous wr-cw-trainer_2.4.0-edge.1_amd64.snap
+   ```
+
+4. **Once you're satisfied the build is good, publish to edge:**
+
+   ```bash
+   gh workflow run release-edge.yml \
+     --ref main \
+     --field ref=feature/international-dx \
+     --field version=2.4.0-edge.1 \
+     --field confirm_publish=true
+   ```
+
+   The workflow builds, tests, and — because `confirm_publish=true` — uploads
+   the snap to the `edge` channel automatically. The snap goes live on edge once
+   the store's automated review passes (usually minutes).
+
+5. **Watch the run.** GitHub → Actions → "Edge Release" → the running workflow.
+   Both jobs should complete in under 30 minutes (snap build is the slow step).
+
+6. **Share the install command with testers** (see "Tester opt-in" below).
+
+7. **For a subsequent edge build** (e.g. after fixing something on the branch),
+   increment the version: `2.4.0-edge.2`, `2.4.0-edge.3`, etc.
+
+#### Promoting an edge snap to stable (when the feature is ready)
+
+Edge is a staging channel. When the feature is fully validated:
+
+1. Merge the feature branch to `main` via PR (go through the normal review +
+   CI gate).
+2. Bump `package.json` and `snap/snapcraft.yaml` to `2.4.0` (the plain stable
+   version — no suffix).
+3. Tag and push to trigger the stable release:
+   ```bash
+   git tag -a v2.4.0 -m "CW Trainer v2.4.0"
+   git push origin v2.4.0
+   ```
+   `release.yml` fires, builds from `main`, and auto-publishes to stable.
+
+   Alternatively, if you want to promote the EXACT snap revision that testers
+   validated on edge (same binary, no rebuild):
+   ```bash
+   # Find the revision number in the edge upload job log, or:
+   snapcraft status wr-cw-trainer
+   # Then promote it:
+   snapcraft release wr-cw-trainer <REVISION_NUMBER> stable
+   ```
+   Note: promoting a revision that carries a version like `2.4.0-edge.1` means
+   the stable channel will show that version string. To show a clean `2.4.0` on
+   stable, rebuild via the tag path above.
+
+### Tester opt-in and opt-out
+
+**Install from edge (fresh install):**
+```bash
+snap install wr-cw-trainer --channel=edge
+```
+
+**Switch from stable to edge:**
+```bash
+snap refresh wr-cw-trainer --channel=edge
+```
+
+**Switch back to stable:**
+```bash
+snap refresh wr-cw-trainer --channel=stable
+```
+
+After switching back, the app reverts to the current stable version. Progress
+data stored in `localStorage` is tied to the snap's `$SNAP_USER_DATA` directory
+and persists across channel switches for the same snap name.
+
+---
+
 ## Required secrets
 
 Add these in GitHub → Settings → Secrets and variables → Actions → New repository
@@ -77,10 +255,11 @@ Snap Store without an interactive login.
 **How to obtain:**
 
 ```bash
-# On your local machine, with snapcraft installed and logged in:
+# On your local machine, with snapcraft installed and logged in.
+# Include all channels used by the pipelines: stable, candidate, AND edge.
 snapcraft export-login \
   --snaps wr-cw-trainer \
-  --channels stable,candidate \
+  --channels stable,candidate,edge \
   - | base64 -w 0
 ```
 
@@ -91,8 +270,13 @@ Copy the entire base64 output — it is the secret value.
 ```bash
 gh secret set SNAPCRAFT_STORE_CREDENTIALS \
   --repo wiscoradio-k9mte/CW-Trainer \
-  --body "$(snapcraft export-login --snaps wr-cw-trainer --channels stable,candidate - | base64 -w 0)"
+  --body "$(snapcraft export-login --snaps wr-cw-trainer --channels stable,candidate,edge - | base64 -w 0)"
 ```
+
+**Note:** the live credential was exported **unrestricted** (no `--channels`
+flag → `channels: no restrictions`), so it already covers edge. The
+`--channels` list above only matters if you deliberately restrict a future
+re-export — include `edge` if you do.
 
 **Expiry:** Snap Store credentials expire (typically 1 year). Re-export and update
 the secret before the old one expires or when you see a 401 in the upload step.
@@ -305,7 +489,7 @@ The pipeline builds, tests, packages, releases to stable, pushes the listing
 text + icon, and emails on failure. A short list stays human-only — do these after
 each launch or enhancement:
 
-**Every release:**
+**Every stable release:**
 1. **Test the running app** *(before you tag)* — the team can't launch Electron
    headless, so you're the one who runs it and confirms the UI + features look and
    work right. This is the gate before the deliberate tag.
@@ -322,9 +506,18 @@ each launch or enhancement:
 5. **Announce it, when you're ready** — community post / kick off the marketing team
    (human-approved publishing; marketing stays dark until you say go).
 
+**Every edge release (opt-in testing):**
+1. **Build-only first run** — trigger with `confirm_publish=false`, download the
+   artifact, and install manually to confirm the snap launches correctly on your machine
+   (`sudo snap install --dangerous wr-cw-trainer_*.snap`).
+2. **Trigger the publish run** — once satisfied, re-trigger with `confirm_publish=true`.
+   That is the explicit human confirmation; the upload runs automatically on test-gate pass.
+3. **No screenshot upload needed for edge** — edge is a test channel; the store listing
+   screenshots are stable-audience metadata. Update them only when the feature lands in stable.
+
 **Occasional (watch for these):**
 - **Snapcraft store credentials expire (~1 year).** When they do, the release will
-  fail at the upload step — regenerate with `snapcraft export-login` and update the
-  `SNAPCRAFT_STORE_CREDENTIALS` Actions secret.
+  fail at the upload step — regenerate with `snapcraft export-login --channels
+  stable,candidate,edge` and update the `SNAPCRAFT_STORE_CREDENTIALS` Actions secret.
 - **Mail app password** — if the Gmail app password is revoked/changed, re-set
   `MAIL_PASSWORD` (the escalation email will start failing if it lapses).
