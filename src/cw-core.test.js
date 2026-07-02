@@ -5,8 +5,9 @@ import {
   cutNum, isReadyToAdvance,
   PROSIGNS, PROSIGN_CODES, QCODES_ABBREV, DRILL_CATEGORIES,
   drillCallsign, drillCallingCq, drillRstExchange, drillNumbers,
-  drillProsigns, drillQCodes, drillCommonWords, drillQsoLine,
+  drillProsigns, drillQCodes, drillCommonWords, drillWiderWords, drillQsoLine,
   COMMON_WORDS, ROLE_TERMS,
+  filterDrillWords, COMMON_WORD_POOL, WIDE_WORD_POOL,
   analyzeFist, FIST_TOLERANCE, FIST_MIN_ELEMENTS,
   toCodes,
   averageScore,
@@ -558,11 +559,14 @@ describe("drillCommonWords()", () => {
     expect(drillCommonWords().length).toBeGreaterThan(0);
   });
 
-  it("every space-delimited token is in COMMON_WORDS", () => {
+  it("every space-delimited token is from COMMON_WORD_POOL (uppercased)", () => {
+    // drillCommonWords was repointed to the English frequency pool (Phase 3).
+    // Tokens are uppercased at generation time; check against an uppercase Set.
+    const poolUpper = new Set(COMMON_WORD_POOL.map(w => w.toUpperCase()));
     for (let i = 0; i < 20; i++) {
       const s = drillCommonWords();
       for (const tok of s.split(" ")) {
-        expect(COMMON_WORDS).toContain(tok);
+        expect(poolUpper.has(tok)).toBe(true);
       }
     }
   });
@@ -597,8 +601,9 @@ describe("drillQsoLine()", () => {
 });
 
 describe("DRILL_CATEGORIES", () => {
-  it("has 13 categories (8 original + 5 DX rungs added in Phase 1)", () => {
-    expect(DRILL_CATEGORIES.length).toBe(13);
+  it("has 14 categories (8 original + 1 wordswide + 5 DX rungs)", () => {
+    // Phase 3 inserted 'wordswide' after 'words' — deliberate index shift.
+    expect(DRILL_CATEGORIES.length).toBe(14);
   });
 
   it("each entry has id, label, and gen function", () => {
@@ -622,19 +627,22 @@ describe("DRILL_CATEGORIES", () => {
     }
   });
 
-  // Ladder order: simplest → hardest. Reordered in v2.0 (item 8): Q-codes now
-  // come before Prosigns — Q-codes appear far more frequently on the air.
-  // catIdx is not persisted, so no migration is needed.
-  it("first category is 'words' (simplest start — common words)", () => {
+  // Ladder order: simplest → hardest.
+  // Phase 3 inserted 'wordswide' at index 1 — all subsequent indices shifted +1.
+  it("first category is 'words' (simplest English rung — top-500 frequency pool)", () => {
     expect(DRILL_CATEGORIES[0].id).toBe("words");
   });
 
-  it("second category is 'qcodes' (v2.0 reorder — Q-codes before prosigns)", () => {
-    expect(DRILL_CATEGORIES[1].id).toBe("qcodes");
+  it("second category is 'wordswide' (Phase 3 insert — ranks 1001-5000)", () => {
+    expect(DRILL_CATEGORIES[1].id).toBe("wordswide");
   });
 
-  it("third category is 'prosigns' (v2.0 reorder — after Q-codes)", () => {
-    expect(DRILL_CATEGORIES[2].id).toBe("prosigns");
+  it("third category is 'qcodes' (v2.0 reorder — Q-codes before prosigns; now at index 2 after Phase 3)", () => {
+    expect(DRILL_CATEGORIES[2].id).toBe("qcodes");
+  });
+
+  it("fourth category is 'prosigns' (v2.0 reorder — after Q-codes; now at index 3 after Phase 3)", () => {
+    expect(DRILL_CATEGORIES[3].id).toBe("prosigns");
   });
 
   it("last category is 'recip' (DX abroad callsigns — hardest DX rung, added Phase 1)", () => {
@@ -3103,5 +3111,178 @@ describe("randDxFieldStation()", () => {
       const fs = randDxFieldStation();
       expect(fs.sotaRef).toMatch(/^[A-Z0-9]+\/[A-Z]+-\d+$/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 — words_en pool: filterDrillWords + COMMON_WORD_POOL + WIDE_WORD_POOL
+// ---------------------------------------------------------------------------
+
+describe("filterDrillWords() — pure min/max-length filter", () => {
+  it("drops single-char tokens (the FIRM PO guard)", () => {
+    // The corpus has many single-char tokens: 'i', 'a', 's', 't', ...
+    // With minLen=2, none must survive.
+    const result = filterDrillWords(["a", "s", "t", "i", "is", "the", "cat"]);
+    expect(result).toEqual(["is", "the", "cat"]);
+    expect(result).not.toContain("a");
+    expect(result).not.toContain("s");
+  });
+
+  it("no string of length < 2 in output when minLen=2 (default)", () => {
+    const input = ["a", "i", "to", "the", "hello", "superlongwordthatexceeds"];
+    const out = filterDrillWords(input);
+    for (const w of out) {
+      expect(w.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("respects maxLen — drops words over the cap", () => {
+    const longWord = "antidisestablishment"; // len 20
+    const result = filterDrillWords(["cat", longWord], { maxLen: 12 });
+    expect(result).toContain("cat");
+    expect(result).not.toContain(longWord);
+  });
+
+  it("is pure — testable with a fixture (no JSON dependency in this call)", () => {
+    // Empty pool → empty result; no crash.
+    expect(filterDrillWords([])).toEqual([]);
+    // All-valid pool → all returned.
+    expect(filterDrillWords(["hi", "ok", "yes"])).toHaveLength(3);
+  });
+
+  it("custom minLen/maxLen override the defaults", () => {
+    // Allow single chars by passing minLen=1
+    const result = filterDrillWords(["a", "hi", "word"], { minLen: 1 });
+    expect(result).toContain("a");
+    // Tighter max
+    const tight = filterDrillWords(["hi", "word", "longer"], { maxLen: 4 });
+    expect(tight).toEqual(["hi", "word"]);
+  });
+});
+
+describe("COMMON_WORD_POOL and WIDE_WORD_POOL — real filtered pools", () => {
+  it("COMMON_WORD_POOL has the expected size (~493 from top500 after filtering)", () => {
+    // top500 has 7 single-char tokens; pool is ~493.
+    expect(COMMON_WORD_POOL.length).toBeGreaterThan(480);
+    expect(COMMON_WORD_POOL.length).toBeLessThanOrEqual(500);
+  });
+
+  it("WIDE_WORD_POOL has the expected size (~3957 from ranks 1001-5000 after filtering)", () => {
+    expect(WIDE_WORD_POOL.length).toBeGreaterThan(3900);
+    expect(WIDE_WORD_POOL.length).toBeLessThanOrEqual(4000);
+  });
+
+  it("no token of length 1 in COMMON_WORD_POOL ('s', 't', 'a', 'i' must not appear)", () => {
+    // Mutation-verified: set MIN_WORD_LEN=1 in words-en-pool.js → these leak → test FAILS.
+    for (const w of COMMON_WORD_POOL) {
+      expect(w.length).toBeGreaterThanOrEqual(2);
+    }
+    expect(COMMON_WORD_POOL).not.toContain("s");
+    expect(COMMON_WORD_POOL).not.toContain("t");
+    expect(COMMON_WORD_POOL).not.toContain("a");
+    expect(COMMON_WORD_POOL).not.toContain("i");
+  });
+
+  it("no token of length 1 in WIDE_WORD_POOL", () => {
+    for (const w of WIDE_WORD_POOL) {
+      expect(w.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("all tokens in COMMON_WORD_POOL are lowercase strings", () => {
+    for (const w of COMMON_WORD_POOL) {
+      expect(typeof w).toBe("string");
+      expect(w).toBe(w.toLowerCase());
+    }
+  });
+
+  it("COMMON_WORD_POOL and WIDE_WORD_POOL are disjoint (no overlap — true bands)", () => {
+    // Both pools draw from non-overlapping rank slices of the same source list.
+    // If slice() offset is wrong, words from the common pool would appear in wide.
+    // Mutation-verified: change top5k.slice(1000) to top5k.slice(0) → overlap → FAILS.
+    const commonSet = new Set(COMMON_WORD_POOL);
+    for (const w of WIDE_WORD_POOL) {
+      expect(commonSet.has(w)).toBe(false);
+    }
+  });
+
+  it("COMMON_WORD_POOL contains high-frequency English words", () => {
+    // Sanity check — 'the', 'and', 'you' are top-5 English words.
+    expect(COMMON_WORD_POOL).toContain("the");
+    expect(COMMON_WORD_POOL).toContain("and");
+    expect(COMMON_WORD_POOL).toContain("you");
+  });
+
+  it("COMMON_WORD_POOL does not contain WIDE_WORD_POOL entries (no 'books' in common)", () => {
+    // 'books' is rank 1001 — just outside top500, so it belongs to WIDE, not COMMON.
+    expect(COMMON_WORD_POOL).not.toContain("books");
+    expect(WIDE_WORD_POOL).toContain("books");
+  });
+});
+
+describe("drillCommonWords() and drillWiderWords() — generator shape", () => {
+  it("drillCommonWords returns 3 space-separated uppercase tokens", () => {
+    for (let i = 0; i < 20; i++) {
+      const s = drillCommonWords();
+      const tokens = s.split(" ");
+      expect(tokens).toHaveLength(3);
+      for (const t of tokens) {
+        expect(t).toBe(t.toUpperCase());
+        expect(t.length).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("drillCommonWords tokens are in COMMON_WORD_POOL (uppercased pool)", () => {
+    // Draws from the English frequency pool, not COMMON_WORDS (ham vocab).
+    // If drillCommonWords still draws from COMMON_WORDS, a pool-specific word
+    // like 'the' or 'and' would be absent and a ham word like 'TNX' would appear.
+    const poolUpper = new Set(COMMON_WORD_POOL.map(w => w.toUpperCase()));
+    for (let i = 0; i < 30; i++) {
+      const s = drillCommonWords();
+      for (const tok of s.split(" ")) {
+        expect(poolUpper.has(tok)).toBe(true);
+      }
+    }
+  });
+
+  it("drillWiderWords returns 3 space-separated uppercase tokens each len >= 2", () => {
+    for (let i = 0; i < 20; i++) {
+      const s = drillWiderWords();
+      const tokens = s.split(" ");
+      expect(tokens).toHaveLength(3);
+      for (const t of tokens) {
+        expect(t).toBe(t.toUpperCase());
+        expect(t.length).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("drillWiderWords tokens are in WIDE_WORD_POOL (not in COMMON_WORD_POOL)", () => {
+    // Verifies pool routing: wider words must come from the wide pool, not common.
+    const wideUpper = new Set(WIDE_WORD_POOL.map(w => w.toUpperCase()));
+    for (let i = 0; i < 30; i++) {
+      const s = drillWiderWords();
+      for (const tok of s.split(" ")) {
+        expect(wideUpper.has(tok)).toBe(true);
+      }
+    }
+  });
+
+  it("drillCommonWords never produces distinctly-ham tokens (not TNX, FER, QTH, POTA)", () => {
+    // These tokens are in COMMON_WORDS (ham vocab) but NOT in any English frequency tier.
+    // If drillCommonWords still draws from COMMON_WORDS, they would sometimes appear.
+    // NOTE: "DE", "HI", "ES" are excluded — "de" (rank 356) IS in the English corpus
+    // and produces "DE" when uppercased, making those checks flaky on the English pool.
+    // The positive pool-membership test above already guards the routing more precisely.
+    const uniqueHamTokens = new Set(["TNX", "FER", "RST", "QTH", "POTA", "SOTA", "73"]);
+    let sawHam = false;
+    for (let i = 0; i < 200; i++) {
+      for (const tok of drillCommonWords().split(" ")) {
+        if (uniqueHamTokens.has(tok)) { sawHam = true; break; }
+      }
+      if (sawHam) break;
+    }
+    expect(sawHam).toBe(false);
   });
 });

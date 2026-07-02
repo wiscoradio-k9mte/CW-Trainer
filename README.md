@@ -98,6 +98,11 @@ filtering, QSB, AGC).
 sudo snap install wr-cw-trainer
 ```
 
+**Testing the next version (edge channel):** International/DX and word-list
+enhancements are currently in testing on the edge channel — install with
+`sudo snap install wr-cw-trainer --edge` (or `snap refresh --edge`) if you'd
+like to try them early and report issues.
+
 **From source** — requires **Node.js 18+** and npm:
 
 ```bash

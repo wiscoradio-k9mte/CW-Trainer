@@ -43,7 +43,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:dxcc": "node scripts/build-dxcc-dataset.mjs",
-    "validate:dxcc": "node scripts/validate-dxcc.mjs"
+    "validate:dxcc": "node scripts/validate-dxcc.mjs",
+    "build:words": "node scripts/generate/build-words-en.mjs",
+    "validate:words": "node scripts/validate-words-en.mjs"
   },
   "dependencies": {
     "react": "^19.2.7",

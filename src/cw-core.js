@@ -17,6 +17,11 @@ export { DX_GENERATION_POOL, randDxStation, randDxFieldStation };
 import { resolveUSState } from './data/dxcc-resolve.js';
 export { resolveUSState };
 
+// English word frequency pools — two filtered bands for the COPY/KEY English rungs.
+// Re-exported here so the JSX has one import source for all CW utilities.
+import { COMMON_WORD_POOL, WIDE_WORD_POOL, filterDrillWords } from './data/words-en-pool.js';
+export { COMMON_WORD_POOL, WIDE_WORD_POOL, filterDrillWords };
+
 /* ================= MORSE DATA ================= */
 // PROSIGN_CODES: atomic codes for prosigns that must sound run-together (no 3u
 // inter-character gap between their elements).  Kept SEPARATE from MORSE so the
@@ -313,9 +318,25 @@ export function drillQCodes() {
   return Array.from({ length: count }, () => rand(QCODES_ABBREV)).join(" ");
 }
 
-// Drill: common ham words — verbatim from the original KeyTrainer branch.
-export function drillCommonWords() {
-  return Array.from({ length: 3 }, () => rand(COMMON_WORDS)).join(" ");
+// Drill: common English words — repointed to the top-500 frequency pool.
+// Words are lowercase in the JSON; uppercase them for the CW display.
+// Was rand(COMMON_WORDS): that curated ham-vocabulary pool is now the KEY/COPY
+// "hamwords" rung (unchanged); this rung is now English frequency content.
+//
+// `n` defaults to 3 (KEY); COPY passes 4 for a slightly longer target.
+// DRILL_CATEGORIES calls cat.gen(settings) with a settings object — the typeof
+// guard treats any non-number first arg as "use default count=3", keeping the
+// calling convention compatible without a separate function per surface.
+export function drillCommonWords(n = 3) {
+  const count = typeof n === 'number' ? n : 3;
+  return Array.from({ length: count }, () => rand(COMMON_WORD_POOL).toUpperCase()).join(" ");
+}
+
+// Drill: wider English vocabulary — ranks 1001-5000 (harder rung).
+// Same n parameterization as drillCommonWords (KEY default=3, COPY passes 4).
+export function drillWiderWords(n = 3) {
+  const count = typeof n === 'number' ? n : 3;
+  return Array.from({ length: count }, () => rand(WIDE_WORD_POOL).toUpperCase()).join(" ");
 }
 
 // Drill: full QSO line — verbatim from the original KeyTrainer branch.
@@ -414,6 +435,7 @@ export function drillReciprocalCalls(settings) {
 // international prefixes, and split/pileup behaviour before they make sense.
 export const DRILL_CATEGORIES = [
   { id: "words",     label: "Common words",        gen: drillCommonWords },
+  { id: "wordswide", label: "Wider vocabulary",    gen: drillWiderWords },
   { id: "qcodes",    label: "Q-codes & abbrev",    gen: drillQCodes },
   { id: "prosigns",  label: "Prosigns",            gen: drillProsigns },
   { id: "numbers",   label: "Numbers (incl. cut)", gen: drillNumbers },

@@ -10,7 +10,9 @@
 // By role/text/label so the rail-split in the refactor can't drop these.
 
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { fireEvent, act } from "@testing-library/react";
 import { renderApp, gotoTab, screen } from "./helpers.jsx";
+import { WIDE_WORD_POOL, COMMON_WORDS } from "../cw-core.js";
 
 describe("COPY tab — setup and interaction", () => {
   it("renders the level ladder and the Conditions controls", async () => {
@@ -161,5 +163,99 @@ describe("LEARN — correct-answer flash shows char + Morse pattern (v2.0 §4)",
     expect(text.startsWith("✗")).toBe(true);
     expect(text).toContain("M");      // the TARGET char (what they should have sent)
     expect(text).toMatch(/[·−]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COPY tab — Phase 3 pool routing (words_en wiring)
+//
+// Guards that:
+//   1. All 8 rungs exist in the level ladder (including the two new ones).
+//   2. Selecting "wordswide" produces tokens from WIDE_WORD_POOL.
+//   3. Selecting "hamwords" produces tokens from COMMON_WORDS (ham vocab).
+//
+// Each test must BITE: deleting the wordswide rung, or mis-wiring hamwords
+// to the wrong pool, must turn it RED — verified via mutation before commit.
+// ---------------------------------------------------------------------------
+
+// Helper: navigate to COPY, select a rung, generate a target, reveal it,
+// and return the raw target string for pool-membership assertions.
+async function generateAndReveal(user, rungLabel) {
+  await gotoTab(user, "COPY");
+  await user.click(screen.getByRole("button", { name: new RegExp(rungLabel) }));
+
+  // ▶ NEW starts a 5-second countdown; skip it with fake timers.
+  vi.useFakeTimers();
+  fireEvent.click(screen.getByRole("button", { name: /▶ NEW/ }));
+  act(() => { vi.advanceTimersByTime(6000); });
+  vi.useRealTimers();
+
+  // Flush any remaining React state updates.
+  await act(async () => {});
+
+  // Reveal the target (CHECK has not been clicked so result===null → Display shows raw target).
+  await user.click(screen.getByRole("button", { name: /REVEAL/ }));
+
+  // The "Sent" heading directly precedes the Display element in the DOM.
+  const sentEl = screen.getByText("Sent");
+  return sentEl.nextElementSibling.textContent.trim();
+}
+
+describe("COPY tab — Phase 3 pool routing", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("level ladder has all 8 rungs including 'Wider vocabulary' and 'Ham words'", async () => {
+    // Mutation to prove bite: delete the wordswide or hamwords row from COPY_LEVELS
+    // → the corresponding getByRole call throws → test FAILS.
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+
+    const expectedLabels = [
+      "1 character",
+      "2-char groups",
+      "Letter groups",
+      "Common words",
+      "Wider vocabulary",   // Phase 3 — bites if wordswide rung is removed
+      "Ham words",          // Phase 3 — bites if hamwords rung is removed
+      "Callsigns",
+      "QSO phrases",
+    ];
+    for (const label of expectedLabels) {
+      expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+    }
+  });
+
+  it("'wordswide' rung produces tokens exclusively from WIDE_WORD_POOL", async () => {
+    // WIDE_WORD_POOL and COMMON_WORD_POOL are DISJOINT (verified; 0 overlap).
+    // Any token from the wrong pool cannot be in wideUpper → assertion fails.
+    //
+    // Mutation to prove bite: change "wordswide" newTarget branch to use
+    // drillCommonWords(4) instead of drillWiderWords(4) → tokens like "THE"
+    // are in COMMON_WORD_POOL but NOT in wideUpper → FAILS.
+    const wideUpper = new Set(WIDE_WORD_POOL.map(w => w.toUpperCase()));
+    const { user } = await renderApp();
+    const targetText = await generateAndReveal(user, "Wider vocabulary");
+
+    const tokens = targetText.split(/\s+/).filter(Boolean);
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const tok of tokens) {
+      expect(wideUpper.has(tok)).toBe(true);
+    }
+  });
+
+  it("'hamwords' rung produces tokens exclusively from COMMON_WORDS (ham vocab)", async () => {
+    // If hamwords is mis-wired to an English pool (e.g. WIDE_WORD_POOL), it would
+    // produce tokens like "BOOKS" or "STUMP" — neither is in COMMON_WORDS → FAILS.
+    //
+    // Mutation to prove bite: change "hamwords" branch to drillWiderWords(4)
+    // → English words appear → not in COMMON_WORDS → FAILS.
+    const { user } = await renderApp();
+    const targetText = await generateAndReveal(user, "Ham words");
+
+    const tokens = targetText.split(/\s+/).filter(Boolean);
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const tok of tokens) {
+      expect(COMMON_WORDS).toContain(tok);
+    }
   });
 });
