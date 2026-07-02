@@ -6,7 +6,7 @@
 PR / push to main
     └── ci.yml
             ├── npm ci
-            ├── npm test        (vitest, 514 pass / 27 skipped as of 2.3.0 + DX branch)
+            ├── npm test        (vitest — must stay green; count grows with each merge)
             └── npm run build   (Vite renderer)
 
 push tag v*.*.*
