@@ -103,6 +103,11 @@ enhancements are currently in testing on the edge channel — install with
 `sudo snap install wr-cw-trainer --edge` (or `snap refresh --edge`) if you'd
 like to try them early and report issues.
 
+**arm64:** an arm64 build is also available on the edge channel
+(`snap install wr-cw-trainer --edge`). It's built and tested natively in CI on
+every release, but not yet validated on real ARM hardware — tester reports
+welcome via the issue tracker.
+
 **From source** — requires **Node.js 18+** and npm:
 
 ```bash

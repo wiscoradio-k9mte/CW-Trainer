@@ -53,10 +53,18 @@ icon: snap/local/icon.png
 # (MESA-LOADER swrast failure). core22+gnome is the proven, supported path for
 # packaging a modern Electron app as a strictly confined snap.
 
-# Build/run on amd64. Add more entries here if other arches are wanted later.
+# Build/run on amd64 and arm64. Each entry builds NATIVELY on a matching-arch
+# runner (build-on == build-for; no qemu cross-build). CI and the release
+# workflows run one job per arch on its own native GitHub-hosted runner
+# (ubuntu-latest / ubuntu-24.04-arm); snapcraft auto-selects the entry whose
+# build-on matches the host it's invoked on. See docs/design-arm64-builds.md
+# for the researched rationale (core22 uses `architectures:`, not
+# `platforms:`, which is core24+).
 architectures:
-  - build-on: amd64
-    build-for: amd64
+  - build-on: [amd64]
+    build-for: [amd64]
+  - build-on: [arm64]
+    build-for: [arm64]
 
 apps:
   wr-cw-trainer:

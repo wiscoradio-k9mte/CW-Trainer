@@ -4,53 +4,73 @@
 
 ```
 PR / push to main
-    └── ci.yml
+    └── ci.yml   ← MATRIX: amd64 (ubuntu-latest) + arm64 (ubuntu-24.04-arm), native, parallel
             ├── npm ci
             ├── npm test        (vitest — must stay green; count grows with each merge)
             └── npm run build   (Vite renderer)
 
 push tag v*.*.*
     └── release.yml  ← STABLE CHANNEL ONLY
-            ├── Job 1: build-and-package
+            ├── Job 1: build-and-package  ← MATRIX: amd64 + arm64, native per arch
             │       ├── npm ci
             │       ├── npm test
-            │       ├── npm run build          (Vite)
-            │       ├── npm run pack           (electron-builder --dir → release/linux-unpacked/)
+            │       ├── npm run build                    (Vite)
+            │       ├── npm run pack / pack:arm64         (electron-builder --dir --x64 / --arm64
+            │       │                                       → release/linux-unpacked/)
             │       ├── snapcore/action-build  (real snapcraft / LXD → wr-cw-trainer_*.snap)
-            │       └── upload-artifact        (stash snap between jobs)
+            │       └── upload-artifact        (one artifact per arch, stashed between jobs)
             │
-            ├── Job 2: release-and-upload
-            │       ├── Download snap artifact
+            ├── Job 2: create-github-release  (one release, both .snap files attached)
+            │       ├── Download both arch artifacts
             │       ├── Extract release notes from metainfo.xml
-            │       ├── Create GitHub Release  (with .snap attached)
-            │       ├── snapcraft upload --release=stable
-            │       └── snapcraft upload-metadata (summary + description + icon from snap)
+            │       └── Create GitHub Release
             │
-            └── Job 3: notify-on-failure  (only if Job 1 or 2 failed)
+            ├── Job 3: upload-to-stable  ← MATRIX: amd64 + arm64
+            │       ├── snapcraft upload --release=stable   (one revision per arch)
+            │       └── snapcraft upload-metadata (summary + description + icon from snap; non-fatal)
+            │
+            └── Job 4: notify-on-failure  (only if any prior job failed)
                     └── notify-escalation.yml → email to wiscoradio@gmail.com
 
 workflow_dispatch (manual trigger)
     └── release-edge.yml  ← EDGE CHANNEL ONLY; never touches stable
             ├── inputs: ref (branch/SHA), version (e.g. 2.4.0-edge.1), confirm_publish
             │
-            ├── Job 1: build-and-test  (always runs)
+            ├── Job 1: build-and-test  ← MATRIX: amd64 + arm64, native per arch (always runs)
             │       ├── checkout at specified ref
             │       ├── patch snapcraft.yaml + package.json version (build-time only, not committed)
-            │       ├── npm ci → npm test → npm run build → npm run pack
+            │       ├── npm ci → npm test → npm run build → npm run pack / pack:arm64
             │       ├── snapcore/action-build  (snap artifact)
-            │       └── upload-artifact        (available even when confirm_publish=false)
+            │       └── upload-artifact        (one artifact per arch, available even when confirm_publish=false)
             │
-            ├── Job 2: upload-edge  (runs ONLY when confirm_publish="true")
-            │       ├── snapcraft upload --release=edge
+            ├── Job 2: upload-edge  ← MATRIX: amd64 + arm64 (runs ONLY when confirm_publish="true")
+            │       ├── snapcraft upload --release=edge   (one revision per arch)
             │       └── snapcraft upload-metadata (non-fatal)
             │
-            └── Job 3: notify-on-failure  (only if Job 1 or 2 failed)
+            └── Job 3: notify-on-failure  (only if any prior job failed)
                     └── notify-escalation.yml → email to wiscoradio@gmail.com
 
 Security / maintenance workflows (owned by security-engineer)
     └── notify-escalation.yml  (reusable workflow_call target)
             └── dawidd6/action-send-mail → wiscoradio@gmail.com
 ```
+
+**ARM64 (added 2026-07-02):** every CI run and every release now builds amd64
+and arm64 natively, one job per arch, on GitHub's own arm64-hosted runner
+(`ubuntu-24.04-arm` — free/unlimited on this public repo). No qemu, no
+cross-compiling. Each arch uploads as its own Snap Store revision under the
+same version string. arm64 ships to **edge only** for now — it's proven by
+CI (native build + full test suite) but not yet validated on real ARM
+hardware. See `docs/design-arm64-builds.md` (local/internal — gitignored)
+for the full research and sources, and `snap/snapcraft.yaml`'s `architectures:`
+key for the build matrix itself.
+
+**IMPORTANT — branch protection:** matrixing `ci.yml` changes the required
+status check name from the single `Test & Build` to two per-arch checks,
+`Test & Build (amd64)` and `Test & Build (arm64)`. Branch protection's
+required-status-check list must be updated to the new names (see repo
+Settings → Branches) or the old, now-never-fired `Test & Build` check will
+block every PR merge indefinitely.
 
 ## Publish gate — auto-publish on tag (model changed 2026-06-26)
 
@@ -163,11 +183,15 @@ with it.
    ```
 
    Start with `confirm_publish=false` for the first run to verify the build
-   succeeds and produces a working snap artifact. Download the artifact from the
-   workflow run and install it manually to confirm:
+   succeeds and produces a working snap artifact — now TWO artifacts,
+   `snap-edge-artifact-amd64` and `snap-edge-artifact-arm64` (one per arch).
+   Download the one matching your machine from the workflow run and install
+   it manually to confirm:
 
    ```bash
    sudo snap install --dangerous wr-cw-trainer_2.4.0-edge.1_amd64.snap
+   # or, on arm64 hardware:
+   sudo snap install --dangerous wr-cw-trainer_2.4.0-edge.1_arm64.snap
    ```
 
 4. **Once you're satisfied the build is good, publish to edge:**
