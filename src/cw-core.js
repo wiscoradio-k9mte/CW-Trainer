@@ -5,6 +5,18 @@
    Dependency order is intentional: each symbol is defined before anything
    that uses it. Do not reorder without re-checking the transitive deps. */
 
+// DX generation pool and station generators are in a separate module because they
+// import from the bundled DXCC dataset (src/data/dxcc_dataset.json via
+// dxcc-resolve.js).  Keeping dataset imports out of the core avoids pulling the
+// 286 kB JSON into unit-test environments that don't need it for non-DX tests.
+import { DX_GENERATION_POOL, randDxStation, randDxFieldStation } from './data/dxcc-generation.js';
+export { DX_GENERATION_POOL, randDxStation, randDxFieldStation };
+
+// Re-export resolveUSState so the JSX has one import source for all CW utilities.
+// (dxcc-resolve is already a transitive dep via dxcc-generation, so no extra load.)
+import { resolveUSState } from './data/dxcc-resolve.js';
+export { resolveUSState };
+
 /* ================= MORSE DATA ================= */
 // PROSIGN_CODES: atomic codes for prosigns that must sound run-together (no 3u
 // inter-character gap between their elements).  Kept SEPARATE from MORSE so the
@@ -87,7 +99,7 @@ export const MORSE = {
 export const REV = Object.fromEntries(Object.entries(MORSE).map(([k, v]) => [v, k]));
 
 export const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
-export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P US-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
+export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P K-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
 
 // Pull a two-letter state from the end of a QTH like "NEWINGTON CT"
 export const stateOf = (qth) => {
@@ -104,7 +116,11 @@ export function subTokens(s, settings) {
     .replaceAll("{ST}", stateOf(settings.myQth));
 }
 
-export const DX_PREFIXES = ["W9","K0","N8","KD9","W1","K4","N5","VE3","W7","K6","AC9","KB0","N2","W4"];
+// US domestic pool for randCall() — home station and contest chaser prefixes.
+// VE3 is intentionally absent: Canada is a first-class DX entity in this trainer
+// (it has call-area rows in DX_GENERATION_POOL).  A Canadian call in the domestic
+// pool would produce an incoherent "domestic" partner in ragchew/POTA/SOTA.
+export const US_PREFIXES = ["W9","K0","N8","KD9","W1","K4","N5","W7","K6","AC9","KB0","N2","W4"];
 export const IOTA_DX_PREFIXES = ["G4","EI5","OH2","JA1","9A2","F5","ON4","SM5","GM3","CT1"];
 export const NAMES = ["BOB","JIM","SUE","ANN","TOM","DAN","RAY","KEN","JOE","AL","ED","MAX","SAM","LEE","ART","HAL"];
 export const QTHS = ["MADISON WI","DULUTH MN","CEDAR RAPIDS IA","TOLEDO OH","FARGO ND","BOISE ID","TUCSON AZ","BANGOR ME","SPARTA WI","MOLINE IL","TOPEKA KS","DENVER CO"];
@@ -120,14 +136,55 @@ export const glyphs = (code) => code.split("").map((c) => (c === "." ? "·" : "�
 export const SUMMITS = ["W9/UP-001","W7A/AE-040","W0C/FR-063","W4G/NG-006","W6/CT-225","W2/GA-010"];
 export const IOTA_REFS = ["NA-128","EU-005","OC-001","NA-067","EU-115","AF-004"];
 
-export const randPark = () => "US-" + (1000 + Math.floor(Math.random() * 9000));
+/* ================= INTERNATIONAL / DX DATA ================= */
+//
+// DX_GENERATION_POOL and randDxStation are imported from src/data/dxcc-generation.js
+// (re-exported above).  The pool is built from the real bundled DXCC dataset —
+// no hand-rolled table, no NEEDS-SOURCING markers.
+
+// POTA program prefixes beyond the US.  "K" is the US POTA program prefix.
+// NEEDS-SOURCING: validate against the POTA program reference list before ship.
+export const POTA_COUNTRY_PREFIXES = ["K", "VE", "DE", "G", "F", "VK", "JA"];
+
+// International SOTA summit associations — non-US examples for teaching.
+// NEEDS-SOURCING: validate association/region codes against the SOTA database.
+export const INTL_SUMMITS = [
+  "G/LD-001", "DL/AL-001", "F/AB-001", "VK1/AC-001", "EA2/NV-001", "JA/NN-001",
+];
+
+// randPark(prefix) — generates a program-prefixed park reference.
+// US POTA uses "K-####" (NOT "US-####" — the previous "US-" was wrong).
+// randPark()       → "K-1234"   (US default)
+// randPark("DE")   → "DE-0031"  (Germany)
+// randPark("VK")   → "VK-0456"  (Australia)
+// NEEDS-SOURCING: validate non-US prefix strings against the POTA program list.
+export const randPark = (prefix = "K") =>
+  `${prefix}-${String(1 + Math.floor(Math.random() * 9999)).padStart(4, "0")}`;
+
+// zoneToken(zone, cut) — formats a CQ zone for a contest exchange.
+// Zero-pads to two digits, then applies cut-number substitution consistently
+// with the rest of the app: 0→T, 9→N.
+// zoneToken(5, false)  → "05"
+// zoneToken(5, true)   → "T5"
+// zoneToken(30, false) → "30"
+export const zoneToken = (zone, cut) => cutNum(String(zone).padStart(2, "0"), cut);
+
+// reciprocalCall(hostPrefix, myCall, activitySuffix) — builds the callsign format
+// used when operating abroad.  Host prefix comes FIRST (the reverse of domestic
+// W1AW/P style), then slash, then the US call, then optional activity suffix.
+// reciprocalCall("DL", "N1KB")          → "DL/N1KB"
+// reciprocalCall("F", "N1KB", "/P")     → "F/N1KB/P"
+// reciprocalCall("SV3", "K4RLC", "/P")  → "SV3/K4RLC/P"
+export function reciprocalCall(hostPrefix, myCall, activitySuffix = "") {
+  return `${hostPrefix}/${myCall}${activitySuffix}`;
+}
 
 // Contest cut numbers: 9 → N, 0 → T (599 → 5NN)
 export const cutNum = (s, cut) => (cut ? s.replace(/9/g, "N").replace(/0/g, "T") : s);
 
 export const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-export const randCall = (prefixes = DX_PREFIXES) => {
+export const randCall = (prefixes = US_PREFIXES) => {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   // Suffix 1–3 letters. Combined with the 1- and 2-letter prefixes, this yields
   // every common format — 1×2, 1×3, 2×1, 2×2, 2×3 (a 1-letter suffix gives the
@@ -266,6 +323,79 @@ export function drillQsoLine(settings) {
   return subTokens(rand(QSO_PHRASES), settings);
 }
 
+/* ================= DX DRILL GENERATORS (Phase 1) ================= */
+//
+// Five new categories placed after Callsigns — the DX rungs are harder than
+// domestic callsigns because they combine international prefixes, cut numbers,
+// and split/pileup conventions that require DX-specific knowledge.
+
+// Drill: 1–3 DX callsigns drawn from DX_GENERATION_POOL.  Mirrors drillCallsign
+// but uses international prefixes so every call is a real foreign station.
+export function drillDxCallsigns(settings) {
+  const count = [1, 1, 2, 2, 3][Math.floor(Math.random() * 5)];
+  return Array.from({ length: count }, () => randDxStation().call).join(" ");
+}
+
+// Drill: DX signal-report exchanges.  5NN is the near-universal DX convention
+// (not an honest report); the zone comes from the generation pool — a real zone,
+// so "5NN 25" is Japan (zone 25), not an invented number.
+export function drillDxExchange(settings) {
+  const cut = settings.cutNumbers;
+  const rst = cutNum("599", cut);      // 5NN with cut on, 599 with cut off
+  const zone = zoneToken(randDxStation().cqZone, cut);
+  const variants = [
+    rst,                                // bare report — simplest
+    `${rst} ${zone}`,                   // RST + CQ zone (CQ WW style)
+    `TU ${rst}`,                        // confirming contact
+    `${rst} TU`,                        // common "report then TU" order
+  ];
+  return rand(variants);
+}
+
+// Drill: contest fragments — the short tokens you hear most often during a CW
+// contest weekend.  Fixed phrases plus a WPX-style serial (cut-aware).
+export function drillContestFragments(settings) {
+  const cut = settings.cutNumbers;
+  const rst = cutNum("599", cut);
+  // Build a random serial 001–099; cut it (0→T, so 001 → TT1, 010 → T1T).
+  const serial = cutNum(String(1 + Math.floor(Math.random() * 99)).padStart(3, "0"), cut);
+  const fixed = ["CQ TEST", "CQ DX", "QRZ?", "AGN", "NR"];
+  const serials = [`${rst} ${serial}`, `${rst} TU`];
+  const pool = [...fixed, ...serials, ...serials]; // weight serials higher
+  return rand(pool);
+}
+
+// Drill: split & pileup fragments.  Teaches the caller-moves mechanic and
+// pileup brevity.  QSX is intentionally ABSENT (rarely heard on modern CW —
+// see the LINGO DX glossary where it is defined as a read-only reference).
+export function drillSplitPileup(settings) {
+  // A bare DX callsign — correct pileup practice (send only your call).
+  const dxCall = randDxStation().call;
+  // Partial-call format: first letter of a random call + "? KN"
+  const partial = randDxStation().call[0] + "? KN";
+  const fragments = [
+    "UP",
+    "UP 5",
+    "UP 5 TO 10",
+    dxCall,          // bare call — pileup etiquette
+    partial,         // partial call + KN ("W4? KN")
+    "QRZ?",
+  ];
+  return rand(fragments);
+}
+
+// Drill: reciprocal / abroad callsigns.  Teaches the host-prefix-FIRST convention
+// using the operator's own call so the format is immediately personal.
+// Uses entityPrefix (e.g. "VK", "DL") not a call-area prefix (e.g. "VK2") —
+// the reciprocal format targets the country, which is what the LEARN guide teaches.
+export function drillReciprocalCalls(settings) {
+  const myCall = settings.myCall || "W1AW";
+  const hostPrefix = rand(DX_GENERATION_POOL).entityPrefix;
+  const suffixOptions = ["", "", "/P", "/M"];   // blank weighted — bare is most common
+  const suffix = rand(suffixOptions);
+  return reciprocalCall(hostPrefix, myCall, suffix);
+}
+
 // Registry: single source of truth for the UI ladder AND the direct-pick row.
 // Array order IS the ladder (simplest → hardest). The UI renders this directly;
 // adding a category is a one-line change here.
@@ -278,6 +408,10 @@ export function drillQsoLine(settings) {
 // Common words. Prosigns are less frequent and slightly harder to memorize.
 // catIdx is NOT persisted, so no state migration is needed (useState(0) resets
 // each mount). Tests that pin labels by index are updated in this commit.
+//
+// Items 9–13 (Phase 1, intl-dx-p1): five DX rungs appended after Callsigns.
+// They sit at the hard end of the ladder — they require knowing DX conventions,
+// international prefixes, and split/pileup behaviour before they make sense.
 export const DRILL_CATEGORIES = [
   { id: "words",     label: "Common words",        gen: drillCommonWords },
   { id: "qcodes",    label: "Q-codes & abbrev",    gen: drillQCodes },
@@ -287,6 +421,12 @@ export const DRILL_CATEGORIES = [
   { id: "cq",        label: "Calling CQ",          gen: drillCallingCq },
   { id: "qso",       label: "Full QSO lines",      gen: drillQsoLine },
   { id: "callsigns", label: "Callsigns",           gen: drillCallsign },
+  // DX rungs — harder end of the ladder; require LINGO DX knowledge first.
+  { id: "dxcalls",   label: "DX callsigns",        gen: drillDxCallsigns },
+  { id: "dxexch",    label: "DX exchanges",        gen: drillDxExchange },
+  { id: "contest",   label: "Contest fragments",   gen: drillContestFragments },
+  { id: "split",     label: "Split & pileup",      gen: drillSplitPileup },
+  { id: "recip",     label: "Abroad callsigns",    gen: drillReciprocalCalls },
 ];
 
 /* ================= FIST TIMING ANALYZER ================= */
@@ -515,7 +655,8 @@ export function cqCall(activity, call, suffix = "") {
 /* Contact scripts follow current on-air practice:
    - Ragchew: 3x2 CQ, BT (=) separators, KN to hold the frequency, SK + dit-dit to close.
    - POTA: hunters send their call ONCE — no DE, no K. Short exchange with BK turnovers,
-     state as QTH, activator closes "TU <state> 73 EE". Park refs use the US- prefix.
+     state as QTH, activator closes "TU <state> 73 EE". US park refs use the K- prefix
+     (e.g. K-1234); international parks carry their own prefix (e.g. DE-0031).
      NOTE: park reference is NOT sent on the air — the activator logs it, not sends it.
    - SOTA: activator signs /P, summit ref (assoc/region-number) in the CQ, chaser-style exchange.
    - IOTA: DX island station, contest-style — report + island ref, quick TU. */
@@ -527,6 +668,8 @@ export const ROLE_TERMS = {
   pota:    [["activator", "Activator"], ["hunter", "Hunter"]],
   sota:    [["activator", "Activator"], ["chaser", "Chaser"]],
   iota:    [["activator", "Activator"], ["chaser", "Chaser"]],
+  dx:      [["callcq", "Call CQ DX"], ["hunt", "Hunt the DX"]],
+  contest: [["run", "Running (CQ TEST)"], ["sp", "Search & pounce"]],
 };
 
 export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
@@ -619,7 +762,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
   };
 }
 
-export function buildPota({ myCall, myQth, cut }, role = "hunter") {
+export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
   const myState = stateOf(myQth);
   const dx = randCall();
   const rst = cutNum(rand(RSTS), cut);
@@ -630,6 +773,90 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter") {
   // A2 (v1.1): POTA activators do NOT send the park ref in the CQ — it goes in
   // the log. The CQ format varies via cqCall; all variants contain "POTA".
   if (role === "hunter") {
+    // P2P variant: both stations are activating in different parks.
+    // Exchange swaps your US state for your park ref — both parks end up on air.
+    if (opts.p2p) {
+      const field = randDxFieldStation();
+      const myPark = randPark();
+      const dxCq = cqCall("pota", field.call);
+      return {
+        dx: field.call, flavor: "POTA",
+        summary: `P2P — worked ${field.entity} (${field.call}) at ${field.potaRef}. Your park: ${myPark}. Both in the log.`,
+        steps: [
+          {
+            who: "dx",
+            text: dxCq,
+            copyHint: `A DX park activator (${field.entity}). Grab the call — both of you are activating.`,
+          },
+          {
+            who: "you",
+            suggested: `${myCall}`,
+            prompt: "P2P — your callsign once, same as any POTA pileup.",
+            mustContain: [myCall],
+          },
+          {
+            who: "dx",
+            text: `${myCall} GM UR ${rst} ${rst} BK`,
+            copyHint: "Your report twice, BK.",
+          },
+          {
+            who: "you",
+            suggested: `BK GM UR ${myRst} ${myRst} ${myPark} ${myPark} BK`,
+            prompt: "BK, greeting, their report, your park ref twice. P2P exchanges park refs, not states.",
+            mustContain: [myRst, myPark],
+          },
+          {
+            who: "dx",
+            text: `BK TU ${myPark} 73 ${field.potaRef} DE ${field.call} EE`,
+            copyHint: `Copy their park ref (${field.potaRef}) — that's what goes in YOUR log.`,
+          },
+        ],
+      };
+    }
+
+    // DX variant: the activator is an international station (DX prefix).
+    // Exchange grammar is the same; you still send your US state.
+    // The DX station closes with "TU 73" (no US-state-as-handle).
+    if (opts.dx) {
+      const dxStation = randDxStation();
+      const dxCall = dxStation.call;
+      const dxCq = cqCall("pota", dxCall);
+      return {
+        dx: dxCall, flavor: "POTA",
+        summary: `DX hunt — worked ${dxStation.entity} (${dxCall}). In the log.`,
+        steps: [
+          {
+            who: "dx",
+            text: dxCq,
+            copyHint: `A DX park activator (${dxStation.entity}). Same pileup protocol, exotic prefix.`,
+          },
+          {
+            who: "you",
+            suggested: `${myCall}`,
+            prompt: "Your callsign once — pileup protocol is the same regardless of where they're activating.",
+            mustContain: [myCall],
+          },
+          {
+            who: "dx",
+            text: `${myCall} GM UR ${rst} ${rst} BK`,
+            copyHint: "Report twice, BK.",
+          },
+          {
+            who: "you",
+            suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
+            prompt: "BK, their report, your state twice, BK. Exchange grammar is identical to domestic.",
+            mustContain: [myRst, myState],
+          },
+          {
+            who: "dx",
+            text: `BK TU 73 DE ${dxCall} EE`,
+            copyHint: "TU 73 — a DX activator won't use your state as a handle; they just close.",
+          },
+        ],
+      };
+    }
+
+    // Domestic hunter (default): works a US activator.
     const dxCq = cqCall("pota", dx);
     return {
       dx, flavor: "POTA",
@@ -667,7 +894,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter") {
   }
 
   // Activator role: you call CQ POTA and run the exchange.
-  // On the air the park reference (US-XXXX) is NOT sent — it goes in the log.
+  // On the air the park reference (K-XXXX) is NOT sent — it goes in the log.
   // cqCall generates a realistic varied POTA CQ; all variants include myCall.
   const dxState = stateOf(rand(QTHS));
   const dxRst   = cutNum(rand(RSTS), cut);
@@ -707,7 +934,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter") {
   };
 }
 
-export function buildSota({ myCall, cut }, role = "chaser") {
+export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
   const dx = randCall();
   const rst = cutNum(rand(RSTS), cut);
   const myRst = cutNum("599", cut);
@@ -717,6 +944,91 @@ export function buildSota({ myCall, cut }, role = "chaser") {
   // The activator signs /P and includes the summit ref in the CQ so chasers can
   // log it. The summit ref is passed as the suffix to cqCall.
   if (role === "chaser") {
+    // S2S variant: both stations are activating on different summits.
+    // You sign /P; your US summit ref is exchanged on air.
+    if (opts.p2p) {
+      const field = randDxFieldStation();
+      const mySummit = rand(SUMMITS);
+      const dxCq = cqCall("sota", `${field.call}/P`, field.sotaRef);
+      return {
+        dx: field.call, flavor: "SOTA",
+        dxSigned: `${field.call}/P`,
+        summary: `S2S with ${field.entity} (${field.call}/P) on ${field.sotaRef} — ${rst}. Your summit: ${mySummit}.`,
+        steps: [
+          {
+            who: "dx",
+            text: dxCq,
+            copyHint: `A DX summit activator — the ref in the CQ (${field.sotaRef}) goes in your log. Note the /P.`,
+          },
+          {
+            who: "you",
+            suggested: `${myCall}/P`,
+            prompt: "S2S: send your call signing /P — you're also activating. Callsign once.",
+            mustContain: [myCall],
+          },
+          {
+            who: "dx",
+            text: `${myCall} GM UR ${rst} ${rst} BK`,
+            copyHint: "Your report twice, BK — same terse pace as any SOTA.",
+          },
+          {
+            who: "you",
+            suggested: `BK R R UR ${myRst} ${myRst} ${mySummit} TU`,
+            prompt: "Roger, their report, your summit ref, TU. S2S: both refs get logged.",
+            mustContain: [myRst, mySummit],
+          },
+          {
+            who: "dx",
+            text: `BK TU ES 73 DE ${field.call}/P EE`,
+            copyHint: "TU, 73, and the dit-dit — your S2S logs their ref, they log yours.",
+          },
+        ],
+      };
+    }
+
+    // DX variant: the activator is on a summit abroad.
+    // Exchange is identical to domestic chaser — grab the call, report back.
+    if (opts.dx) {
+      const dxStation = randDxFieldStation(); // field station so call/summit are coherent
+      const dxCall = dxStation.call;
+      const dxCq = cqCall("sota", `${dxCall}/P`, dxStation.sotaRef);
+      return {
+        dx: dxCall, flavor: "SOTA",
+        dxSigned: `${dxCall}/P`,
+        summary: `Chased ${dxStation.entity} (${dxCall}/P) on ${dxStation.sotaRef} — ${rst}. New entity.`,
+        steps: [
+          {
+            who: "dx",
+            text: dxCq,
+            copyHint: `DX summit activator — ${dxStation.entity}. Grab the call; the summit ref is in the CQ.`,
+          },
+          {
+            who: "you",
+            suggested: `${myCall}`,
+            prompt: "Chase it — your callsign once. SOTA pileup protocol is the same everywhere.",
+            mustContain: [myCall],
+          },
+          {
+            who: "dx",
+            text: `${myCall} GM UR ${rst} ${rst} BK`,
+            copyHint: "QRP from a DX peak — copy the report.",
+          },
+          {
+            who: "you",
+            suggested: `BK R R UR ${myRst} ${myRst} TU`,
+            prompt: "Roger, their report, TU. Short is right — they're on battery.",
+            mustContain: [myRst],
+          },
+          {
+            who: "dx",
+            text: `BK TU ES 73 DE ${dxCall}/P EE`,
+            copyHint: "TU 73 and the dit-dit. New entity in the log.",
+          },
+        ],
+      };
+    }
+
+    // Domestic chaser (default): works a US activator.
     const dxCq = cqCall("sota", `${dx}/P`, summit);
     return {
       dx, flavor: "SOTA",
@@ -841,7 +1153,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
 
   // Activator role: you're the DX island station, calling CQ IOTA.
   // The island ref follows the call in the CQ — passed as suffix to cqCall.
-  const chaser = randCall(DX_PREFIXES);
+  const chaser = randCall(US_PREFIXES);
   const myRpt = cutNum("599", cut);
   return {
     dx: chaser, flavor: "IOTA",
@@ -874,6 +1186,204 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         suggested: `TU 73 QRZ IOTA DE ${myCall} K`,
         prompt: "TU, straight to QRZ, back to calling. Island stations keep the rate up.",
         mustContain: ["TU"],
+      },
+    ],
+  };
+}
+
+/* ================= WORK DX ================= */
+/* Terse DX pileup exchange: DX CQ → you call → 5NN exchange → QRZ.
+   No names, no QTH — fast and to the point, like a real DX pileup.
+
+   opts.split (hunt role only): adds "UP 5 TO 10" to the DX CQ step so the
+   trainee copies the QSX directive.  Presentational only — no real frequency
+   offset is modeled; this trains copy, not dial control. */
+
+export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
+  const dxStation = randDxStation();
+  const dxCall = dxStation.call;
+  const rpt = cutNum("599", cut);
+
+  // Hunt role: you hear a DX station calling CQ DX and answer.
+  if (role === "hunt") {
+    const baseCq = cqCall("dx", dxCall);
+    // Split: append QSX directive to the CQ text only — no change to mustContain.
+    const dxCqText = opts.split ? `${baseCq} UP 5 TO 10` : baseCq;
+    const step2Prompt = opts.split
+      ? "They're listening UP — throw your call on the split frequency."
+      : "Terse pileup answer — your call once, then listen.";
+    return {
+      dx: dxCall, flavor: "DX",
+      summary: `Worked ${dxStation.entity} (${dxCall}) — 5NN out.`,
+      steps: [
+        {
+          who: "dx",
+          text: dxCqText,
+          copyHint: `DX CQ — the prefix names the country (${dxStation.entity}). The call is everything.`,
+        },
+        {
+          who: "you",
+          suggested: `${myCall}`,
+          prompt: step2Prompt,
+          mustContain: [myCall],
+        },
+        {
+          who: "dx",
+          text: `${myCall} ${rpt}`,
+          copyHint: "5NN is convention on DX — they didn't measure your signal, and neither did you.",
+        },
+        {
+          who: "you",
+          suggested: `${rpt} TU`,
+          prompt: "Their report back, TU. That's the full DX exchange.",
+          mustContain: [rpt, "TU"],
+        },
+        {
+          who: "dx",
+          text: "QRZ?",
+          copyHint: "Done — who's next in the pileup.",
+        },
+      ],
+    };
+  }
+
+  // Call CQ DX role: you run the frequency, a DX station answers.
+  // Symmetric: same 5-step shape, speakers swapped.
+  return {
+    dx: dxCall, flavor: "DX",
+    summary: `Called CQ DX — worked ${dxStation.entity} (${dxCall}). 5NN given.`,
+    steps: [
+      {
+        who: "you",
+        suggested: cqCall("dx", myCall),
+        prompt: "Call CQ DX — CQ DX, DE, your call. Keep calling until someone answers.",
+        mustContain: [myCall],
+      },
+      {
+        who: "dx",
+        text: `${myCall} DE ${dxCall} ${dxCall} K`,
+        copyHint: "A station answers — their call twice, DE, your call first. Write down their call.",
+      },
+      {
+        who: "you",
+        suggested: `${dxCall} ${rpt} ${rpt}`,
+        prompt: "Work them — their call, then report twice. Short and clean.",
+        mustContain: [rpt],
+      },
+      {
+        who: "dx",
+        text: `${rpt} TU`,
+        copyHint: "Their report and TU — fast turnover on DX.",
+      },
+      {
+        who: "you",
+        suggested: `TU QRZ DX DE ${myCall}`,
+        prompt: "TU, then back to calling — QRZ DX, DE, your call.",
+        mustContain: ["TU"],
+      },
+    ],
+  };
+}
+
+/* ================= CONTEST ================= */
+/* Two contest exchange types controlled by opts.contestType:
+   "wpx" (default) — send a serial number; random plausible per contact (NOT a
+     running count — contacts are independent in this trainer and there is no log
+     to increment against; a fake running counter would imply continuity we don't model).
+   "zone" — send the CQ zone (CQ World Wide style).
+
+   myCqZone comes from the profile (computed at JSX edge: resolveUSState(stateOf(myQth))?.cq ?? 5).
+   The builder receives it as a pure number and stays free of DOM/dataset access.
+
+   Both myExch and dxExch are computed once so the token in the step text and
+   the token in mustContain are guaranteed to be the same string — the text-parity
+   trap that has burned this team before. */
+
+export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts = {}) {
+  const dxRow = randDxStation();
+  const dxCall = dxRow.call;
+  const rpt = cutNum("599", cut);
+
+  // serial(): random 3-digit number formatted with cut numbers.
+  // NOT a running count — each contact is independent; incrementing a fake
+  // serial would imply log continuity this trainer doesn't provide.
+  const serial = () => cutNum(String(1 + Math.floor(Math.random() * 999)).padStart(3, "0"), cut);
+
+  // Exchange token per side — computed ONCE and reused in text + mustContain.
+  // Zone path: zoneToken() pads to 2 digits and applies cut numbers consistently.
+  const exch = (zone) => opts.contestType === "zone" ? zoneToken(zone, cut) : serial();
+  const myExch = exch(myCqZone);
+  const dxExch = exch(dxRow.cqZone);
+
+  // Running role: you call CQ TEST, a DX station pounces.
+  if (role === "run") {
+    return {
+      dx: dxCall, flavor: "CONTEST",
+      summary: `Running — worked ${dxCall}. Your exchange: ${myExch}.`,
+      steps: [
+        {
+          who: "you",
+          suggested: `CQ TEST ${myCall} ${myCall}`,
+          prompt: "Call CQ TEST — your call twice. Short and fast.",
+          mustContain: [myCall],
+        },
+        {
+          who: "dx",
+          text: `${dxCall}`,
+          copyHint: "A station pounces with their call once. Write it down fast.",
+        },
+        {
+          who: "you",
+          suggested: `${dxCall} ${rpt} ${myExch}`,
+          prompt: `Work them — their call, report, your ${opts.contestType === "zone" ? "zone" : "serial"}.`,
+          mustContain: [rpt, myExch],
+        },
+        {
+          who: "dx",
+          text: `${rpt} ${dxExch} TU`,
+          copyHint: `Their report and ${opts.contestType === "zone" ? "zone" : "serial"} — copy that exchange token.`,
+        },
+        {
+          who: "you",
+          suggested: `TU ${myCall} TEST`,
+          prompt: "Close with TU, your call, TEST. Back to calling immediately.",
+          mustContain: ["TU"],
+        },
+      ],
+    };
+  }
+
+  // S&P (search & pounce): DX is running, you find and work them.
+  return {
+    dx: dxCall, flavor: "CONTEST",
+    summary: `S&P — worked ${dxCall} running. Your exchange: ${myExch}.`,
+    steps: [
+      {
+        who: "dx",
+        text: `CQ TEST ${dxCall} ${dxCall}`,
+        copyHint: "A running station — grab the callsign, then pounce.",
+      },
+      {
+        who: "you",
+        suggested: `${myCall}`,
+        prompt: "Pounce — your call once. Don't repeat, don't say DE.",
+        mustContain: [myCall],
+      },
+      {
+        who: "dx",
+        text: `${myCall} ${rpt} ${dxExch}`,
+        copyHint: `Your call confirmed, then their exchange — copy that ${opts.contestType === "zone" ? "zone" : "serial"}.`,
+      },
+      {
+        who: "you",
+        suggested: `${rpt} ${myExch} TU`,
+        prompt: `Report + your ${opts.contestType === "zone" ? "zone" : "serial"} + TU. Fast and clean.`,
+        mustContain: [rpt, myExch],
+      },
+      {
+        who: "dx",
+        text: `TU ${dxCall} TEST`,
+        copyHint: "TU and back to calling — contest pace, no pleasantries.",
       },
     ],
   };

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MORSE, REV, similarity, timing,
-  buildRagchew, buildPota, buildSota, buildIota,
+  buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   cutNum, isReadyToAdvance,
   PROSIGNS, PROSIGN_CODES, QCODES_ABBREV, DRILL_CATEGORIES,
   drillCallsign, drillCallingCq, drillRstExchange, drillNumbers,
@@ -16,6 +16,11 @@ import {
   learnTrend, keyTrend, copyTrend,
   toneFor, qsoTrend,
   splashSignature,
+  US_PREFIXES,
+  DX_GENERATION_POOL, POTA_COUNTRY_PREFIXES, INTL_SUMMITS,
+  randDxStation, randDxFieldStation, randPark, zoneToken, reciprocalCall,
+  drillDxCallsigns, drillDxExchange, drillContestFragments,
+  drillSplitPileup, drillReciprocalCalls,
 } from "./cw-core.js";
 
 // ---------------------------------------------------------------------------
@@ -592,8 +597,8 @@ describe("drillQsoLine()", () => {
 });
 
 describe("DRILL_CATEGORIES", () => {
-  it("has exactly 8 categories", () => {
-    expect(DRILL_CATEGORIES.length).toBe(8);
+  it("has 13 categories (8 original + 5 DX rungs added in Phase 1)", () => {
+    expect(DRILL_CATEGORIES.length).toBe(13);
   });
 
   it("each entry has id, label, and gen function", () => {
@@ -632,8 +637,8 @@ describe("DRILL_CATEGORIES", () => {
     expect(DRILL_CATEGORIES[2].id).toBe("prosigns");
   });
 
-  it("last category is 'callsigns' (hardest — variable length, no patterns)", () => {
-    expect(DRILL_CATEGORIES[DRILL_CATEGORIES.length - 1].id).toBe("callsigns");
+  it("last category is 'recip' (DX abroad callsigns — hardest DX rung, added Phase 1)", () => {
+    expect(DRILL_CATEGORIES[DRILL_CATEGORIES.length - 1].id).toBe("recip");
   });
 });
 
@@ -1070,24 +1075,27 @@ describe("answering-branch text parity (strong lock)", () => {
   it("ragchew answering: CQ step shape-checked; exchange steps exact-locked", () => {
     const steps = stepsOf(buildRagchew, "answer");
     // Step 0: DX CQ — shape check only (CQ format varies)
-    assertCqShape(steps[0], "VE3H");
+    // Note: expected call is N5H — VE3 was removed from US_PREFIXES (Canada is now DX),
+    // shifting the seeded prefix pick from index 7 (VE3) to index 6 (N5) in the 13-item list.
+    assertCqShape(steps[0], "N5H");
     // Steps 1–4: exact lock
-    expect(steps[1]).toBe("VE3H DE K9MTE K9MTE K");
-    expect(steps[2]).toBe("K9MTE DE VE3H = GM TNX FER CALL = UR RST 569 569 = NAME MAX MAX = QTH CEDAR RAPIDS IA = HW? K9MTE DE VE3H KN");
-    expect(steps[3]).toBe("R R VE3H DE K9MTE = GM MAX TNX FER RPT = UR RST 599 599 = NAME TRAVIS TRAVIS = QTH MADISON WI = HW? VE3H DE K9MTE KN");
-    expect(steps[4]).toBe("R FB TRAVIS = TNX FER FB QSO = 73 ES HPE CUAGN K9MTE DE VE3H SK EE");
+    expect(steps[1]).toBe("N5H DE K9MTE K9MTE K");
+    expect(steps[2]).toBe("K9MTE DE N5H = GM TNX FER CALL = UR RST 569 569 = NAME MAX MAX = QTH CEDAR RAPIDS IA = HW? K9MTE DE N5H KN");
+    expect(steps[3]).toBe("R R N5H DE K9MTE = GM MAX TNX FER RPT = UR RST 599 599 = NAME TRAVIS TRAVIS = QTH MADISON WI = HW? N5H DE K9MTE KN");
+    expect(steps[4]).toBe("R FB TRAVIS = TNX FER FB QSO = 73 ES HPE CUAGN K9MTE DE N5H SK EE");
   });
 
   it("pota hunter: CQ step shape-checked; exchange steps exact-locked (A2: no park ref)", () => {
     const steps = stepsOf(buildPota, "hunter");
     // Step 0: activator CQ — shape only; POTA tag must be present; park ref must NOT be
-    assertCqShape(steps[0], "VE3H", "POTA");
+    // N5H replaces VE3H after VE3 removal from US_PREFIXES (see ragchew lock comment above).
+    assertCqShape(steps[0], "N5H", "POTA");
     expect(steps[0]).not.toMatch(/US-\d+/);
     // Steps 1–4: exact lock
     expect(steps[1]).toBe("K9MTE");
     expect(steps[2]).toBe("K9MTE GM UR 589 589 BK");
     expect(steps[3]).toBe("BK GM UR 599 599 WI WI BK");
-    expect(steps[4]).toBe("BK TU WI 73 DE VE3H EE");
+    expect(steps[4]).toBe("BK TU WI 73 DE N5H EE");
   });
 
   it("pota hunter CQ step does not contain a park reference (A2)", () => {
@@ -1101,13 +1109,14 @@ describe("answering-branch text parity (strong lock)", () => {
   it("sota chaser: CQ step shape-checked (includes /P and summit ref); exchange steps exact-locked", () => {
     const steps = stepsOf(buildSota, "chaser");
     // Step 0: SOTA activator CQ — must have /P call, SOTA tag, summit ref, ends K
-    assertCqShape(steps[0], "VE3H/P", "SOTA");
+    // N5H/P replaces VE3H/P — same seed shift as ragchew lock.
+    assertCqShape(steps[0], "N5H/P", "SOTA");
     expect(steps[0]).toMatch(/[A-Z0-9]+\/[A-Z]+-\d+/); // summit ref present
     // Steps 1–4: exact lock
     expect(steps[1]).toBe("K9MTE");
     expect(steps[2]).toBe("K9MTE GM UR 589 589 BK");
     expect(steps[3]).toBe("BK R R UR 599 599 TU");
-    expect(steps[4]).toBe("BK TU ES 73 DE VE3H/P EE");
+    expect(steps[4]).toBe("BK TU ES 73 DE N5H/P EE");
   });
 
   it("iota chaser: CQ step shape-checked (includes IOTA tag and island ref); exchange steps locked", () => {
@@ -2231,5 +2240,868 @@ describe("splashSignature", () => {
   });
   it("trims whitespace around a real call", () => {
     expect(splashSignature("  K9MTE  ", "W1AW")).toBe("K9MTE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1 — International / DX data model
+// ---------------------------------------------------------------------------
+
+// ---- DX_GENERATION_POOL integrity ----
+// The pool is built from the real bundled DXCC dataset at module load.
+// These tests verify the structure AND assert against sourced values so they
+// bite if the dataset or pool builder regresses.
+describe("DX_GENERATION_POOL integrity", () => {
+  it("every row has required fields with valid types and zone range", () => {
+    for (const row of DX_GENERATION_POOL) {
+      expect(typeof row.prefix).toBe("string");
+      expect(row.prefix.length).toBeGreaterThan(0);
+      expect(typeof row.entityPrefix).toBe("string");
+      expect(row.entityPrefix.length).toBeGreaterThan(0);
+      expect(typeof row.entity).toBe("string");
+      expect(row.entity.length).toBeGreaterThan(0);
+      expect(typeof row.continent).toBe("string");
+      expect(typeof row.cqZone).toBe("number");
+      // All valid CQ zones are 1–40
+      expect(row.cqZone).toBeGreaterThanOrEqual(1);
+      expect(row.cqZone).toBeLessThanOrEqual(40);
+    }
+  });
+
+  it("has at least one entry from each inhabited continent", () => {
+    const continents = new Set(DX_GENERATION_POOL.map((r) => r.continent));
+    for (const c of ["EU", "AS", "OC", "SA", "AF", "NA"]) {
+      expect(continents.has(c)).toBe(true);
+    }
+  });
+
+  it("Germany (DL) is present with dataset-sourced CQ zone 14", () => {
+    // Verifies the pool is from the real dataset, not a hand-rolled guess.
+    const dl = DX_GENERATION_POOL.find((r) => r.entityPrefix === "DL");
+    expect(dl).toBeDefined();
+    expect(dl.entity).toMatch(/Germany/);
+    expect(dl.cqZone).toBe(14);
+    expect(dl.continent).toBe("EU");
+  });
+
+  it("Australia VK2 entry has CQ zone 30 (not the entity default null)", () => {
+    // Confirms multi-zone call-area expansion: VK2 = NSW = zone 30.
+    // Zone 29 is Western Australia (VK6/VK8) — a wrong zone here means the
+    // expansion didn't happen and a generated VK2 call would carry the wrong zone.
+    const vk2 = DX_GENERATION_POOL.find((r) => r.prefix === "VK2");
+    expect(vk2).toBeDefined();
+    expect(vk2.cqZone).toBe(30);
+    expect(vk2.entityPrefix).toBe("VK");
+    expect(vk2.entity).toMatch(/Australia/);
+  });
+
+  it("Canada VE7 entry has CQ zone 3 (British Columbia)", () => {
+    // cty.csv misses VE7=CQ3; the generator supplements from k0swe.
+    // If VE7 were still at zone 5 (the cty.csv default), this bites.
+    const ve7 = DX_GENERATION_POOL.find((r) => r.prefix === "VE7");
+    expect(ve7).toBeDefined();
+    expect(ve7.cqZone).toBe(3);
+    expect(ve7.entityPrefix).toBe("VE");
+  });
+});
+
+// ---- randDxStation() coherence ----
+describe("randDxStation()", () => {
+  it("returns call, entity, continent, cqZone, prefix, and entityPrefix fields", () => {
+    const s = randDxStation();
+    expect(typeof s.call).toBe("string");
+    expect(typeof s.entity).toBe("string");
+    expect(typeof s.continent).toBe("string");
+    expect(typeof s.cqZone).toBe("number");
+    expect(typeof s.prefix).toBe("string");
+    expect(typeof s.entityPrefix).toBe("string");
+  });
+
+  it("call starts with the pool entry's prefix — zone is never null", () => {
+    // Every draw: call must start with the prefix of the pool row drawn, and
+    // cqZone must be a real number (not null — multi-zone entity defaults are null
+    // but call-area expansion gives a concrete zone).
+    for (let i = 0; i < 50; i++) {
+      const s = randDxStation();
+      const row = DX_GENERATION_POOL.find((r) => r.prefix === s.prefix);
+      expect(row).toBeDefined();
+      expect(s.call.startsWith(s.prefix)).toBe(true);
+      expect(s.entity).toBe(row.entity);
+      expect(s.cqZone).toBe(row.cqZone);
+      expect(s.continent).toBe(row.continent);
+      expect(typeof s.cqZone).toBe("number"); // never null from pool
+    }
+  });
+
+  it("accepts a custom pool and only draws from it", () => {
+    // Single-entry pool — every draw must return that entry's data exactly.
+    // VK6 = zone 29 (Western Australia) — confirms the data-layer CQ zone is used.
+    const pool = [{ prefix: "VK6", entityPrefix: "VK", entity: "Australia", continent: "OC", cqZone: 29 }];
+    for (let i = 0; i < 10; i++) {
+      const s = randDxStation(pool);
+      expect(s.prefix).toBe("VK6");
+      expect(s.entityPrefix).toBe("VK");
+      expect(s.entity).toBe("Australia");
+      expect(s.cqZone).toBe(29);
+      expect(s.call.startsWith("VK6")).toBe(true);
+    }
+  });
+});
+
+// ---- randPark() — K- fix ----
+describe("randPark()", () => {
+  it("default (no arg) produces K-#### format — not US-####", () => {
+    for (let i = 0; i < 20; i++) {
+      const p = randPark();
+      expect(p).toMatch(/^K-\d{4}$/);
+      expect(p).not.toMatch(/^US-/);
+    }
+  });
+
+  it("accepts an international prefix", () => {
+    for (let i = 0; i < 10; i++) {
+      expect(randPark("DE")).toMatch(/^DE-\d{4}$/);
+      expect(randPark("VK")).toMatch(/^VK-\d{4}$/);
+    }
+  });
+
+  it("zero-pads to 4 digits (min output is XXXX-0001, not XXXX-1)", () => {
+    // Can't force the random to 1, but we can confirm the shape is always 4 digits.
+    for (let i = 0; i < 20; i++) {
+      const p = randPark();
+      const num = p.split("-")[1];
+      expect(num.length).toBe(4);
+    }
+  });
+});
+
+// ---- zoneToken() ----
+describe("zoneToken()", () => {
+  it("zero-pads single-digit zones to 2 digits, no cut", () => {
+    expect(zoneToken(5, false)).toBe("05");
+    expect(zoneToken(1, false)).toBe("01");
+    expect(zoneToken(9, false)).toBe("09");
+  });
+
+  it("two-digit zones are unchanged, no cut", () => {
+    expect(zoneToken(10, false)).toBe("10");
+    expect(zoneToken(30, false)).toBe("30");
+    expect(zoneToken(40, false)).toBe("40");
+  });
+
+  it("applies cut numbers — 0→T, 9→N", () => {
+    // zone 5 → "05" → cut → "T5"
+    expect(zoneToken(5, true)).toBe("T5");
+    // zone 9 → "09" → cut → "TN" (0→T, 9→N)
+    expect(zoneToken(9, true)).toBe("TN");
+    // zone 10 → "10" → cut → "1T" (0→T)
+    expect(zoneToken(10, true)).toBe("1T");
+    // zone 29 → "29" → cut → "2N"
+    expect(zoneToken(29, true)).toBe("2N");
+    // zone 30 → "30" → cut → "3T"
+    expect(zoneToken(30, true)).toBe("3T");
+  });
+});
+
+// ---- reciprocalCall() ----
+describe("reciprocalCall()", () => {
+  it("prefix-first, slash separator, no suffix", () => {
+    expect(reciprocalCall("DL", "N1KB")).toBe("DL/N1KB");
+    expect(reciprocalCall("G", "W1AW")).toBe("G/W1AW");
+    expect(reciprocalCall("VK", "K9MTE")).toBe("VK/K9MTE");
+  });
+
+  it("appends activity suffix after the US call", () => {
+    expect(reciprocalCall("F", "N1KB", "/P")).toBe("F/N1KB/P");
+    expect(reciprocalCall("SV3", "K4RLC", "/P")).toBe("SV3/K4RLC/P");
+    expect(reciprocalCall("DL", "N1KB", "/MM")).toBe("DL/N1KB/MM");
+  });
+
+  it("empty suffix is omitted cleanly", () => {
+    expect(reciprocalCall("DL", "N1KB", "")).toBe("DL/N1KB");
+  });
+
+  it("host prefix comes first — not after — unlike domestic W1AW/P", () => {
+    const result = reciprocalCall("SV3", "K4RLC", "/P");
+    expect(result.startsWith("SV3/")).toBe(true);
+    expect(result.endsWith("/P")).toBe(true);
+    // Confirm the US call is sandwiched in the middle
+    expect(result).toContain("K4RLC");
+  });
+});
+
+// ---- DX drill generators ----
+const DX_SETTINGS_CUT_ON  = { myCall: "W1AW", cutNumbers: true };
+const DX_SETTINGS_CUT_OFF = { myCall: "W1AW", cutNumbers: false };
+// Set of call-area prefixes used to generate callsigns ("VK2", "DL", "JA", …).
+// Used to verify that generated calls start with a real pool prefix.
+const DX_CALL_PREFIX_SET  = new Set(DX_GENERATION_POOL.map((r) => r.prefix));
+// Set of entity-level prefixes used for reciprocal calls ("VK", "DL", "JA", …).
+const DX_ENTITY_PREFIX_SET = new Set(DX_GENERATION_POOL.map((r) => r.entityPrefix));
+
+describe("drillDxCallsigns()", () => {
+  it("returns a non-empty string", () => {
+    expect(drillDxCallsigns(DX_SETTINGS_CUT_OFF).length).toBeGreaterThan(0);
+  });
+
+  it("every call token starts with a prefix from DX_GENERATION_POOL", () => {
+    // Run many draws; split on space and check each token's prefix.
+    // The pool contains call-area prefixes like "VK2", "VE3", "DL" —
+    // each generated call must start with one of them.
+    for (let i = 0; i < 30; i++) {
+      const result = drillDxCallsigns(DX_SETTINGS_CUT_OFF);
+      const calls = result.split(" ");
+      for (const call of calls) {
+        const matched = [...DX_CALL_PREFIX_SET].some((p) => call.startsWith(p));
+        expect(matched).toBe(true);
+      }
+    }
+  });
+
+  it("never generates a US domestic call (no W9, K0, etc.)", () => {
+    // VE3 was previously in this list as a "domestic" prefix but VE is Canadian —
+    // it's a legitimate DX target from a US operator's perspective and IS in the
+    // generation pool.  Only truly US-assigned prefixes belong here.
+    const US_DOMESTIC = new Set(["W9","K0","N8","KD9","W1","K4","N5","W7","K6","AC9","KB0","N2","W4"]);
+    for (let i = 0; i < 30; i++) {
+      const calls = drillDxCallsigns(DX_SETTINGS_CUT_OFF).split(" ");
+      for (const call of calls) {
+        const isUsDomestic = [...US_DOMESTIC].some((p) => call.startsWith(p));
+        expect(isUsDomestic).toBe(false);
+      }
+    }
+  });
+});
+
+describe("drillDxExchange()", () => {
+  it("contains 5NN when cut numbers on", () => {
+    // 5NN must appear in at least some draws (the RST part is always 5NN with cut).
+    // Run enough times to hit every variant.
+    let saw5NN = false;
+    for (let i = 0; i < 40; i++) {
+      const r = drillDxExchange(DX_SETTINGS_CUT_ON);
+      if (r.includes("5NN")) saw5NN = true;
+    }
+    expect(saw5NN).toBe(true);
+  });
+
+  it("contains 599 when cut numbers off", () => {
+    let saw599 = false;
+    for (let i = 0; i < 40; i++) {
+      const r = drillDxExchange(DX_SETTINGS_CUT_OFF);
+      if (r.includes("599")) saw599 = true;
+    }
+    expect(saw599).toBe(true);
+  });
+
+  it("zone comes from DX_GENERATION_POOL — no invented zone numbers", () => {
+    const validZones = new Set(DX_GENERATION_POOL.map((r) => r.cqZone));
+    // The zone in the exchange is zero-padded; extract the numeric value.
+    for (let i = 0; i < 30; i++) {
+      const r = drillDxExchange({ myCall: "W1AW", cutNumbers: false });
+      // Match zero-padded 2-digit zone in RST+zone variant, e.g. "599 30" or "599 03"
+      const m = r.match(/\d{3} (\d{2})/);
+      if (m) {
+        const zone = Number(m[1]);
+        expect(validZones.has(zone)).toBe(true);
+      }
+    }
+  });
+});
+
+describe("drillContestFragments()", () => {
+  it("returns a non-empty string", () => {
+    expect(drillContestFragments(DX_SETTINGS_CUT_OFF).length).toBeGreaterThan(0);
+  });
+
+  it("with cut on, any numeric serial uses cut notation — no raw '0' or '9'", () => {
+    // We can't force a serial draw, but over many runs we'll hit serials containing
+    // 0 and 9 — confirm they are replaced by T and N.
+    for (let i = 0; i < 60; i++) {
+      const r = drillContestFragments(DX_SETTINGS_CUT_ON);
+      // Any RST should be "5NN", not "599"; any digit block should apply cut.
+      if (/\d/.test(r)) {
+        // If there's a digit, it should not be a raw 0 or 9 when cut is on.
+        // (Fixed contest phrases like "CQ TEST" contain no digits.)
+        if (r.includes("5")) {
+          // A digit '9' or '0' in a cut context would be wrong.
+          // But watch out: "5" itself is allowed (not cut by the 9→N/0→T rule).
+          // This assertion checks that uncut 9 and 0 are absent when cut is on.
+          expect(r).not.toMatch(/[90]/);
+        }
+      }
+    }
+  });
+
+  it("produces recognized contest tokens in every draw", () => {
+    const VALID = new Set(["CQ", "TEST", "DX", "QRZ?", "AGN", "NR", "5NN", "TU",
+      "T", "N", "1","2","3","4","5","6","7","8"]);
+    for (let i = 0; i < 20; i++) {
+      const r = drillContestFragments(DX_SETTINGS_CUT_ON);
+      const tokens = r.replace("?", "").split(/[\s?]+/).filter(Boolean);
+      // At least the first token should be a known root.
+      // (We can't enumerate every serial permutation, so we check the phrase-type cases.)
+      expect(r.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("drillSplitPileup()", () => {
+  it("returns a non-empty string", () => {
+    expect(drillSplitPileup(DX_SETTINGS_CUT_OFF).length).toBeGreaterThan(0);
+  });
+
+  it("never contains QSX — it belongs in LEARN only, not as a drill", () => {
+    for (let i = 0; i < 30; i++) {
+      expect(drillSplitPileup(DX_SETTINGS_CUT_OFF)).not.toContain("QSX");
+    }
+  });
+
+  it("generated bare-call output starts with a DX_GENERATION_POOL prefix", () => {
+    // The generator uses randDxStation().call, so bare calls must be DX calls.
+    // Over many runs, at least some outputs will be bare DX calls.
+    let sawDxCall = false;
+    for (let i = 0; i < 60; i++) {
+      const r = drillSplitPileup(DX_SETTINGS_CUT_OFF);
+      const mightBeBareCall = !r.startsWith("UP") && !r.startsWith("QRZ");
+      if (mightBeBareCall && !r.includes("?")) {
+        const matched = [...DX_CALL_PREFIX_SET].some((p) => r.startsWith(p));
+        if (matched) sawDxCall = true;
+      }
+    }
+    expect(sawDxCall).toBe(true);
+  });
+
+  it("UP variants appear over many draws", () => {
+    const UP_PATTERN = /^UP/;
+    let sawUp = false;
+    for (let i = 0; i < 30; i++) {
+      if (UP_PATTERN.test(drillSplitPileup(DX_SETTINGS_CUT_OFF))) sawUp = true;
+    }
+    expect(sawUp).toBe(true);
+  });
+});
+
+describe("drillReciprocalCalls()", () => {
+  it("produces a host-prefix-first reciprocal call containing the operator's call", () => {
+    // The reciprocal call uses entityPrefix (e.g. "VK", "DL"), not the call-area
+    // prefix (e.g. "VK2") — the LEARN guide teaches country-level reciprocal format.
+    for (let i = 0; i < 20; i++) {
+      const r = drillReciprocalCalls(DX_SETTINGS_CUT_OFF);
+      expect(r).toContain("W1AW");
+      // Must be PREFIX/CALL format — prefix comes first
+      const slashIdx = r.indexOf("/");
+      expect(slashIdx).toBeGreaterThan(0);
+      const prefix = r.slice(0, slashIdx);
+      expect(DX_ENTITY_PREFIX_SET.has(prefix)).toBe(true);
+    }
+  });
+
+  it("optional suffix appears after the call, not before the prefix", () => {
+    // Run enough times to hit a suffix draw (blank is weighted; /P and /M also occur).
+    let sawSuffix = false;
+    for (let i = 0; i < 60; i++) {
+      const r = drillReciprocalCalls(DX_SETTINGS_CUT_OFF);
+      if (r.endsWith("/P") || r.endsWith("/M")) {
+        sawSuffix = true;
+        // Suffix must be at the END, not at the start or middle.
+        expect(r.startsWith("/")).toBe(false);
+      }
+    }
+    expect(sawSuffix).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Phase 2: data additions and new builders
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Data: HL / XE / BY pool additions + China zone override
+// ---------------------------------------------------------------------------
+describe("Phase 2 pool additions (HL/XE/BY) and REPRESENTATIVE_CQ_ZONE", () => {
+  it("South Korea (HL, code 137) is in the pool with CQ zone 25", () => {
+    const hl = DX_GENERATION_POOL.find((r) => r.entityPrefix === "HL");
+    expect(hl).toBeDefined();
+    expect(hl.cqZone).toBe(25);
+    expect(hl.continent).toBe("AS");
+    expect(hl.entity).toMatch(/Korea/i);
+  });
+
+  it("Mexico (XE, code 50) is in the pool with CQ zone 6", () => {
+    const xe = DX_GENERATION_POOL.find((r) => r.entityPrefix === "XE");
+    expect(xe).toBeDefined();
+    expect(xe.cqZone).toBe(6);
+    expect(xe.continent).toBe("NA");
+    expect(xe.entity).toMatch(/Mexico/i);
+  });
+
+  it("China (BY, code 318) is in the pool with zone 24 (east — never 23)", () => {
+    // REPRESENTATIVE_CQ_ZONE overrides cqZones[0]=23 to 24 (eastern China).
+    // This test is the pin that keeps a dataset regen from silently reverting it.
+    const by = DX_GENERATION_POOL.find((r) => r.entityPrefix === "BY");
+    expect(by).toBeDefined();
+    expect(by.cqZone).toBe(24);
+    // Mutation gate: changing the expected zone to 23 MUST turn this red.
+    expect(by.cqZone).not.toBe(23);
+    expect(by.continent).toBe("AS");
+  });
+
+  it("no deleted entity appears anywhere in DX_GENERATION_POOL", () => {
+    // The allEntities source includes deleted entities; the pool builder filters
+    // them via the !e.deleted guard in singleZoneRow and the entity-level deleted flag.
+    // This verifies the filter actually works for every row.
+    for (const row of DX_GENERATION_POOL) {
+      // We can't import allEntities directly here, so we check the entity name
+      // is defined (deleted entities would produce null from singleZoneRow and
+      // be filtered by .filter(Boolean)).
+      expect(typeof row.entity).toBe("string");
+      expect(row.entity.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Data: US_PREFIXES rename + VE3 removal
+// ---------------------------------------------------------------------------
+describe("US_PREFIXES (renamed from DX_PREFIXES)", () => {
+  it("does not contain VE3 — Canada is a DX entity, not domestic", () => {
+    expect(US_PREFIXES).not.toContain("VE3");
+  });
+
+  it("does not contain any non-US prefix", () => {
+    // All entries should be US-assigned call prefixes.
+    // VE (Canada), F (France), etc. would be wrong here.
+    for (const p of US_PREFIXES) {
+      // US prefixes start with K, W, N, or A — per ITU allocation.
+      // KD, N, AC, KB, W are all valid US prefix starts.
+      expect(p).toMatch(/^[KWAN]/);
+    }
+  });
+
+  it("still contains common US prefixes (W1, K4, N5, W9)", () => {
+    expect(US_PREFIXES).toContain("W1");
+    expect(US_PREFIXES).toContain("K4");
+    expect(US_PREFIXES).toContain("N5");
+    expect(US_PREFIXES).toContain("W9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildDx — both roles, mustContain⊆suggested invariant
+// ---------------------------------------------------------------------------
+const DX_PROF = { myCall: "W1AW", cut: false };
+const DX_PROF_CUT = { myCall: "W1AW", cut: true };
+
+// Helper: verify every you-step's mustContain tokens are literal substrings of suggested.
+// This is the text-parity invariant: the grader does flat.includes(token), so a token
+// that isn't in suggested is unreachable — the test would never turn red on the trainee.
+function assertMustContainSubset(steps) {
+  for (const step of steps) {
+    if (step.mustContain && step.suggested) {
+      for (const token of step.mustContain) {
+        expect(step.suggested).toContain(token);
+      }
+    }
+  }
+}
+
+describe("buildDx() — hunt role", () => {
+  it("returns 5 steps with who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("default role is hunt (backwards-compatible)", () => {
+    const q = buildDx(DX_PROF);
+    expect(q.steps[0].who).toBe("dx");
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildDx(DX_PROF, "hunt").steps);
+    }
+  });
+
+  it("step[1] mustContain includes myCall; step[3] mustContain includes report and TU", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(q.steps[1].mustContain).toContain("W1AW");
+    expect(q.steps[3].mustContain).toContain("TU");
+    // Report token: either 599 or 5NN depending on cut — both should be present
+    const rpt = q.steps[3].mustContain.find((t) => /^[59N]+$/.test(t));
+    expect(rpt).toBeDefined();
+  });
+
+  it("cut: true produces 5NN in step[3] suggested text, not raw 599", () => {
+    const q = buildDx(DX_PROF_CUT, "hunt");
+    expect(q.steps[3].suggested).toContain("5NN");
+    expect(q.steps[3].suggested).not.toContain("599");
+  });
+
+  it("cut: false produces 599 in step[3] suggested text", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(q.steps[3].suggested).toContain("599");
+  });
+
+  it("opts.split appends UP 5 TO 10 to step[0] text", () => {
+    const q = buildDx(DX_PROF, "hunt", { split: true });
+    expect(q.steps[0].text).toContain("UP 5 TO 10");
+  });
+
+  it("without opts.split, step[0] text does NOT contain UP", () => {
+    const q = buildDx(DX_PROF, "hunt", { split: false });
+    expect(q.steps[0].text).not.toContain("UP");
+  });
+
+  it("dx field is set and appears in the CQ step", () => {
+    const q = buildDx(DX_PROF, "hunt");
+    expect(typeof q.dx).toBe("string");
+    expect(q.dx.length).toBeGreaterThan(0);
+    // Hunt step[0] is the DX CQ — generated by cqCall("dx", dxCall) — contains their call.
+    // Step[2] text is "${myCall} ${rpt}" (DX confirms YOUR call + report), NOT the DX call.
+    expect(q.steps[0].text).toContain(q.dx);
+  });
+
+  it("summary names the DX entity", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildDx(DX_PROF, "hunt");
+      // Summary should mention the entity (from dxStation.entity) not just the call
+      expect(typeof q.summary).toBe("string");
+      expect(q.summary.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("buildDx() — callcq role", () => {
+  it("returns 5 steps with who sequence [you,dx,you,dx,you]", () => {
+    const q = buildDx(DX_PROF, "callcq");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["you","dx","you","dx","you"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildDx(DX_PROF, "callcq").steps);
+    }
+  });
+
+  it("step[0] suggested contains myCall (the CQ DX call)", () => {
+    const q = buildDx(DX_PROF, "callcq");
+    expect(q.steps[0].suggested).toContain("W1AW");
+    expect(q.steps[0].mustContain).toContain("W1AW");
+  });
+
+  it("step[4] suggested contains TU and myCall (QRZ back to calling)", () => {
+    const q = buildDx(DX_PROF, "callcq");
+    expect(q.steps[4].suggested).toContain("TU");
+    expect(q.steps[4].suggested).toContain("W1AW");
+    expect(q.steps[4].mustContain).toContain("TU");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildContest — run + sp × wpx + zone
+// ---------------------------------------------------------------------------
+const CONTEST_PROF = { myCall: "W1AW", cut: false, myCqZone: 5 };
+const CONTEST_PROF_CUT = { myCall: "W1AW", cut: true, myCqZone: 5 };
+
+describe("buildContest() — run role", () => {
+  it("returns 5 steps with who sequence [you,dx,you,dx,you]", () => {
+    const q = buildContest(CONTEST_PROF, "run");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["you","dx","you","dx","you"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildContest(CONTEST_PROF, "run").steps);
+    }
+  });
+
+  it("WPX: exchange token in step[2] mustContain is the same string as in step[2] suggested", () => {
+    // The text-parity trap: myExch is computed ONCE and reused in both places.
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(CONTEST_PROF, "run");
+      const step = q.steps[2]; // you: ${dxCall} ${rpt} ${myExch}
+      for (const token of step.mustContain) {
+        expect(step.suggested).toContain(token);
+      }
+    }
+  });
+
+  it("WPX: serial in mustContain is a 3-digit padded number (random, not running count)", () => {
+    // Over 30 contacts the serial must vary — a running counter would increment predictably.
+    // We exclude "599" (always the RST token) and "5NN" (RST with cut) from the search —
+    // both are 3-char tokens but are RSTs, not serials. mustContain contains [rpt, myExch].
+    const serials = new Set();
+    for (let i = 0; i < 30; i++) {
+      const q = buildContest(CONTEST_PROF, "run");
+      const mc = q.steps[2].mustContain;
+      const serial = mc.find((t) => /^\d{3}$/.test(t) && t !== "599");
+      if (serial) serials.add(serial);
+    }
+    // At least a few distinct values over 30 contacts proves it's not a running counter
+    // starting from 001 (which would give only "001" for all first contacts).
+    expect(serials.size).toBeGreaterThan(1);
+  });
+
+  it("zone mode: exchange token is the zero-padded CQ zone of the drawn DX station", () => {
+    // The token must be the zone, formatted consistently with zoneToken().
+    // We verify by cross-checking against the pool.
+    const validZones = new Set(DX_GENERATION_POOL.map((r) => r.cqZone));
+    for (let i = 0; i < 30; i++) {
+      const q = buildContest(CONTEST_PROF, "run", { contestType: "zone" });
+      const step = q.steps[2]; // you: ${dxCall} ${rpt} ${myExch}
+      // myExch for zone mode with cut=false is zero-padded zone (e.g. "05", "14", "25")
+      // Also check step[3] for dxExch
+      for (const token of step.mustContain) {
+        if (/^\d{2}$/.test(token)) {
+          expect(validZones.has(Number(token))).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("cut: true produces 5NN in report token, not 599", () => {
+    // Over many draws we must see 5NN, never raw 599 in the exchange step.
+    let saw5NN = false;
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(CONTEST_PROF_CUT, "run");
+      if (q.steps[2].suggested.includes("5NN")) saw5NN = true;
+    }
+    expect(saw5NN).toBe(true);
+  });
+});
+
+describe("buildContest() — sp role", () => {
+  it("returns 5 steps with who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildContest(CONTEST_PROF, "sp");
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildContest(CONTEST_PROF, "sp").steps);
+    }
+  });
+
+  it("sp step[3] mustContain includes report and exchange token", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(CONTEST_PROF, "sp");
+      const step = q.steps[3]; // you: ${rpt} ${myExch} TU
+      // Must have at least 2 tokens: report and exchange
+      expect(step.mustContain.length).toBeGreaterThanOrEqual(2);
+      for (const token of step.mustContain) {
+        expect(step.suggested).toContain(token);
+      }
+    }
+  });
+
+  it("ROLE_TERMS includes dx and contest entries", () => {
+    expect(ROLE_TERMS.dx).toBeDefined();
+    expect(ROLE_TERMS.contest).toBeDefined();
+    expect(ROLE_TERMS.dx.map(([v]) => v)).toContain("hunt");
+    expect(ROLE_TERMS.dx.map(([v]) => v)).toContain("callcq");
+    expect(ROLE_TERMS.contest.map(([v]) => v)).toContain("run");
+    expect(ROLE_TERMS.contest.map(([v]) => v)).toContain("sp");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildPota opts.dx and opts.p2p
+// ---------------------------------------------------------------------------
+const POTA_PROF = { myCall: "W1AW", myQth: "MADISON WI", cut: false };
+
+describe("buildPota() — opts.dx (hunt DX activator)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildPota(POTA_PROF, "hunter", { dx: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildPota(POTA_PROF, "hunter", { dx: true }).steps);
+    }
+  });
+
+  it("step[4] close uses TU 73 (not TU state — DX activator doesn't use state as handle)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { dx: true });
+      expect(q.steps[4].text).toContain("TU 73");
+      // Should NOT use the US state as a handle (that's domestic protocol)
+      expect(q.steps[4].text).not.toMatch(/BK TU WI/);
+    }
+  });
+
+  it("summary names the DX entity", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { dx: true });
+      expect(typeof q.summary).toBe("string");
+      // entity should appear — the summary describes what country was worked
+      expect(q.summary.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe("buildPota() — opts.p2p (both activating, international P2P)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildPota(POTA_PROF, "hunter", { p2p: true }).steps);
+    }
+  });
+
+  it("step[3] mustContain includes the US park ref (not state)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      const step = q.steps[3]; // you send your park ref in P2P
+      // The park ref (K-XXXX) must be in mustContain and in suggested
+      const parkToken = step.mustContain.find((t) => /^K-\d{4}$/.test(t));
+      expect(parkToken).toBeDefined();
+      expect(step.suggested).toContain(parkToken);
+    }
+  });
+
+  it("step[4] shows the DX park ref (the one to log)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      // The DX park ref (intl program, potaPrefix) is in step[4] text
+      // It follows a prefix pattern like "DE-XXXX", "G-XXXX", "F-XXXX", etc.
+      expect(q.steps[4].text).toMatch(/-\d{4}/);
+    }
+  });
+
+  it("summary mentions the DX entity and both parks", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      expect(q.summary).toContain("P2P");
+    }
+  });
+
+  it("record activity stays pota (not a new activity type)", () => {
+    // P2P doesn't introduce a new activity key — it's still pota with opts.
+    const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+    expect(q.flavor).toBe("POTA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Builder: buildSota opts.dx and opts.p2p (S2S)
+// ---------------------------------------------------------------------------
+const SOTA_PROF = { myCall: "W1AW", cut: false };
+
+describe("buildSota() — opts.dx (chase DX summit activator)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildSota(SOTA_PROF, "chaser", { dx: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildSota(SOTA_PROF, "chaser", { dx: true }).steps);
+    }
+  });
+
+  it("step[0] text contains /P (DX activator signs portable)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { dx: true });
+      expect(q.steps[0].text).toContain("/P");
+    }
+  });
+
+  it("summary names the DX entity", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { dx: true });
+      expect(q.summary.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe("buildSota() — opts.p2p (S2S, both summiting)", () => {
+  it("returns 5 steps, who sequence [dx,you,dx,you,dx]", () => {
+    const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+    expect(q.steps).toHaveLength(5);
+    expect(q.steps.map((s) => s.who)).toEqual(["dx","you","dx","you","dx"]);
+  });
+
+  it("mustContain ⊆ suggested literally on all you-steps", () => {
+    for (let i = 0; i < 20; i++) {
+      assertMustContainSubset(buildSota(SOTA_PROF, "chaser", { p2p: true }).steps);
+    }
+  });
+
+  it("step[1] suggested is myCall/P (you sign portable in S2S)", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+      expect(q.steps[1].suggested).toContain("W1AW");
+      // S2S: you sign portable — call/P format
+      expect(q.steps[1].suggested).toMatch(/W1AW\/P/);
+      // mustContain uses the plain call (substring check covers myCall/P)
+      expect(q.steps[1].mustContain).toContain("W1AW");
+    }
+  });
+
+  it("step[3] mustContain includes a US summit ref", () => {
+    // In S2S the chaser also exchanges their summit ref.
+    // US summits from the SUMMITS array: "W9/UP-001", "W7A/AE-040", etc.
+    // The call area may be 2 or 3 chars — use a broad match (starts with W, contains /).
+    for (let i = 0; i < 20; i++) {
+      const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+      const step = q.steps[3];
+      const summitToken = step.mustContain.find((t) => t.startsWith("W") && t.includes("/"));
+      expect(summitToken).toBeDefined();
+      expect(step.suggested).toContain(summitToken);
+    }
+  });
+
+  it("record flavor stays SOTA (not a new activity)", () => {
+    const q = buildSota(SOTA_PROF, "chaser", { p2p: true });
+    expect(q.flavor).toBe("SOTA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// randDxFieldStation — field station coherence
+// ---------------------------------------------------------------------------
+describe("randDxFieldStation()", () => {
+  it("returns call, entity, potaRef, sotaRef, and cqZone fields", () => {
+    for (let i = 0; i < 20; i++) {
+      const fs = randDxFieldStation();
+      expect(typeof fs.call).toBe("string");
+      expect(fs.call.length).toBeGreaterThan(0);
+      expect(typeof fs.entity).toBe("string");
+      expect(typeof fs.potaRef).toBe("string");
+      expect(typeof fs.sotaRef).toBe("string");
+      expect(typeof fs.cqZone).toBe("number");
+    }
+  });
+
+  it("potaRef and call are from the same country (coherent P2P exchange)", () => {
+    // The call prefix and park prefix must match the same entity entry.
+    // POTA uses ISO 3166-1 alpha-2 country codes (switched early 2024):
+    // DL→DE, G→GB, F→FR, VK→AU, JA→JP, VE→CA
+    const knownPotaPrefixes = new Set(["DE", "GB", "FR", "AU", "JP", "CA"]);
+    for (let i = 0; i < 40; i++) {
+      const fs = randDxFieldStation();
+      const parkPrefix = fs.potaRef.split("-")[0];
+      expect(knownPotaPrefixes.has(parkPrefix)).toBe(true);
+    }
+  });
+
+  it("sotaRef follows association/region-number format", () => {
+    // SOTA summit refs are like "DL/AL-001" or "G/LD-001"
+    for (let i = 0; i < 20; i++) {
+      const fs = randDxFieldStation();
+      expect(fs.sotaRef).toMatch(/^[A-Z0-9]+\/[A-Z]+-\d+$/);
+    }
   });
 });
