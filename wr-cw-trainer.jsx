@@ -1494,7 +1494,11 @@ function Tag({ verdict, children }) {
 //
 // Exported (named) so it can be unit-tested in isolation with a controlled
 // harness; the app's default export (CWTrainer) is unaffected.
-export function CompactSelect({ label, options, value, onChange, disabled = false }) {
+// pulseKey (optional): a counter the parent bumps to flash a brief amber glow on
+// the trigger — used by the QSO Role menu when an Activity change resets the Role
+// (so the silent trigger-text update is perceptible). Undefined/0 = never pulses,
+// so every other use of CompactSelect is unaffected.
+export function CompactSelect({ label, options, value, onChange, disabled = false, pulseKey }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [flipUp, setFlipUp] = useState(false);
@@ -1622,6 +1626,23 @@ export function CompactSelect({ label, options, value, onChange, disabled = fals
     if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, activeIndex]);
+
+  // Attention pulse: when pulseKey changes (and is truthy — 0/undefined never
+  // pulses), replay the amber-glow keyframe on the trigger. The remove → force-
+  // reflow → add sequence is the standard way to restart a CSS animation so a
+  // repeat (e.g. two Activity changes in a row) glows each time. Reduced motion is
+  // honored in the stylesheet (.wr-select-pulse animation: none), so this stays a
+  // no-op highlight for users who opt out of motion.
+  useEffect(() => {
+    if (!pulseKey) return;
+    const el = triggerRef.current;
+    if (!el) return;
+    el.classList.remove("wr-select-pulse");
+    void el.offsetWidth; // force reflow so the animation can replay from the start
+    el.classList.add("wr-select-pulse");
+    const t = setTimeout(() => el.classList.remove("wr-select-pulse"), 1000);
+    return () => clearTimeout(t);
+  }, [pulseKey]);
 
   return (
     <div style={{ position: "relative", marginBottom: 14 }}>
@@ -2636,13 +2657,15 @@ const ACTIVITY_LABELS = {
 
 // D1: one-liner description for each activity, shown as a sub-line under the label.
 // Mirrors the pattern already used by the Conditions buttons (label + gray desc).
+// Plain-anchored: each description leads with a clause a brand-new ham understands,
+// with any shorthand spelled out or moved after the plain meaning (UAT — Dale).
 const ACTIVITY_DESCS = {
-  ragchew: "casual back-and-forth — names, QTH, rig",
+  ragchew: "casual back-and-forth — names, location, and rig",
   pota:    "Parks on the Air",
   sota:    "Summits on the Air",
   iota:    "Islands on the Air",
-  dx:      "terse pileup exchange — 5NN and QRZ",
-  contest: "CQ TEST — serial or zone exchange",
+  dx:      "work a far-off or rare station — a quick exchange, signal report only",
+  contest: "contest contact — trade a quick serial number or zone",
 };
 
 // D1: role descriptions, keyed by activity + role value.
@@ -2654,23 +2677,23 @@ const ROLE_DESCS = {
   },
   pota: {
     activator: "you're in the park — you call CQ and run the pile",
-    hunter:    "you call the activator and give a report",
+    hunter:    "you call the activator and give a signal report",
   },
   sota: {
     activator: "you're on the summit — you call CQ and run the pile",
-    chaser:    "you call the activator and give a report",
+    chaser:    "you call the activator and give a signal report",
   },
   iota: {
     activator: "you're on the island — you call CQ and run the pile",
-    chaser:    "you call the activator and give a report",
+    chaser:    "you call the activator and give a signal report",
   },
   dx: {
     callcq: "you call CQ DX and work the station that answers",
-    hunt:   "you answer a DX station calling CQ — terse pileup exchange",
+    hunt:   "you answer a distant station calling CQ — a quick signal report",
   },
   contest: {
     run: "you call CQ TEST and work the stations that answer",
-    sp:  "you search & pounce — find a running station and pounce",
+    sp:  "find a station calling CQ and answer it — 'search and pounce'",
   },
 };
 
@@ -2726,6 +2749,15 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // relying on Score (which is aria-hidden). The region must be pre-mounted —
   // a text *change* is what triggers announcement (design §0).
   const [resultLive, setResultLive] = useState("");
+  // roleLive: announces the Role when it auto-resets because the Activity changed
+  // (not when the user picks a Role directly). The compacted Role trigger otherwise
+  // updates its text silently — a user could start a contact in the wrong role
+  // without noticing. Polite, always-mounted; set only in the Activity onChange.
+  const [roleLive, setRoleLive] = useState("");
+  // roleAutoPulse: a counter bumped on the same Activity-driven Role reset. Passed
+  // to the Role CompactSelect as pulseKey — each bump replays a brief amber glow on
+  // its trigger (the sighted-user counterpart to roleLive, reduced-motion-gated).
+  const [roleAutoPulse, setRoleAutoPulse] = useState(0);
 
   // Phase 4 (B4) — per-conversation score accumulation for averageScore().
   // We accumulate copy % and send % across every graded step in a contact so
@@ -3147,16 +3179,25 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           // activity this is the "listener / responder" role (answer, hunter,
           // chaser, hunt, sp) — the more natural starting point for a learner.
           const terms = ROLE_TERMS[v];
-          setRole(terms[terms.length - 1][0]);
+          const [nextRole, nextRoleLabel] = terms[terms.length - 1];
+          setRole(nextRole);
+          // Make the auto-reset perceptible (UAT: the compacted trigger changes
+          // silently). Announce it politely for AT and bump the pulse counter so
+          // the Role trigger glows amber for sighted users. This fires ONLY here,
+          // on an Activity-driven reset — never on a direct Role pick below.
+          setRoleLive(`Role set to ${nextRoleLabel}`);
+          setRoleAutoPulse((n) => n + 1);
         }}
       />
 
-      {/* Role selector — activity-dependent options (re-renders when Activity changes). */}
+      {/* Role selector — activity-dependent options (re-renders when Activity changes).
+          pulseKey drives the amber attention-glow when the Activity reset the Role. */}
       <CompactSelect
         label="Role"
         options={ROLE_TERMS[activity].map(([v, l]) => ({ value: v, label: l, description: ROLE_DESCS[activity][v] }))}
         value={role}
         onChange={setRole}
+        pulseKey={roleAutoPulse}
       />
 
       {/* Conditions selector — internal values ("easy"/"normal"/"real") unchanged;
@@ -3329,9 +3370,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           continuously so that text changes (set on events) are announced by AT.
           - stepLive:   step transitions in the normal QSO loop (polite)
           - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite)
+          - roleLive:   the Role when an Activity change auto-resets it (polite)
           Not gated by isWide — render in both layouts. */}
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{stepLive}</div>
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{resultLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{roleLive}</div>
 
       {/* Wide layout: intro in its own main-column panel; options OR context portaled to rail. */}
       {isWide && !qso && <div style={S.panel}>{introJSX}</div>}
@@ -3453,14 +3496,19 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           </div>
           <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", marginTop: 0 }}>{cur.prompt}</p>
           {revealed ? (
-            <Display>{cur.suggested}</Display>
+            // compact on narrow: caps the (up to ~115-char) suggested script at
+            // maxHeight+scroll so a long "Full QSO line" reveal cannot push the key
+            // surface below the phone fold — the key position stays independent of
+            // script length (the same content-independence the KEY tab relies on).
+            <Display compact={!isWide}>{cur.suggested}</Display>
           ) : (
             <button style={S.btn} onClick={() => setRevealed(true)}>👁 SHOW SUGGESTED SCRIPT</button>
           )}
           <div style={{ ...S.label, margin: "12px 0 6px" }}>
             Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
           </div>
-          <Display cursor>{keyer.decoded}</Display>
+          {/* compact on narrow: the shorter readout banks vertical room above the key. */}
+          <Display cursor compact={!isWide}>{keyer.decoded}</Display>
           <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
@@ -4986,6 +5034,17 @@ export default function CWTrainer() {
         @keyframes wrSelectIn { from { opacity: 0 } to { opacity: 1 } }
         .wr-select-panel { animation: wrSelectIn 110ms ease both; }
         @media (prefers-reduced-motion: reduce) { .wr-select-panel { animation: none !important; } }
+        /* Attention pulse — a brief amber glow when a control's value changed for an
+           external reason (QSO Role auto-reset by an Activity change). Non-color-safe
+           is not required here: it augments the polite roleLive announcement, which
+           carries the change for AT. Reduced-motion suppresses the animation entirely. */
+        @keyframes wrSelectPulse {
+          0%   { box-shadow: 0 0 0 0 rgba(242,169,59,0.0); }
+          25%  { box-shadow: 0 0 0 3px rgba(242,169,59,0.55); border-color: #F2A93B; }
+          100% { box-shadow: 0 0 0 0 rgba(242,169,59,0.0); }
+        }
+        .wr-select-pulse { animation: wrSelectPulse 900ms ease-out; }
+        @media (prefers-reduced-motion: reduce) { .wr-select-pulse { animation: none !important; } }
       `}</style>
 
       {/*
