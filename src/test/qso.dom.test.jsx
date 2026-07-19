@@ -2,32 +2,44 @@
 //
 // BASELINE: QSO simulator tab.
 // What this locks:
-//   - Activity / Role / Conditions controls all render
+//   - Activity / Role / Conditions controls all render (as CompactSelect comboboxes)
 //   - selecting an Activity updates the Role options (POTA → Activator/Hunter,
 //     not Ragchew's Call CQ / Answer a CQ)
 //   - the start button enters the QSO flow (leaves the setup view)
-// All by role/text, so QSO's setup→rail move in the refactor can't drop a control
-// or break the activity→role linkage unnoticed.
+// All by role/text, so QSO's setup→rail move can't drop a control or break the
+// activity→role linkage unnoticed.
+//
+// The compact-selector refactor turned Activity/Role/Conditions from button rows
+// into CompactSelect comboboxes: the options render only when the combobox is
+// opened, and selection is programmatic aria-selected (equal-or-stronger than the
+// old aria-pressed). Each assertion opens the relevant combobox first.
 
 import { describe, it, expect } from "vitest";
-import { renderApp, gotoTab, screen } from "./helpers.jsx";
+import { renderApp, gotoTab, chooseOption, screen } from "./helpers.jsx";
 
 describe("QSO tab — setup controls", () => {
-  it("renders Activity, Role, and Conditions sections", async () => {
+  it("renders Activity, Role, and Conditions comboboxes with their options", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "QSO");
 
-    expect(screen.getByText("Activity")).toBeInTheDocument();
-    expect(screen.getByText("Role")).toBeInTheDocument();
-    expect(screen.getByText("Conditions")).toBeInTheDocument();
+    // The three section comboboxes exist, named by their visible labels.
+    const activity = screen.getByRole("combobox", { name: "Activity" });
+    expect(activity).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Role" })).toBeInTheDocument();
+    const conditions = screen.getByRole("combobox", { name: "Conditions" });
+    expect(conditions).toBeInTheDocument();
 
-    // The four activities are present as pressable options.
+    // The four activities are present as options once the Activity combobox opens.
+    await user.click(activity);
     for (const label of ["Ragchew", "POTA", "SOTA", "IOTA"]) {
-      expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: new RegExp(label) })).toBeInTheDocument();
     }
-    // The three difficulty options.
+    await user.keyboard("{Escape}");
+
+    // The three difficulty options live in the Conditions combobox.
+    await user.click(conditions);
     for (const label of ["EASY", "NORMAL", "REAL LIFE"]) {
-      expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: new RegExp(label) })).toBeInTheDocument();
     }
   });
 
@@ -36,25 +48,57 @@ describe("QSO tab — setup controls", () => {
     await gotoTab(user, "QSO");
 
     // Default activity is Ragchew → roles are "Call CQ" / "Answer a CQ".
-    expect(screen.getByRole("button", { name: /Answer a CQ/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Activator/ })).not.toBeInTheDocument();
+    const role = screen.getByRole("combobox", { name: "Role" });
+    await user.click(role);
+    expect(screen.getByRole("option", { name: /Answer a CQ/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Activator/ })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
 
     // Switch to POTA → roles become "Activator" / "Hunter".
-    await user.click(screen.getByRole("button", { name: /POTA/ }));
-    expect(screen.getByRole("button", { name: /Activator/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Hunter/ })).toBeInTheDocument();
+    await chooseOption(user, "Activity", /POTA/);
+    await user.click(screen.getByRole("combobox", { name: "Role" }));
+    expect(screen.getByRole("option", { name: /Activator/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Hunter/ })).toBeInTheDocument();
     // Ragchew's role label is gone.
-    expect(screen.queryByRole("button", { name: /Answer a CQ/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Answer a CQ/ })).not.toBeInTheDocument();
   });
 
-  it("marks the selected activity pressed", async () => {
+  it("defaults the Role to the ANSWERING (last) role when the Activity changes", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "QSO");
 
-    const sota = screen.getByRole("button", { name: /SOTA/ });
-    await user.click(sota);
-    expect(sota).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: /Ragchew/ })).toHaveAttribute("aria-pressed", "false");
+    // Ragchew's answering role is "Answer a CQ" (the LAST ROLE_TERMS entry) —
+    // the app's default learner starting point.
+    expect(screen.getByRole("combobox", { name: "Role" })).toHaveTextContent("Answer a CQ");
+
+    // Switching Activity must RESET Role to the new activity's ANSWERING (last)
+    // role. For POTA that is "Hunter", NOT "Activator" (the calling/first role).
+    // This pins the activity→role default seam (DoR T4): defaulting to the first
+    // role instead, OR not resetting at all (a stale "answer" clamps to the first
+    // option), both surface as "Activator" here and turn this test red.
+    await chooseOption(user, "Activity", /POTA/);
+    const roleAfter = screen.getByRole("combobox", { name: "Role" });
+    expect(roleAfter).toHaveTextContent("Hunter");
+    expect(roleAfter).not.toHaveTextContent("Activator");
+
+    // Reopen: Hunter is the programmatically-selected option; Activator is not.
+    await user.click(roleAfter);
+    expect(screen.getByRole("option", { name: /Hunter/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: /Activator/ })).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("marks the selected activity selected", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    // Commit SOTA via the Activity combobox.
+    const activity = await chooseOption(user, "Activity", /SOTA/);
+    expect(activity).toHaveTextContent("SOTA");
+
+    // Reopen: SOTA is programmatically selected; Ragchew is not.
+    await user.click(activity);
+    expect(screen.getByRole("option", { name: /SOTA/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: /Ragchew/ })).toHaveAttribute("aria-selected", "false");
   });
 });
 

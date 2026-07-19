@@ -12,7 +12,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
-import { gotoTab } from "./helpers.jsx";
+import { gotoTab, chooseOption } from "./helpers.jsx";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -135,10 +135,8 @@ describe("Enhancement #1 — auto-focus copy input (QSO tab, DX step)", () => {
     await gotoTab(user, "QSO");
 
     // Pick Ragchew + "Call CQ" role → first step is a you-send step (activator calls CQ).
-    await user.click(screen.getByRole("button", { name: /Ragchew/i }));
-    // Role button for "Call CQ" (Ragchew Call-CQ role)
-    const callCqRole = screen.queryByRole("button", { name: /Call CQ/i });
-    if (callCqRole) await user.click(callCqRole);
+    await chooseOption(user, "Activity", /Ragchew/i);
+    await chooseOption(user, "Role", /Call CQ/i);
 
     const startBtn = screen.getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ });
     await user.click(startBtn);
@@ -366,9 +364,8 @@ describe("Enhancement #2 — QSO step-gating", () => {
     await gotoTab(user, "QSO");
 
     // Ragchew + "Call CQ" → first step is a you-send (cur.who = "you", suggested = CQ text).
-    await user.click(screen.getByRole("button", { name: /Ragchew/i }));
-    const callCqBtn = screen.queryByRole("button", { name: /Call CQ/i });
-    if (callCqBtn) await user.click(callCqBtn);
+    await chooseOption(user, "Activity", /Ragchew/i);
+    await chooseOption(user, "Role", /Call CQ/i);
 
     const startBtn = screen.getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ });
     await user.click(startBtn);

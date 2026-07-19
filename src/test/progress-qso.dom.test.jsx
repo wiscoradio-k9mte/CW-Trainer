@@ -22,7 +22,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, within, fireEvent, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
-import { gotoTab } from "./helpers.jsx";
+import { gotoTab, chooseOption } from "./helpers.jsx";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -40,10 +40,11 @@ async function freshApp() {
 }
 
 // Switch difficulty to EASY — needed so DX steps show CONTINUE without waiting
-// for audio. The difficulty selector is in the Options rail on wide.
+// for audio. The Conditions selector is a CompactSelect combobox in the Options
+// rail on wide; chooseOption opens it and commits the EASY option.
 async function setEasy(user) {
   const rail = screen.getByRole("complementary", { name: "Options" });
-  await user.click(within(rail).getByRole("button", { name: /EASY/ }));
+  await chooseOption(user, "Conditions", /EASY/, rail);
 }
 
 // Drive a ragchew/answer contact in EASY mode all the way to "QSO COMPLETE".

@@ -12,7 +12,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
-import { gotoTab } from "./helpers.jsx";
+import { gotoTab, chooseOption } from "./helpers.jsx";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -67,9 +67,8 @@ async function setupQsoYouStep() {
   const { user } = await freshApp();
   await gotoTab(user, "QSO");
 
-  await user.click(screen.getByRole("button", { name: /Ragchew/i }));
-  const callCqBtn = screen.queryByRole("button", { name: /Call CQ/i });
-  if (callCqBtn) await user.click(callCqBtn);
+  await chooseOption(user, "Activity", /Ragchew/i);
+  await chooseOption(user, "Role", /Call CQ/i);
 
   const startBtn = screen.getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ });
   await user.click(startBtn);
@@ -445,9 +444,9 @@ describe("FIX 2 — useCountdown cancel() on QSO advance/ABANDON", () => {
     await gotoTab(user, "QSO");
 
     // Set EASY mode so CONTINUE is available during the DX countdown.
-    // The EASY button may be in the right rail (wide layout) or inline (narrow).
-    const easyBtn = screen.queryByRole("button", { name: /EASY/i });
-    if (easyBtn) await user.click(easyBtn);
+    // Conditions is a CompactSelect combobox (single instance whether in the rail
+    // on wide or inline on narrow); chooseOption opens it and commits EASY.
+    await chooseOption(user, "Conditions", /EASY/i);
 
     // Spy on createOscillator. Set it up before fake timers so vitest can install
     // it cleanly; it will capture calls from the countdown's playDx().

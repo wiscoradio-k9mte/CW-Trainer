@@ -20,15 +20,21 @@
 //        multiple) when we just need to confirm the content is present at all.
 
 import { describe, it, expect } from "vitest";
-import { renderApp, gotoTab, screen } from "./helpers.jsx";
+import { renderApp, gotoTab, chooseOption, screen } from "./helpers.jsx";
 
 // ---- KEY: new DX drill categories ----
+//
+// The direct-pick row became a CompactSelect dropdown; the five DX categories are
+// now role=option rows inside it. Selecting one commits via the combobox (the
+// trigger then reflects the chosen category), equal-or-stronger than the old
+// aria-pressed button assertion.
 
 describe("KEY tab — DX drill categories present", () => {
-  it("all five DX categories appear in the direct-pick row", async () => {
+  it("all five DX categories appear in the drill-category dropdown", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
 
+    await user.click(screen.getByRole("combobox", { name: /Drill category/ }));
     const expected = [
       "DX callsigns",
       "DX exchanges",
@@ -37,19 +43,18 @@ describe("KEY tab — DX drill categories present", () => {
       "Abroad callsigns",
     ];
     for (const label of expected) {
-      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
     }
   });
 });
 
 describe("KEY tab — DX category selectable and produces a target", () => {
-  it("'DX callsigns' can be direct-picked and NEW TEXT produces a non-empty target", async () => {
+  it("'DX callsigns' can be picked and NEW TEXT produces a non-empty target", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
 
-    const catBtn = screen.getByRole("button", { name: "DX callsigns" });
-    await user.click(catBtn);
-    expect(catBtn).toHaveAttribute("aria-pressed", "true");
+    const trigger = await chooseOption(user, /Drill category/, "DX callsigns");
+    expect(trigger).toHaveTextContent("DX callsigns");
 
     // Before: placeholder present.
     expect(screen.getByText("press NEW TEXT")).toBeInTheDocument();
@@ -64,7 +69,7 @@ describe("KEY tab — DX category selectable and produces a target", () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
 
-    await user.click(screen.getByRole("button", { name: "DX exchanges" }));
+    await chooseOption(user, /Drill category/, "DX exchanges");
     await user.click(screen.getByRole("button", { name: /NEW TEXT/ }));
 
     // The display must contain something — DX exchange targets are never blank.
@@ -75,27 +80,24 @@ describe("KEY tab — DX category selectable and produces a target", () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
 
-    const btn = screen.getByRole("button", { name: "Contest fragments" });
-    await user.click(btn);
-    expect(btn).toHaveAttribute("aria-pressed", "true");
+    const trigger = await chooseOption(user, /Drill category/, "Contest fragments");
+    expect(trigger).toHaveTextContent("Contest fragments");
   });
 
   it("'Split & pileup' category is selectable", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
 
-    const btn = screen.getByRole("button", { name: "Split & pileup" });
-    await user.click(btn);
-    expect(btn).toHaveAttribute("aria-pressed", "true");
+    const trigger = await chooseOption(user, /Drill category/, "Split & pileup");
+    expect(trigger).toHaveTextContent("Split & pileup");
   });
 
   it("'Abroad callsigns' category is selectable", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "KEY");
 
-    const btn = screen.getByRole("button", { name: "Abroad callsigns" });
-    await user.click(btn);
-    expect(btn).toHaveAttribute("aria-pressed", "true");
+    const trigger = await chooseOption(user, /Drill category/, "Abroad callsigns");
+    expect(trigger).toHaveTextContent("Abroad callsigns");
   });
 });
 

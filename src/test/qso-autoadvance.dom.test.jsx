@@ -22,7 +22,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, act, fireEvent, within, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
-import { gotoTab } from "./helpers.jsx";
+import { gotoTab, chooseOption } from "./helpers.jsx";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -144,10 +144,10 @@ async function setupYouStep({ autoAdvanceOn = false } = {}) {
   await gotoTab(user, "QSO");
 
   // Select Ragchew + Call CQ role from the Options rail (wide-layout pattern).
+  // Both are CompactSelect comboboxes; chooseOption opens and commits each.
   const rail = screen.getByRole("complementary", { name: "Options" });
-  await user.click(within(rail).getByRole("button", { name: /Ragchew/i }));
-  const callCqBtn = within(rail).queryByRole("button", { name: /Call CQ/i });
-  if (callCqBtn) await user.click(callCqBtn);
+  await chooseOption(user, "Activity", /Ragchew/i, rail);
+  await chooseOption(user, "Role", /Call CQ/i, rail);
 
   if (autoAdvanceOn) {
     const autoBtn = within(rail).getByRole("button", { name: /AUTO OFF/i });
@@ -1119,7 +1119,7 @@ describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", (
 
     // Start a contact (EASY mode so the DX panel renders CONTINUE immediately).
     const rail = screen.getByRole("complementary", { name: "Options" });
-    await user.click(within(rail).getByRole("button", { name: /EASY/i }));
+    await chooseOption(user, "Conditions", /EASY/i, rail);
 
     // Use Ragchew + "Answer a CQ" (default) — first step is DX. In EASY mode
     // CONTINUE renders as soon as the contact starts (no copy input).
@@ -1178,7 +1178,7 @@ describe("E2 — simulation reminder: exact text on every completed QSO", () => 
   // -------------------------------------------------------------------------
   async function setEasy(user) {
     const rail = screen.getByRole("complementary", { name: "Options" });
-    await user.click(within(rail).getByRole("button", { name: /EASY/ }));
+    await chooseOption(user, "Conditions", /EASY/, rail);
   }
 
   // -------------------------------------------------------------------------

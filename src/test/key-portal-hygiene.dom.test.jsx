@@ -17,7 +17,6 @@
 
 import { describe, it, expect } from "vitest";
 import { renderApp, gotoTab, screen } from "./helpers.jsx";
-import { DRILL_CATEGORIES } from "../cw-core.js";
 
 describe("KEY portal hygiene — tab switching (wide)", () => {
   it("portals exactly one options cluster into the rail on KEY", async () => {
@@ -26,7 +25,7 @@ describe("KEY portal hygiene — tab switching (wide)", () => {
     // Exactly one heading — no duplicate from a double-mounted portal.
     expect(screen.getAllByText("Drill category — climb as you improve")).toHaveLength(1);
     // Exactly one set of category buttons.
-    expect(screen.getAllByRole("button", { name: DRILL_CATEGORIES[0].label })).toHaveLength(1);
+    expect(screen.getAllByRole("combobox", { name: /Drill category/ })).toHaveLength(1);
     // Exactly one key-type toggle button (exact text to avoid PaddleKey's "Dit paddle" aria-labels).
     expect(screen.getAllByRole("button", { name: "PADDLE" })).toHaveLength(1);
   });
@@ -39,7 +38,7 @@ describe("KEY portal hygiene — tab switching (wide)", () => {
     // Leave KEY → KeyTrainer unmounts; its portal children must clear from the rail.
     await gotoTab(user, "COPY");
     expect(screen.queryByText("Drill category — climb as you improve")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: DRILL_CATEGORIES[0].label })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /Drill category/ })).not.toBeInTheDocument();
   });
 
   it("re-portals exactly one cluster when returning to KEY (no leak)", async () => {
@@ -54,7 +53,7 @@ describe("KEY portal hygiene — tab switching (wide)", () => {
 
     // After all the churn, still exactly one of each control in the rail.
     expect(screen.getAllByText("Drill category — climb as you improve")).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: DRILL_CATEGORIES[0].label })).toHaveLength(1);
+    expect(screen.getAllByRole("combobox", { name: /Drill category/ })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "PADDLE" })).toHaveLength(1);
   });
 
@@ -67,7 +66,7 @@ describe("KEY portal hygiene — tab switching (wide)", () => {
     // and none of KEY's — proving the rail is cleared, not stacked.
     await gotoTab(user, "QSO");
     expect(screen.queryByText("Drill category — climb as you improve")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: DRILL_CATEGORIES[0].label })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /Drill category/ })).not.toBeInTheDocument();
     expect(screen.getByText("Activity")).toBeInTheDocument(); // QSO's options are present
   });
 

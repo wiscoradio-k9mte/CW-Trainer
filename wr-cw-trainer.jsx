@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo, useId } from "react";
 import { createPortal } from "react-dom";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
@@ -1104,9 +1104,17 @@ const S = {
   },
 };
 
-function Display({ children, cursor }) {
+// Display — the recessed code readout. `compact` (narrow KEY only) shrinks the
+// type and, crucially, CAPS the height with an internal scroll so a long target
+// scrolls INSIDE the readout instead of pushing the key surface down the page —
+// the key's vertical position becomes independent of target length. Default
+// (compact=false) is byte-identical to the shipped readout.
+function Display({ children, cursor, compact }) {
+  const style = compact
+    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem", letterSpacing: 2, maxHeight: 76, overflowY: "auto" }
+    : S.display;
   return (
-    <div style={S.display}>
+    <div style={style}>
       {children}
       {cursor && <span className="wr-cursor" style={{ color: "#F2A93B" }}>▮</span>}
     </div>
@@ -1243,13 +1251,30 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
   );
 }
 
-// SwapToggle — standalone swap button rendered immediately after KeyModeControls.
+// SwapToggle — standalone swap button rendered alongside KeyModeControls.
 // Visible for paddle and bug; hidden for straight key (no levers to swap).
-// In KeyTrainer it lives in optionsJSX alongside the type selector, so it
-// portals into the rail on wide and renders inline on narrow — matching QSO's
-// KeyInput, where it also sits directly below the type selector.
-function SwapToggle({ swap, onSwap, keyType }) {
+// KeyTrainer wide + QsoSim render the default (full) variant next to the type
+// selector; KeyTrainer narrow renders the `compact` variant on the one-row
+// instrument strip beside the key (see narrowInstrumentStrip).
+function SwapToggle({ swap, onSwap, keyType, compact }) {
   if (keyType !== "paddle" && keyType !== "bug") return null;
+  // Narrow instrument-strip variant: just the ⇄ button on a ≥40px touch target,
+  // sized to sit on one row beside the key-type toggle. The verbose help sentence
+  // is dropped on narrow — the button's aria-label already carries the meaning, so
+  // no information is lost to AT (design §1.3-B). Uses `border` (not `borderColor`)
+  // to override S.btn's border shorthand cleanly when active.
+  if (compact) {
+    return (
+      <button
+        onClick={() => onSwap(!swap)}
+        title="Swap dit/dah for left-handed keying"
+        aria-label={`Swap dit and dah paddles — currently ${swap ? "left-handed" : "right-handed"}`}
+        style={{ ...S.btn, minHeight: 40, padding: "0 12px", fontSize: "0.75rem",
+          ...(swap ? { border: "1px solid #F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: S.text.dim }) }}>
+        ⇄ {swap ? "L" : "R"}
+      </button>
+    );
+  }
   const helpText = keyType === "bug"
     ? `swaps which bracket is the dit lever — Space is always the dah`
     : `swaps which paddle sends dit vs dah — set it to ${swap ? "L for left-handed" : "R for right-handed"}`;
@@ -1278,35 +1303,52 @@ function SwapToggle({ swap, onSwap, keyType }) {
 // by the caller immediately after this component so they travel as a cluster.
 // modeB / onModeB: optional — only passed when the parent is KeyTrainer (not QsoSim,
 // which shows the full KeyInput). The Mode B toggle is only visible for keyType==="paddle".
-function KeyModeControls({ keyType, onKeyType, modeB, onModeB }) {
+// IambicToggle — the Mode A/B segmented pair (paddle only). Extracted so both the
+// wide KeyModeControls (its default position, below the type row) and the narrow
+// KEY layout (below the key surface, keeping the instrument strip to one row) render
+// the SAME control with no duplication. `compact` bumps the touch target to ≥40px.
+// compact=false is byte-identical to the shipped wide control.
+function IambicToggle({ modeB, onModeB, compact }) {
   return (
-    <div style={{ marginTop: 12 }}>
+    <div style={{ marginTop: compact ? 12 : 8 }}>
+      <div style={{ ...S.label, marginBottom: 4 }}>Iambic mode</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {[["a", "MODE A", false], ["b", "MODE B", true]].map(([id, label, val]) => (
+          <button key={id}
+            aria-pressed={modeB === val}
+            onClick={() => onModeB(val)}
+            style={{ ...S.btn, flex: 1, ...(compact ? { minHeight: 40, padding: "0 8px" } : { padding: "6px 8px" }), fontSize: "0.6875rem",
+              ...(modeB === val ? S.selected : { color: S.text.dim }) }}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// KeyModeControls — the key-type toggle row (+ Iambic sub-toggle when this is the
+// KEY tab's full control). `compact` (narrow instrument strip) bumps the type
+// buttons to a ≥40px touch target and drops the top margin so the buttons sit flush
+// on the strip row. compact=false is byte-identical to the shipped wide control.
+// When compact, Iambic is NOT rendered here — the narrow layout renders IambicToggle
+// below the key so the strip stays one row (pass no onModeB in that case).
+function KeyModeControls({ keyType, onKeyType, modeB, onModeB, compact }) {
+  return (
+    <div style={{ marginTop: compact ? 0 : 12 }}>
       <div style={{ display: "flex", gap: 6 }}>
         {/* BUG is only offered when BUG_KEY_ENABLED is true (shelved pending research). */}
         {/* L2: S.selected spreads fontWeight:700 as the non-color selected cue */}
         {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"], ...(BUG_KEY_ENABLED ? [["bug", "BUG"]] : [])].map(([v, l]) => (
           <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
-            style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: "0.6875rem", ...(keyType === v ? S.selected : { color: S.text.dim }) }}>
+            style={{ ...S.btn, flex: 1, ...(compact ? { minHeight: 40, padding: "0 10px" } : { padding: "7px 10px" }), fontSize: "0.6875rem", ...(keyType === v ? S.selected : { color: S.text.dim }) }}>
             {l}
           </button>
         ))}
       </div>
       {/* Mode A/B toggle — only shown for paddle, only when callbacks provided */}
       {keyType === "paddle" && onModeB !== undefined && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ ...S.label, marginBottom: 4 }}>Iambic mode</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[["a", "MODE A", false], ["b", "MODE B", true]].map(([id, label, val]) => (
-              <button key={id}
-                aria-pressed={modeB === val}
-                onClick={() => onModeB(val)}
-                style={{ ...S.btn, flex: 1, padding: "6px 8px", fontSize: "0.6875rem",
-                  ...(modeB === val ? S.selected : { color: S.text.dim }) }}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <IambicToggle modeB={modeB} onModeB={onModeB} />
       )}
     </div>
   );
@@ -1424,6 +1466,292 @@ function Tag({ verdict, children }) {
     }}>
       {children}
     </span>
+  );
+}
+
+/* ================= COMPACT SELECT (the standard compact-selector) ================= */
+//
+// One reusable single-select disclosure used by every content/setup menu in the
+// app (KEY drill category, QSO Activity/Role/Conditions, COPY Conditions). It is
+// the WAI-ARIA "select-only combobox" pattern: a <button role="combobox"> trigger
+// opens a <div role="listbox"> of <div role="option"> rows; focus never leaves the
+// trigger and the keyboard-active row is tracked with aria-activedescendant.
+//
+// Behavior is driven ENTIRELY by the shape of `options[]` — an option may carry a
+// `description` (renders a gray sub-line in the panel) and/or a `ladderIndex` (a
+// leading rung numeral). There are NO per-section variant flags; one data shape,
+// one component, one role structure across all five uses.
+//
+// LOAD-BEARING RULE: onChange fires ONLY on commit (Enter / Space / click / Tab) —
+// never on arrow/Home/End/typeahead navigation, which move the highlight only.
+// Callers hang real side effects on onChange (pickCat runs keyer.clear() + a live
+// announcement; QSO's Activity change resets Role); firing those on every arrow
+// keypress would be destructive. Navigation must stay side-effect-free.
+//
+// The open panel is an absolutely-positioned OVERLAY: it never reflows the
+// controls beneath it, so opening a menu can't push the key surface or START out
+// of view (the whole point of the compaction).
+//
+// Exported (named) so it can be unit-tested in isolation with a controlled
+// harness; the app's default export (CWTrainer) is unaffected.
+// pulseKey (optional): a counter the parent bumps to flash a brief amber glow on
+// the trigger — used by the QSO Role menu when an Activity change resets the Role
+// (so the silent trigger-text update is perceptible). Undefined/0 = never pulses,
+// so every other use of CompactSelect is unaffected.
+export function CompactSelect({ label, options, value, onChange, disabled = false, pulseKey }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [flipUp, setFlipUp] = useState(false);
+  const triggerRef = useRef(null);
+  const listboxRef = useRef(null);
+  // Typeahead accumulator: buffer of typed chars + the idle-reset timer id.
+  const typeahead = useRef({ buffer: "", timer: null });
+
+  const baseId = useId();
+  const labelId = `${baseId}-label`;
+  const listboxId = `${baseId}-listbox`;
+  const optionId = (i) => `${baseId}-opt-${i}`;
+
+  // The index of the currently-committed value (what the trigger reflects and
+  // where the highlight starts when the menu opens). -1 → clamp to 0.
+  const currentIndex = Math.max(0, options.findIndex((o) => o.value === value));
+  const current = options[currentIndex];
+  // Trigger text: the selected label, prefixed with its rung numeral when present.
+  // Defensive fallback: if `value` matches no option, show the raw value.
+  const valueText = current
+    ? (current.ladderIndex != null ? `${current.ladderIndex} — ${current.label}` : current.label)
+    : String(value);
+
+  // A printable character opens/typeaheads. Space is excluded — it is the
+  // commit/open key, not a typeahead char.
+  const isPrintable = (e) =>
+    e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey;
+
+  const openMenu = (toIndex = currentIndex) => {
+    if (disabled) return;
+    // Decide open direction from the live viewport: below by default, above if the
+    // trigger is near the bottom and there is more room overhead. Guarded for jsdom
+    // (getBoundingClientRect returns zeros → stays "below", the safe default).
+    const rect = triggerRef.current?.getBoundingClientRect?.();
+    if (rect) {
+      const below = window.innerHeight - rect.bottom;
+      const above = rect.top;
+      setFlipUp(below < 240 && above > below);
+    }
+    setActiveIndex(toIndex);
+    setOpen(true);
+  };
+
+  const closeMenu = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  // Commit the option at `index`: fire onChange with its value, close, and (unless
+  // committing via Tab, which must let focus advance) return focus to the trigger.
+  const commit = (index, { keepFocus = false } = {}) => {
+    const opt = options[index];
+    if (opt) onChange(opt.value);
+    setOpen(false);
+    if (!keepFocus) triggerRef.current?.focus();
+  };
+
+  // Typeahead: accumulate the typed buffer, move the highlight to the next option
+  // whose label starts with it (search wraps from the active row), reset after
+  // 500ms idle. Moves the highlight ONLY — never commits.
+  const runTypeahead = (char) => {
+    const t = typeahead.current;
+    if (t.timer) clearTimeout(t.timer);
+    t.buffer += char.toLowerCase();
+    t.timer = setTimeout(() => { t.buffer = ""; }, 500);
+    const buf = t.buffer;
+    const n = options.length;
+    for (let k = 1; k <= n; k++) {
+      const idx = (activeIndex + k) % n;
+      if (options[idx].label.toLowerCase().startsWith(buf)) {
+        setActiveIndex(idx);
+        return;
+      }
+    }
+    // No forward match — try from the very start (covers matching the active row itself).
+    const idx = options.findIndex((o) => o.label.toLowerCase().startsWith(buf));
+    if (idx >= 0) setActiveIndex(idx);
+  };
+
+  const onKeyDown = (e) => {
+    if (disabled) return;
+    if (!open) {
+      if (["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) || isPrintable(e)) {
+        e.preventDefault();
+        openMenu();
+        if (isPrintable(e)) runTypeahead(e.key);
+      }
+      return;
+    }
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); setActiveIndex((i) => Math.min(options.length - 1, i + 1)); break;
+      case "ArrowUp":   e.preventDefault(); setActiveIndex((i) => Math.max(0, i - 1)); break;
+      case "Home":      e.preventDefault(); setActiveIndex(0); break;
+      case "End":       e.preventDefault(); setActiveIndex(options.length - 1); break;
+      case "PageDown":  e.preventDefault(); setActiveIndex((i) => Math.min(options.length - 1, i + 5)); break;
+      case "PageUp":    e.preventDefault(); setActiveIndex((i) => Math.max(0, i - 5)); break;
+      case "Enter":
+      case " ":         e.preventDefault(); commit(activeIndex); break;
+      // Tab commits but must NOT preventDefault or re-focus the trigger — let the
+      // browser move focus to the next control after the commit.
+      case "Tab":       commit(activeIndex, { keepFocus: true }); break;
+      case "Escape":    e.preventDefault(); closeMenu(); break;
+      default:
+        if (isPrintable(e)) { e.preventDefault(); runTypeahead(e.key); }
+    }
+  };
+
+  // Close on a click outside the component (no commit — value unchanged). Focus
+  // then follows normal document behavior (spec §2.4), so no forced refocus here.
+  useEffect(() => {
+    if (!open) return;
+    const onDocPointerDown = (e) => {
+      const root = triggerRef.current?.parentElement;
+      if (root && !root.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    return () => document.removeEventListener("mousedown", onDocPointerDown);
+  }, [open]);
+
+  // Keep the keyboard-active option scrolled into view. Guarded — jsdom does not
+  // implement scrollIntoView; the app relies on it only for the 14-item KEY list.
+  useEffect(() => {
+    if (!open) return;
+    const el = listboxRef.current?.querySelector(`#${CSS.escape(optionId(activeIndex))}`);
+    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeIndex]);
+
+  // Attention pulse: when pulseKey changes (and is truthy — 0/undefined never
+  // pulses), replay the amber-glow keyframe on the trigger. The remove → force-
+  // reflow → add sequence is the standard way to restart a CSS animation so a
+  // repeat (e.g. two Activity changes in a row) glows each time. Reduced motion is
+  // honored in the stylesheet (.wr-select-pulse animation: none), so this stays a
+  // no-op highlight for users who opt out of motion.
+  useEffect(() => {
+    if (!pulseKey) return;
+    const el = triggerRef.current;
+    if (!el) return;
+    el.classList.remove("wr-select-pulse");
+    void el.offsetWidth; // force reflow so the animation can replay from the start
+    el.classList.add("wr-select-pulse");
+    const t = setTimeout(() => el.classList.remove("wr-select-pulse"), 1000);
+    return () => clearTimeout(t);
+  }, [pulseKey]);
+
+  return (
+    <div style={{ position: "relative", marginBottom: 14 }}>
+      <div id={labelId} style={{ ...S.label, marginBottom: 8 }}>{label}</div>
+      <button
+        ref={triggerRef}
+        type="button"
+        role="combobox"
+        className="wr-select-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-labelledby={labelId}
+        aria-activedescendant={open && options[activeIndex] ? optionId(activeIndex) : undefined}
+        disabled={disabled}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={onKeyDown}
+        style={{
+          ...S.btn,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          // minWidth:0 so this button can shrink as a flex item and let its value
+          // span ellipsize (rather than setting a width floor that overflows a
+          // narrow row); pairs with the value span's own minWidth:0 below.
+          width: "100%", minWidth: 0, minHeight: 44, padding: "10px 14px", textAlign: "left", boxSizing: "border-box",
+        }}
+      >
+        <span style={{
+          color: S.text.amber, fontWeight: 600, fontSize: "0.8125rem",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          // minWidth:0 lets this flex child shrink below its content's intrinsic
+          // width so a long category label (e.g. "14 — Numbers (incl. cut)")
+          // ellipsizes instead of setting a width floor that overflows the row
+          // at 360px. flexShrink:1 is the flex default, stated for clarity.
+          minWidth: 0, flexShrink: 1,
+        }}>{valueText}</span>
+        <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div
+          ref={listboxRef}
+          role="listbox"
+          id={listboxId}
+          aria-labelledby={labelId}
+          tabIndex={-1}
+          className="wr-select-panel"
+          style={{
+            position: "absolute", left: 0, right: 0,
+            ...(flipUp ? { bottom: "100%", marginBottom: 4 } : { top: "100%", marginTop: 4 }),
+            zIndex: 30,
+            background: S.ground.panel, border: S.border.control, borderRadius: S.radius.sm,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.55)",
+            maxHeight: "min(60vh, 360px)", overflowY: "auto",
+          }}
+        >
+          {options.length === 0 && (
+            <div role="option" aria-disabled="true" style={S.srOnly}>No options</div>
+          )}
+          {options.map((opt, i) => {
+            const selected = opt.value === value;
+            const active = i === activeIndex;
+            return (
+              <div
+                key={opt.value}
+                id={optionId(i)}
+                role="option"
+                aria-selected={selected}
+                className="wr-select-option"
+                onClick={() => commit(i)}
+                onMouseEnter={() => setActiveIndex(i)}
+                style={{
+                  display: "flex",
+                  alignItems: opt.description ? "flex-start" : "center",
+                  gap: 8, minHeight: 40, padding: "10px 12px", cursor: "pointer",
+                  // Keyboard-active cue: gray wash + a 3px amber left-bar (a lightness
+                  // + shape signal that survives grayscale). Inactive rows keep a
+                  // transparent bar so the pointer :hover CSS can still tint them.
+                  borderLeft: active ? "3px solid #F2A93B" : "3px solid transparent",
+                  ...(active ? { background: "#2A313A" } : {}),
+                }}
+              >
+                {opt.ladderIndex != null && (
+                  <span aria-hidden="true" style={{
+                    fontFamily: "ui-monospace, monospace", fontSize: S.type.micro,
+                    color: S.text.dim, minWidth: 16, flexShrink: 0, lineHeight: 1.4,
+                  }}>{opt.ladderIndex}</span>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                  <span style={{
+                    fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem",
+                    // Selected cue: amber + weight 700 (a color + WEIGHT signal, paired
+                    // with the ✓ below — both non-color-only, per the standing L2 rule).
+                    color: selected ? S.text.amber : S.text.body, fontWeight: selected ? 700 : 400,
+                  }}>{opt.label}</span>
+                  {opt.description && (
+                    <div style={{
+                      fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif",
+                      marginTop: 3, letterSpacing: 0, lineHeight: 1.4,
+                    }}>{opt.description}</div>
+                  )}
+                </div>
+                {selected && (
+                  <span aria-hidden="true" style={{ color: S.text.amber, flexShrink: 0, fontWeight: 700 }}>✓</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1589,15 +1917,23 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
           </button>
         ))}
       </div>
-      <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
-      <div style={{ display: "flex", gap: 8 }}>
-        {[["easy", "EASY"], ["normal", "NORMAL"], ["real", "REAL LIFE"]].map(([v, l]) => (
-          <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
-            style={{ ...S.btn, flex: 1, padding: "8px 4px", fontSize: "0.6875rem", ...(difficulty === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
-            {l}
-          </button>
-        ))}
-      </div>
+      {/* Conditions selector — label-only (COPY has no per-option descriptions, per
+          DoR T2). This is a CONSISTENCY change, not a compaction one: a closed
+          trigger is about the same height as (or a hair taller than) the old
+          3-button row, but it renders as the identical standard component as QSO
+          Conditions and buys a compliant ≥44px touch target the old row missed.
+          The existing conditional helpers below the trigger are unchanged (T4):
+          the EASY helper line iff easy; the noise slider + note iff real. */}
+      <CompactSelect
+        label="Conditions"
+        options={[
+          { value: "easy",   label: "EASY" },
+          { value: "normal", label: "NORMAL" },
+          { value: "real",   label: "REAL LIFE" },
+        ]}
+        value={difficulty}
+        onChange={setDifficulty}
+      />
       {difficulty === "easy" && (
         <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
           Text appears letter by letter as it plays — hear it and see it together.
@@ -1905,52 +2241,48 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     setCatLive(`Category ${newIdx + 1} of ${DRILL_CATEGORIES.length} — ${DRILL_CATEGORIES[newIdx].label}`);
   };
 
-  // optionsJSX — category selector (stepper + direct-pick) + key-type controls
-  // (PADDLE / STRAIGHT KEY toggle) + SwapToggle, clustered together.
-  // On wide these portal into the rail; on narrow they render inline above the
-  // practice panels. Matches QSO's KeyInput pattern: swap directly below the
-  // type selector in both layouts. Handlers close over local state and the keyer.
+  // categoryRow — the fused stepper + dropdown: [◀] [ CompactSelect ▾ ] [▶].
+  // Extracted from optionsJSX so the narrow KEY layout can render it as its own
+  // compact block (the key-type/mode controls relocate to an instrument strip with
+  // the key on narrow). The arrows are the kept one-tap prev/next (F2); the centre
+  // trigger is the direct-pick dropdown (F1) that replaced the old 14-button wrap.
+  // All three drive the same pickCat, so keyer.clear() + catLive fire once per
+  // change regardless of which control fired it. alignItems flex-end bottom-aligns
+  // the arrows with the trigger (CompactSelect renders its own label above it).
+  const categoryRow = (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+      <button
+        aria-label="Previous category"
+        style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+        disabled={catIdx === 0}
+        onClick={() => pickCat(Math.max(0, catIdx - 1))}
+      >◀</button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <CompactSelect
+          label="Drill category — climb as you improve"
+          options={DRILL_CATEGORIES.map((cat, i) => ({ value: cat.id, label: cat.label, ladderIndex: i + 1 }))}
+          value={DRILL_CATEGORIES[catIdx].id}
+          onChange={(id) => pickCat(DRILL_CATEGORIES.findIndex((c) => c.id === id))}
+        />
+      </div>
+      <button
+        aria-label="Next category"
+        style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+        disabled={catIdx === DRILL_CATEGORIES.length - 1}
+        onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
+      >▶</button>
+    </div>
+  );
+
+  // optionsJSX — WIDE ONLY now: category row + key-type controls + SwapToggle,
+  // clustered together and portaled into the rail. Output is byte-identical to
+  // before the categoryRow extraction. (On narrow, categoryRow + the controls are
+  // recomposed by narrowKeyLayout below — see the return block.)
   const optionsJSX = (
     <>
-      <div style={{ ...S.label, marginBottom: 8 }}>Drill category — climb as you improve</div>
-      {/* Compact stepper: left arrow / current position label / right arrow */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <button
-          aria-label="Previous category"
-          style={{ ...S.btn, padding: "10px 14px" }}
-          disabled={catIdx === 0}
-          onClick={() => pickCat(Math.max(0, catIdx - 1))}
-        >◀</button>
-        <span style={{ flex: 1, textAlign: "center", fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.8125rem", letterSpacing: 1 }}>
-          {catIdx + 1} / {DRILL_CATEGORIES.length} — {DRILL_CATEGORIES[catIdx].label}
-        </span>
-        <button
-          aria-label="Next category"
-          style={{ ...S.btn, padding: "10px 14px" }}
-          disabled={catIdx === DRILL_CATEGORIES.length - 1}
-          onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
-        >▶</button>
-      </div>
-      {/* Direct-pick row: toggle buttons, one per category, amber border on active */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {DRILL_CATEGORIES.map((cat, i) => (
-          <button
-            key={cat.id}
-            aria-pressed={catIdx === i}
-            onClick={() => pickCat(i)}
-            style={{
-              // E1: pad to ≥40px effective touch target (was 6px 10px — too small on mobile)
-              ...S.btn, padding: "10px 12px", fontSize: "0.6875rem",
-              ...(catIdx === i ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }),
-            }}
-          >
-            {cat.label}
-          </button>
-        ))}
-      </div>
+      {categoryRow}
       {/* Key-type toggle (PADDLE / STRAIGHT KEY / BUG) + swap toggle clustered together.
-          SwapToggle follows immediately below so it travels with the type selector:
-          into the rail on wide, inline on narrow — same pattern as QSO's KeyInput.
+          SwapToggle follows immediately below so it travels with the type selector.
           Mode B toggle appears below the type row when paddle is active. */}
       <KeyModeControls
         keyType={settings.keyType}
@@ -1998,58 +2330,74 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     </div>
   );
 
-  // practicePanels — target display + keying + results. Always in main.
-  // The key surface (PaddleKey/TouchKey) renders here, reading settings.keyType
-  // which is also what KeyModeControls in the rail writes. One state, two render sites.
-  const practicePanels = (
-    <>
-      {/* ---- Target text panel ---- */}
-      <div style={S.panel}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          <button style={S.btnAmber} onClick={newTarget}>▶ NEW TEXT</button>
-          <button style={S.btn} onClick={() => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq })}>
-            ♪ HEAR IT
-          </button>
-          <button style={S.btn} onClick={() => { autoGradeFired.current = false; recordWritten.current = false; keyer.clear(); setResult(null); setAnalysis(null); }}>✕ CLEAR</button>
-        </div>
-        <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
-        <Display>{target || "press NEW TEXT"}</Display>
-      </div>
+  // ---- Shared practice pieces (identical in the wide + narrow layouts) ----
+  // Extracted so the wide two-panel layout and the narrow single merged card
+  // render the SAME leaf controls with no duplication. Only the surrounding panel
+  // structure and the Display compactness differ between the two layouts. All are
+  // defined before practicePanels/narrowKeyLayout so those can reference them.
 
-      {/* ---- Keying panel: decoded output + key surface + CHECK ---- */}
-      {/* The key-type toggle (KeyModeControls) is in optionsJSX — it writes
-          settings.keyType via setSettings, which is the same value read here
-          to decide which key surface to render. The keyer mode also follows
-          settings.keyType (passed to useKeyer above). No duplication of state. */}
-      <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 6 }}>
-          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-        </div>
-        <Display cursor>{keyer.decoded}</Display>
-        {errFlash && (
-          <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8 }}>
-            ◉ HH — ERROR SIGNAL, CLEARED
-          </div>
-        )}
-        {/* Key surface — type toggle and swap are in optionsJSX (rail on wide,
-            inline on narrow), keeping them clustered together in both layouts.
-            Surface picks the correct component for each mode. */}
-        <div style={{ marginTop: 4 }}>
-          {settings.keyType === "paddle"
-            ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
-            : settings.keyType === "bug"
-            ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
-                dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-                swap={settings.paddleSwap} />
-            : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
-        </div>
+  // Action row — NEW TEXT / HEAR IT / CLEAR. One descriptor list drives both
+  // layouts so the (identical) handlers live once. Wide wraps in the roomy main
+  // column; narrow packs the three onto ONE ≥40px row (flex:1) so they don't wrap
+  // to a second row and push the key down (they wrapped at 390px otherwise).
+  const actionBtns = [
+    { key: "new", style: S.btnAmber, onClick: newTarget, label: "▶ NEW TEXT" },
+    { key: "hear", style: S.btn, label: "♪ HEAR IT",
+      onClick: () => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq }) },
+    { key: "clear", style: S.btn, label: "✕ CLEAR",
+      onClick: () => { autoGradeFired.current = false; recordWritten.current = false; keyer.clear(); setResult(null); setAnalysis(null); } },
+  ];
+  const actionButtons = (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+      {actionBtns.map((b) => <button key={b.key} style={b.style} onClick={b.onClick}>{b.label}</button>)}
+    </div>
+  );
+  const narrowActionButtons = (
+    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      {actionBtns.map((b) => (
+        <button key={b.key} onClick={b.onClick}
+          style={{ ...b.style, flex: 1, minHeight: 40, padding: "0 6px", fontSize: "0.8125rem" }}>
+          {b.label}
+        </button>
+      ))}
+    </div>
+  );
 
-        {/* ---- Results: CharDiff + Score + Fist panel ---- */}
-        {result !== null && (
-          <div style={{ marginTop: 12 }}>
+  // HH error-signal notice (visual-only) — sits directly above the key surface.
+  const errFlashEl = errFlash && (
+    <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8 }}>
+      ◉ HH — ERROR SIGNAL, CLEARED
+    </div>
+  );
+
+  // Key surface for the active key type. data-testid is a stable, refactor-proof
+  // hook for the headed geometry re-gate (design §2.3); it is a layout-neutral
+  // attribute, so the wide DOM is unaffected. The key-type toggle lives elsewhere
+  // (rail on wide, instrument strip on narrow) and writes settings.keyType — the
+  // same value read here. One keyer, one state; only the render position moves.
+  const keySurfaceEl = (
+    <div style={{ marginTop: 4 }} data-testid="key-surface">
+      {settings.keyType === "paddle"
+        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
+        : settings.keyType === "bug"
+        ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
+            dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
+            swap={settings.paddleSwap} />
+        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
+    </div>
+  );
+
+  const checkEl = (
+    <div style={{ marginTop: 12 }}>
+      <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
+    </div>
+  );
+
+  // resultsEl — CharDiff + Score + Fist-feedback panel, shown after the first
+  // CHECK. Shared by both layouts so the fist-feedback rendering lives in ONE
+  // place. Body unchanged from the shipped inline block.
+  const resultsEl = result !== null && (
+    <div style={{ marginTop: 12 }}>
             <CharDiff target={target} attempt={keyer.decoded} />
             <Score pct={result} />
 
@@ -2169,7 +2517,76 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
               </div>
             )}
           </div>
-        )}
+  );
+
+  // practicePanels — WIDE two-panel layout (target panel + keying panel). Byte-
+  // identical rendered output to the shipped version; only the leaf pieces are now
+  // shared consts.
+  const practicePanels = (
+    <>
+      {/* ---- Target text panel ---- */}
+      <div style={S.panel}>
+        {actionButtons}
+        <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
+        <Display>{target || "press NEW TEXT"}</Display>
+      </div>
+
+      {/* ---- Keying panel: decoded output + key surface + CHECK + results ---- */}
+      <div style={S.panel}>
+        <div style={{ ...S.label, marginBottom: 6 }}>
+          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
+        </div>
+        <Display cursor>{keyer.decoded}</Display>
+        {errFlashEl}
+        {keySurfaceEl}
+        {checkEl}
+        {resultsEl}
+      </div>
+    </>
+  );
+
+  // ---- Narrow (phone) KEY layout ----
+  // narrowInstrumentStrip — key-type toggle + swap on ONE ≥40px row, relocated from
+  // the options block to sit WITH the key (the ratified "instrument/mode toggles sit
+  // with the key" rule, and the v1.2 open item). The verbose swap help sentence is
+  // dropped on narrow (its meaning is carried by the button's aria-label). Iambic
+  // Mode A/B renders below the key (narrowIambic) so this strip stays one row.
+  const narrowInstrumentStrip = (
+    <div style={{ display: "flex", gap: 6, alignItems: "stretch", marginTop: 12 }}>
+      <div style={{ flex: 1 }}>
+        <KeyModeControls compact keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} />
+      </div>
+      <SwapToggle compact swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} keyType={settings.keyType} />
+    </div>
+  );
+  const narrowIambic = settings.keyType === "paddle" && (
+    <IambicToggle compact modeB={settings.iambicModeB} onModeB={(v) => setSettings((s) => ({ ...s, iambicModeB: v }))} />
+  );
+
+  // narrowKeyLayout — the compact single practice card that clears the 390×844 fold
+  // without scrolling (measured, headed — see the re-gate numbers). Order: category
+  // (its own compact block) → [card] actions → instrument strip → compact target
+  // readout → compact decoded readout → KEY → Iambic (set-once, paddle) → CHECK →
+  // results. The decoded readout stays ABOVE the key (no pedagogical reorder — the
+  // measured budget clears the fold without it). The compact Displays cap + scroll
+  // internally, so a long target never pushes the key down.
+  const narrowKeyLayout = (
+    <>
+      <div style={{ marginBottom: 14 }}>{categoryRow}</div>
+      <div style={S.panel}>
+        {narrowActionButtons}
+        {narrowInstrumentStrip}
+        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>Send this</div>
+        <Display compact>{target || "press NEW TEXT"}</Display>
+        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>
+          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
+        </div>
+        <Display compact cursor>{keyer.decoded}</Display>
+        {errFlashEl}
+        {keySurfaceEl}
+        {narrowIambic}
+        {checkEl}
+        {resultsEl}
       </div>
     </>
   );
@@ -2181,8 +2598,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   //   railEl may be null on the very first paint (before the callback ref fires) —
   //   the portal is skipped for that one imperceptible frame.
   //
-  // Narrow: intro (if !target) + options inline above practice — exactly today's
-  //   single-column appearance.
+  // Narrow: intro (if !target) + narrowKeyLayout — the category block plus one
+  //   compact practice card (controls relocated to an instrument strip with the
+  //   key, compact+capped Displays) so the key surface clears the 390×844 fold.
   //
   // The always-mounted scoreLive + catLive regions are in the component root,
   // never gated by isWide, so AT sees changes in both layouts.
@@ -2202,10 +2620,12 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
       {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
       {isWide && practicePanels}
 
-      {/* Narrow layout: intro + options + practice inline — today's single-column order. */}
+      {/* Narrow layout: intro (if before first target) + the compact single-card
+          KEY layout — category as its own block, then one practice card with the
+          key-type/mode controls relocated to an instrument strip WITH the key, so
+          the key surface clears the 390×844 fold without scrolling. */}
       {!isWide && introJSX}
-      {!isWide && <div style={S.panel}>{optionsJSX}</div>}
-      {!isWide && practicePanels}
+      {!isWide && narrowKeyLayout}
     </div>
   );
 }
@@ -2237,13 +2657,15 @@ const ACTIVITY_LABELS = {
 
 // D1: one-liner description for each activity, shown as a sub-line under the label.
 // Mirrors the pattern already used by the Conditions buttons (label + gray desc).
+// Plain-anchored: each description leads with a clause a brand-new ham understands,
+// with any shorthand spelled out or moved after the plain meaning (UAT — Dale).
 const ACTIVITY_DESCS = {
-  ragchew: "casual back-and-forth — names, QTH, rig",
+  ragchew: "casual back-and-forth — names, location, and rig",
   pota:    "Parks on the Air",
   sota:    "Summits on the Air",
   iota:    "Islands on the Air",
-  dx:      "terse pileup exchange — 5NN and QRZ",
-  contest: "CQ TEST — serial or zone exchange",
+  dx:      "work a far-off or rare station — a quick exchange, signal report only",
+  contest: "contest contact — trade a quick serial number or zone",
 };
 
 // D1: role descriptions, keyed by activity + role value.
@@ -2255,23 +2677,23 @@ const ROLE_DESCS = {
   },
   pota: {
     activator: "you're in the park — you call CQ and run the pile",
-    hunter:    "you call the activator and give a report",
+    hunter:    "you call the activator and give a signal report",
   },
   sota: {
     activator: "you're on the summit — you call CQ and run the pile",
-    chaser:    "you call the activator and give a report",
+    chaser:    "you call the activator and give a signal report",
   },
   iota: {
     activator: "you're on the island — you call CQ and run the pile",
-    chaser:    "you call the activator and give a report",
+    chaser:    "you call the activator and give a signal report",
   },
   dx: {
     callcq: "you call CQ DX and work the station that answers",
-    hunt:   "you answer a DX station calling CQ — terse pileup exchange",
+    hunt:   "you answer a distant station calling CQ — a quick signal report",
   },
   contest: {
     run: "you call CQ TEST and work the stations that answer",
-    sp:  "you search & pounce — find a running station and pounce",
+    sp:  "find a station calling CQ and answer it — 'search and pounce'",
   },
 };
 
@@ -2327,6 +2749,15 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // relying on Score (which is aria-hidden). The region must be pre-mounted —
   // a text *change* is what triggers announcement (design §0).
   const [resultLive, setResultLive] = useState("");
+  // roleLive: announces the Role when it auto-resets because the Activity changed
+  // (not when the user picks a Role directly). The compacted Role trigger otherwise
+  // updates its text silently — a user could start a contact in the wrong role
+  // without noticing. Polite, always-mounted; set only in the Activity onChange.
+  const [roleLive, setRoleLive] = useState("");
+  // roleAutoPulse: a counter bumped on the same Activity-driven Role reset. Passed
+  // to the Role CompactSelect as pulseKey — each bump replays a brief amber glow on
+  // its trigger (the sighted-user counterpart to roleLive, reduced-motion-gated).
+  const [roleAutoPulse, setRoleAutoPulse] = useState(0);
 
   // Phase 4 (B4) — per-conversation score accumulation for averageScore().
   // We accumulate copy % and send % across every graded step in a contact so
@@ -2735,70 +3166,53 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // intro in a single combined panel (today's layout, no mobile regression).
   const optionsJSX = !qso && (
     <>
-      {/* Activity selector — D1: each button shows a description sub-line matching
-          the Conditions-button pattern ([value, label, desc] rendered left-aligned) */}
-      <div style={{ ...S.label, marginBottom: 8 }}>Activity</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {Object.entries(ACTIVITY_LABELS).map(([v, l]) => (
-          <button
-            key={v}
-            aria-pressed={activity === v}
-            onClick={() => {
-              setActivity(v);
-              // Default to the last role in the list: for every existing and new
-              // activity this is the "listener / responder" role (answer, hunter,
-              // chaser, hunt, sp) — the more natural starting point for a learner.
-              const terms = ROLE_TERMS[v];
-              setRole(terms[terms.length - 1][0]);
-            }}
-            style={{
-              ...S.btn, textAlign: "left", padding: "10px 14px",
-              ...(activity === v ? { borderColor: "#F2A93B" } : {}),
-            }}
-          >
-            <span style={{ color: activity === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.75rem" }}>{l}</span>
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ACTIVITY_DESCS[v]}</div>
-          </button>
-        ))}
-      </div>
+      {/* Activity selector — CompactSelect; the D1 description sub-lines move into
+          the open panel's option rows. onChange keeps the existing side effect:
+          default Role → the last (answering/responder) role for the new activity. */}
+      <CompactSelect
+        label="Activity"
+        options={Object.entries(ACTIVITY_LABELS).map(([v, l]) => ({ value: v, label: l, description: ACTIVITY_DESCS[v] }))}
+        value={activity}
+        onChange={(v) => {
+          setActivity(v);
+          // Default to the last role in the list: for every existing and new
+          // activity this is the "listener / responder" role (answer, hunter,
+          // chaser, hunt, sp) — the more natural starting point for a learner.
+          const terms = ROLE_TERMS[v];
+          const [nextRole, nextRoleLabel] = terms[terms.length - 1];
+          setRole(nextRole);
+          // Make the auto-reset perceptible (UAT: the compacted trigger changes
+          // silently). Announce it politely for AT and bump the pulse counter so
+          // the Role trigger glows amber for sighted users. This fires ONLY here,
+          // on an Activity-driven reset — never on a direct Role pick below.
+          setRoleLive(`Role set to ${nextRoleLabel}`);
+          setRoleAutoPulse((n) => n + 1);
+        }}
+      />
 
-      {/* Role selector — D1: same description pattern; labels are program-correct per activity */}
-      <div style={{ ...S.label, marginBottom: 8 }}>Role</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {ROLE_TERMS[activity].map(([v, l]) => (
-          <button
-            key={v}
-            aria-pressed={role === v}
-            onClick={() => setRole(v)}
-            style={{
-              ...S.btn, textAlign: "left", padding: "10px 14px",
-              ...(role === v ? { borderColor: "#F2A93B" } : {}),
-            }}
-          >
-            <span style={{ color: role === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.75rem" }}>{l}</span>
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ROLE_DESCS[activity][v]}</div>
-          </button>
-        ))}
-      </div>
+      {/* Role selector — activity-dependent options (re-renders when Activity changes).
+          pulseKey drives the amber attention-glow when the Activity reset the Role. */}
+      <CompactSelect
+        label="Role"
+        options={ROLE_TERMS[activity].map(([v, l]) => ({ value: v, label: l, description: ROLE_DESCS[activity][v] }))}
+        value={role}
+        onChange={setRole}
+        pulseKey={roleAutoPulse}
+      />
 
-      {/* Difficulty selector.
-          Internal values ("easy", "normal", "real") are unchanged — the QSB/noise
-          conditionals throughout this component test `difficulty === "real"`.
-          Only the display label for "real" is changed to "Real life". */}
-      <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {[
-          ["easy",   "EASY",      "Text appears letter by letter as it's sent — hear it and see it together."],
-          ["normal", "NORMAL",    "Clean signal, no help. Copy by ear, check yourself, then continue."],
-          ["real",   "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
-        ].map(([v, l, desc]) => (
-          <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
-            style={{ ...S.btn, textAlign: "left", padding: "10px 14px", ...(difficulty === v ? { borderColor: "#F2A93B" } : {}) }}>
-            <span style={{ color: difficulty === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700 }}>{l}</span>
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{desc}</div>
-          </button>
-        ))}
-      </div>
+      {/* Conditions selector — internal values ("easy"/"normal"/"real") unchanged;
+          the QSB/noise conditionals throughout this component still test
+          `difficulty === "real"`. Descriptions move into the open panel. */}
+      <CompactSelect
+        label="Conditions"
+        options={[
+          { value: "easy",   label: "EASY",      description: "Text appears letter by letter as it's sent — hear it and see it together." },
+          { value: "normal", label: "NORMAL",    description: "Clean signal, no help. Copy by ear, check yourself, then continue." },
+          { value: "real",   label: "REAL LIFE", description: "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here." },
+        ]}
+        value={difficulty}
+        onChange={setDifficulty}
+      />
       {difficulty === "real" && (
         <div style={{ marginBottom: 6 }}>
           <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
@@ -2956,9 +3370,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           continuously so that text changes (set on events) are announced by AT.
           - stepLive:   step transitions in the normal QSO loop (polite)
           - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite)
+          - roleLive:   the Role when an Activity change auto-resets it (polite)
           Not gated by isWide — render in both layouts. */}
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{stepLive}</div>
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{resultLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{roleLive}</div>
 
       {/* Wide layout: intro in its own main-column panel; options OR context portaled to rail. */}
       {isWide && !qso && <div style={S.panel}>{introJSX}</div>}
@@ -3080,14 +3496,19 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           </div>
           <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", marginTop: 0 }}>{cur.prompt}</p>
           {revealed ? (
-            <Display>{cur.suggested}</Display>
+            // compact on narrow: caps the (up to ~115-char) suggested script at
+            // maxHeight+scroll so a long "Full QSO line" reveal cannot push the key
+            // surface below the phone fold — the key position stays independent of
+            // script length (the same content-independence the KEY tab relies on).
+            <Display compact={!isWide}>{cur.suggested}</Display>
           ) : (
             <button style={S.btn} onClick={() => setRevealed(true)}>👁 SHOW SUGGESTED SCRIPT</button>
           )}
           <div style={{ ...S.label, margin: "12px 0 6px" }}>
             Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
           </div>
-          <Display cursor>{keyer.decoded}</Display>
+          {/* compact on narrow: the shorter readout banks vertical room above the key. */}
+          <Display cursor compact={!isWide}>{keyer.decoded}</Display>
           <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
@@ -4518,10 +4939,15 @@ export default function CWTrainer() {
           max-width: 1180px;
           margin: 0 auto;
         }
-        /* Narrow (<900px): collapse to today's single column */
+        /* Narrow (<900px): collapse to today's single column.
+           minmax(0, 1fr) (not bare 1fr) so the column can shrink below its
+           content's min-content — otherwise a long CompactSelect value (e.g.
+           "5 — Numbers (incl. cut)") forces the whole grid wider than the phone
+           viewport (horizontal scroll). This matches the wide layout, which
+           already uses minmax(0, 1fr) for its middle column. */
         @media (max-width: 899px) {
           .wr-shell {
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(0, 1fr);
             max-width: 560px;
             gap: 0;
           }
@@ -4591,6 +5017,34 @@ export default function CWTrainer() {
         @media (prefers-reduced-motion: reduce) {
           .wr-coffee:hover { transition: none; }
         }
+
+        /*
+          CompactSelect stateful styles. Inline styles can't do :hover, so the
+          pointer-hover tints live here; keyboard state (active/selected) is set
+          inline in the component. The trigger's :active press-down is cancelled
+          — a menu trigger is not a physical key.
+          #303842 is the ONE new literal: a neutral hover tint one step above
+          S.btn's #2A313A. Reusing the amber #3A2E18 wash here would read faintly
+          "selected", so a neutral gray is the correct tint (flagged to Travis).
+        */
+        .wr-select-trigger:hover:not(:disabled) { background-color: #303842; }
+        .wr-select-trigger:active { transform: none; }
+        .wr-select-option:hover { background-color: #2A313A; }
+        /* Panel open fade — reduced-motion-gated (matches the .wr-coffee/.wr-splash precedent) */
+        @keyframes wrSelectIn { from { opacity: 0 } to { opacity: 1 } }
+        .wr-select-panel { animation: wrSelectIn 110ms ease both; }
+        @media (prefers-reduced-motion: reduce) { .wr-select-panel { animation: none !important; } }
+        /* Attention pulse — a brief amber glow when a control's value changed for an
+           external reason (QSO Role auto-reset by an Activity change). Non-color-safe
+           is not required here: it augments the polite roleLive announcement, which
+           carries the change for AT. Reduced-motion suppresses the animation entirely. */
+        @keyframes wrSelectPulse {
+          0%   { box-shadow: 0 0 0 0 rgba(242,169,59,0.0); }
+          25%  { box-shadow: 0 0 0 3px rgba(242,169,59,0.55); border-color: #F2A93B; }
+          100% { box-shadow: 0 0 0 0 rgba(242,169,59,0.0); }
+        }
+        .wr-select-pulse { animation: wrSelectPulse 900ms ease-out; }
+        @media (prefers-reduced-motion: reduce) { .wr-select-pulse { animation: none !important; } }
       `}</style>
 
       {/*

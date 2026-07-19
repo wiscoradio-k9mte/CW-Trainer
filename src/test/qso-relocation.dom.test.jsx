@@ -42,8 +42,10 @@ describe("QSO relocation — WIDE: options live in the rail, exchange in main", 
     expect(
       within(rail).getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ }),
     ).toBeInTheDocument();
-    // A representative activity option also lives in the rail.
-    expect(within(rail).getByRole("button", { name: /Ragchew/ })).toBeInTheDocument();
+    // The Activity CompactSelect lives in the rail; opening it (within the rail)
+    // surfaces a representative option, proving the panel portals with railEl.
+    await user.click(within(rail).getByRole("combobox", { name: "Activity" }));
+    expect(within(rail).getByRole("option", { name: /Ragchew/ })).toBeInTheDocument();
   });
 
   it("keeps the QSO setup controls OUT of <main> on wide (they are in the rail)", async () => {

@@ -41,11 +41,14 @@ describe("COPY relocation — WIDE: options live in the rail, practice in main",
     // this fail if the portal regressed to inline-in-main.
     expect(within(rail).getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(within(rail).getByText("Conditions")).toBeInTheDocument();
-    // A representative rung and all three conditions live in the rail.
+    // A representative rung lives in the rail (level ladder unchanged — still buttons).
     expect(within(rail).getByRole("button", { name: /1 character/ })).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: /Callsigns/ })).toBeInTheDocument();
+    // Conditions is a CompactSelect combobox in the rail; open it to confirm its
+    // options are reachable from within the rail (the portal targets railEl).
+    await user.click(within(rail).getByRole("combobox", { name: "Conditions" }));
     for (const label of ["EASY", "NORMAL", "REAL LIFE"]) {
-      expect(within(rail).getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+      expect(within(rail).getByRole("option", { name: label })).toBeInTheDocument();
     }
   });
 
@@ -60,7 +63,8 @@ describe("COPY relocation — WIDE: options live in the rail, practice in main",
     expect(within(main).queryByText("What to copy — climb as you improve")).not.toBeInTheDocument();
     expect(within(main).queryByText("Conditions")).not.toBeInTheDocument();
     expect(within(main).queryByRole("button", { name: /1 character/ })).not.toBeInTheDocument();
-    expect(within(main).queryByRole("button", { name: /REAL LIFE/ })).not.toBeInTheDocument();
+    // The Conditions combobox was relocated to the rail — not in main.
+    expect(within(main).queryByRole("combobox", { name: "Conditions" })).not.toBeInTheDocument();
   });
 
   it("keeps the practice surface (CHECK + answer input) in <main>", async () => {
