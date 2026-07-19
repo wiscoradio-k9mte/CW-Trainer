@@ -233,6 +233,122 @@ export function similarity(a, b) {
   return 1 - dp[m][n] / Math.max(m, n);
 }
 
+/* ================= SEND GRADING (element-based) =================
+   The QSO send grade scores a send on whether each REQUIRED element was
+   conveyed in ANY valid on-air form — the ratified real-world model — NOT on
+   fidelity to the verbose `suggested` example script (that stays reveal-only).
+   Because scoring is a presence test ("was each required element conveyed?"),
+   Travis's requirements fall out for free: repetition, surrounding procedural
+   signals (DE/K/KN/BK/=/R), word order, extra pleasantries, and a minimal valid
+   send are all fine — there is nothing to penalise and nothing to order. The
+   score IS the ✓ checklist (one computation), so they can never disagree. */
+
+// Courtesy-literal equivalence (fork 3): on-air spellings that convey the SAME
+// courtesy element. A small EXPLICIT curated table — not fuzzy matching — so it
+// stays predictable and Travis can seed more. Any member satisfies a required
+// member of the same set (e.g. required "TU" is met by a sent "TNX").
+export const COURTESY_EQUIVALENTS = [
+  ["TU", "TNX", "TKS"],
+];
+
+// courtesyForms(token) → accepted spellings for a courtesy literal. Returns
+// [token] when the token is in no set, so non-courtesy tokens pass through.
+export function courtesyForms(token) {
+  const t = String(token).toUpperCase();
+  for (const set of COURTESY_EQUIVALENTS) if (set.includes(t)) return set;
+  return [t];
+}
+
+// numericForms(token) → cut-number equivalents of a pure numeric/cut token:
+// 599 ↔ 5NN, 05 ↔ T5. Only fires on a whole [0-9NT] token; a park number like
+// "1234" only appears as a substring inside "K-1234", never a whole required
+// token, so a park ref is never cut-mangled. Non-numeric tokens pass through.
+export function numericForms(token) {
+  const t = String(token);
+  return /^[0-9NT]+$/.test(t)
+    ? [t, t.replace(/9/g, "N").replace(/0/g, "T"), t.replace(/N/g, "9").replace(/T/g, "0")]
+    : [t];
+}
+
+// isWellFormedRst(token) → true for ANY valid RST report: R∈1–5, S∈1–9, T∈1–9,
+// cut numbers (N=9, T=0) accepted. Fork 2: the send credits the RST element for
+// any honest report (579, 559, 5NN…), not only the 599 the script models —
+// "there are multiple valid ways to give the RST and all must count."
+export function isWellFormedRst(token) {
+  const decut = String(token).toUpperCase().replace(/N/g, "9").replace(/T/g, "0");
+  return /^[1-5][1-9][1-9]$/.test(decut);
+}
+
+// isRstReport(token) → the CANONICAL report 599 (or its 5NN cut form). Every
+// required RST slot holds exactly this (myRst/rpt = cutNum("599", cut)), so it
+// identifies "this required element is the RST" precisely — WITHOUT misclassing
+// a contest serial that happens to be RST-shaped (e.g. serial 123 is a valid
+// RST shape but is not the report, so it must still be matched literally).
+export function isRstReport(token) {
+  return String(token).toUpperCase().replace(/N/g, "9").replace(/T/g, "0") === "599";
+}
+
+// Fork-2 flag: accept any well-formed RST for the RST element. Flip to false to
+// require the literal 599/5NN report only (then the RST slot falls through to
+// exact cut-form matching). Data-driven so Travis can adjust before the edge push.
+export const RST_ACCEPT_ANY_WELLFORMED = true;
+
+// gradeSend(requiredElements, sent, opts) → { score, hits, missing }
+// score = round(hits / required × 100), coarse by design (fork 5): with one
+// required element it is 0 or 100; with two, 0 / 50 / 100. `hits`/`missing`
+// preserve the original required tokens (original case) for the ✓/✗ render.
+export function gradeSend(requiredElements, sent, opts = {}) {
+  const acceptAnyRst = opts.acceptAnyRst ?? RST_ACCEPT_ANY_WELLFORMED;
+  const norm = String(sent).trim().toUpperCase().replace(/\s+/g, " ");
+  const tokens = norm ? norm.split(" ") : [];
+  const flat = norm.replace(/\s+/g, "");
+  const sentHasRst = tokens.some(isWellFormedRst);
+
+  const isConveyed = (el) => {
+    const E = String(el).toUpperCase();
+    // 1. RST slot (the canonical 599 report): any well-formed report counts.
+    if (acceptAnyRst && isRstReport(E)) return sentHasRst;
+    // 2. Courtesy literal: any curated-equivalent spelling counts.
+    const courtesy = courtesyForms(E);
+    if (courtesy.length > 1) return courtesy.some((f) => flat.includes(f));
+    // 3. Everything else (callsign, park, state, name, zone, serial, 73): the
+    //    token in any cut-number form, as a substring of the space-stripped
+    //    send — so repetition / adjacency / surrounding signals are all fine.
+    return numericForms(E).some((f) => flat.includes(f.replace(/\s+/g, "")));
+  };
+
+  const hits = [];
+  const missing = [];
+  for (const el of requiredElements) (isConveyed(el) ? hits : missing).push(el);
+  const score = requiredElements.length
+    ? Math.round((hits.length / requiredElements.length) * 100)
+    : 0;
+  return { score, hits, missing };
+}
+
+// canonicalizeCw(s) — normalisation for the COPY/KEY/QSO-copy FIDELITY paths:
+// uppercase, collapse whitespace, and cut-number normalise ONLY inside a numeric
+// run. A maximal [0-9NT]+ run that contains a real digit has its N→9 and T→0 (so
+// 5NN→599, T5→05), but a run with NO digit (a bare NN, the N in NAME, the T in
+// TU/TNX) is left untouched — a blind global N→9/T→0 would corrupt real letters
+// (NAME→9AME). Fork 4: cut-number + whitespace + case only on the fidelity paths;
+// NO semantic abbrev equivalence there (copy = write exactly what was sent).
+export function canonicalizeCw(s) {
+  return String(s)
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ")
+    .replace(/[0-9NT]+/g, (run) =>
+      /[0-9]/.test(run) ? run.replace(/N/g, "9").replace(/T/g, "0") : run
+    );
+}
+
+// similarityCw(a, b) — edit-distance fidelity score with cut-number tolerance.
+// Used by COPY/KEY/QSO-copy so copying 5NN for 599 (or T for 0) isn't penalised.
+export function similarityCw(a, b) {
+  return similarity(canonicalizeCw(a), canonicalizeCw(b));
+}
+
 /* ================= KEYING DRILL GENERATORS ================= */
 /* Each generator returns a plain string suitable for display in the KeyTrainer.
    The two pre-existing inline behaviors (common words, QSO line) are moved here

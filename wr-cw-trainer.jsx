@@ -4,7 +4,8 @@ import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   drillCommonWords, drillWiderWords,
   US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
-  SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing, similarity,
+  SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing,
+  gradeSend, similarityCw,
   INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
   randDxStation, zoneToken, reciprocalCall, resolveUSState,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
@@ -1857,7 +1858,9 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   };
 
   const check = () => {
-    const pct = Math.round(similarity(target, attempt) * 100);
+    // Fidelity grade with cut-number tolerance (§7): copying 5NN for 599 (or T
+    // for 0) is not penalised; NAME/TU/TNX letters are left intact.
+    const pct = Math.round(similarityCw(target, attempt) * 100);
     const msg = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
     setResult(pct);
     setRevealed(true);
@@ -2174,7 +2177,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   };
 
   const check = () => {
-    const pct = Math.round(similarity(target, keyer.decoded) * 100);
+    // Fidelity grade with cut-number tolerance (§7): keying 5NN for 599 counts;
+    // letters in a drill target (NAME/TU/TNX) are not cut-mangled.
+    const pct = Math.round(similarityCw(target, keyer.decoded) * 100);
     setResult(pct);
     // Analyze fist timing from the events accumulated since the last clear.
     // Read from the ref directly — no re-render needed to compute this.
@@ -2982,7 +2987,8 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   };
 
   const checkCopy = () => {
-    const pct = Math.round(similarity(cur.text, copyAttempt) * 100);
+    // Fidelity grade with cut-number tolerance (§7): copying 5NN for 599 counts.
+    const pct = Math.round(similarityCw(cur.text, copyAttempt) * 100);
     const verdict = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
     setCopyResult(pct);
     setRevealed(true);
@@ -3049,34 +3055,32 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     qsoPauseTimer.current = null;
     qsoAutoGradeFired.current = true;
     const sent = keyer.decoded.toUpperCase();
-    const sim = Math.round(similarity(cur.suggested, sent) * 100);
-    const flat = sent.replace(/\s+/g, "");
-    // Report tokens count in either form: 599 ↔ 5NN, 0 ↔ T
-    const forms = (m) =>
-      /^[0-9NT]+$/.test(m)
-        ? [m, m.replace(/9/g, "N").replace(/0/g, "T"), m.replace(/N/g, "9").replace(/T/g, "0")]
-        : [m];
-    const hits = cur.mustContain.filter((m) =>
-      forms(m).some((v) => flat.includes(v.replace(/\s+/g, "")))
-    );
-    setSendResult({ sim, hits, need: cur.mustContain });
-    // Accumulate for per-conversation aggregate (B4)
-    setSendScores((prev) => [...prev, sim]);
+    // Element-based grade (ratified model): score whether the REQUIRED elements
+    // (cur.mustContain) were conveyed in any valid on-air form — NOT fidelity to
+    // the verbose `suggested` example. The score IS the ✓ checklist (one
+    // computation via gradeSend), so the old 23%-with-✓-K9MTE contradiction is
+    // now structurally impossible. `cur.suggested` is reveal-only (the
+    // SHOW-SUGGESTED reference), never the grading target.
+    const { score, hits, missing } = gradeSend(cur.mustContain, sent);
+    setSendResult({ score, hits, need: cur.mustContain });
+    // Accumulate for per-conversation aggregate (B4). Same 0–100 range as before,
+    // no schema change — the send-trend now measures required-elements accuracy
+    // instead of script fidelity (a semantics improvement, not a format change).
+    setSendScores((prev) => [...prev, score]);
     // Announce to AT via the always-mounted resultLive region (design §0).
     // Score is aria-hidden and the mustContain checklist is color + glyph only —
     // this is the only AT path for both the send score and the hit/missing tokens.
-    const verdict = sim >= 90 ? "SOLID COPY" : sim >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
-    const missing = cur.mustContain.filter((m) => !hits.includes(m));
-    let liveMsg = `Send: ${sim}% — ${verdict}. Sent: ${hits.length > 0 ? hits.join(", ") : "none"}`;
+    const verdict = score >= 90 ? "SOLID COPY" : score >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
+    let liveMsg = `Send: ${score}% — ${verdict}. Sent: ${hits.length > 0 ? hits.join(", ") : "none"}`;
     if (missing.length > 0) liveMsg += `; missing: ${missing.join(", ")}`;
     liveMsg += ".";
     // Append the auto-advance notice ONLY when actually armed so AT isn't surprised.
     setResultLive(
-      settings.qsoAutoAdvance && sim === 100
+      settings.qsoAutoAdvance && score === 100
         ? `${liveMsg} Advancing automatically.`
         : liveMsg
     );
-    armAutoAdvance(sim, () => advance({ who: settings.myCall, text: keyer.decoded || "(sent)" }));
+    armAutoAdvance(score, () => advance({ who: settings.myCall, text: keyer.decoded || "(sent)" }));
   };
 
   // Auto-grade send step (PAUSE-BASED): replaces the old length-based trigger.
@@ -3520,7 +3524,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           </div>
           {sendResult && (
             <div style={{ marginTop: 12 }}>
-              <Score pct={sendResult.sim} />
+              <Score pct={sendResult.score} />
               <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem", marginTop: 6 }}>
                 {sendResult.need.map((m) => (
                   <span key={m} style={{ marginRight: 12, color: sendResult.hits.includes(m) ? "#8FCB9B" : "#E07A5F" }}>
