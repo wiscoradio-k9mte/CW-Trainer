@@ -177,4 +177,24 @@ describe("narrow (mobile) layout — KEY compact practice card", () => {
     // CHECK is below the key.
     expect(precedes(key, check)).toBe(true);
   });
+
+  // Content-independence guard. The whole KEY-narrow fix rests on both readouts
+  // (target ABOVE the key, decoded ABOVE the key) being height-CAPPED with an
+  // internal scroll, so a long target — or a long decoded buffer during extended
+  // keying — scrolls INSIDE the readout instead of pushing the key past the fold.
+  // jsdom has no layout, so it cannot measure the fold (that is the headed re-gate,
+  // measured: cap holds the key <=818 even with both readouts overflowing; ~1106
+  // WITHOUT the cap). But jsdom CAN lock the load-bearing INLINE STYLE that makes
+  // the cap real: if a future edit drops `compact` from these Displays or removes
+  // the maxHeight/overflow cap, this bites — nothing else in the suite guards it.
+  it("caps BOTH narrow readouts (content-independence — long content scrolls, key stays put)", async () => {
+    await keyNarrowWithTarget();
+    const targetReadout = screen.getByText("Send this").nextElementSibling;
+    const decodedReadout = screen.getByText(/Decoded from your key/).nextElementSibling;
+    for (const readout of [targetReadout, decodedReadout]) {
+      expect(readout).not.toBeNull();
+      expect(readout.style.maxHeight).toBe("76px");
+      expect(readout.style.overflowY).toBe("auto");
+    }
+  });
 });
