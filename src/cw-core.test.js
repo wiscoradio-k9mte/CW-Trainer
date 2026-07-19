@@ -3115,6 +3115,125 @@ describe("buildContest() — sp role", () => {
 });
 
 // ---------------------------------------------------------------------------
+// CALL-CQ required elements — calling CQ vs answering a CQ
+// ---------------------------------------------------------------------------
+// The reported defect: calling CQ with a bare callsign scored 100 because the six
+// CALL-CQ steps required only [myCall]. Calling CQ requires "CQ" (and the activity
+// word) AND your call; a bare call is a valid ANSWER, not a valid CQ. These grade
+// each CALL-CQ step's own mustContain through gradeSend (the real grader) so they
+// bite: removing "CQ"/"POTA"/"SOTA"/"IOTA"/"DX"/"TEST" from a step turns the
+// matching "bare call < 100" or "proper call = 100" assertion red.
+describe("CALL-CQ required elements (calling CQ vs answering)", () => {
+  const callCqStep = (build, prof, role) => build(prof, role).steps[0];
+  // [label, builder, profile, role, myCall in that profile]
+  const CALL_CQ = [
+    ["ragchew", buildRagchew, PROFILE,      "call",      "K9MTE"],
+    ["pota",    buildPota,    PROFILE,      "activator", "K9MTE"],
+    ["sota",    buildSota,    PROFILE,      "activator", "K9MTE"],
+    ["iota",    buildIota,    PROFILE,      "activator", "K9MTE"],
+    ["dx",      buildDx,      DX_PROF,      "callcq",    "W1AW"],
+    ["contest", buildContest, CONTEST_PROF, "run",       "W1AW"],
+  ];
+
+  it("KEYSTONE: calling CQ with a bare callsign scores < 100 (missing CQ/qualifier)", () => {
+    // The exact reported gap. MUTATION: revert any CALL-CQ mustContain to [myCall]
+    // → that builder's bare call returns to 100 → red.
+    for (const [label, build, prof, role, myCall] of CALL_CQ) {
+      const r = gradeSend(callCqStep(build, prof, role).mustContain, myCall);
+      expect(r.score, `${label}: bare call must be partial`).toBeLessThan(100);
+      // The callsign IS present — the miss is the CQ/qualifier, not the call.
+      expect(r.hits, `${label}: call still credited`).toContain(myCall);
+    }
+  });
+
+  it("a proper CQ (CQ + activity word + call) scores 100 for every CALL-CQ builder", () => {
+    const proper = {
+      ragchew: "CQ CQ CQ DE K9MTE K9MTE K",
+      pota:    "CQ POTA K9MTE",
+      sota:    "CQ SOTA K9MTE/P",
+      iota:    "CQ IOTA K9MTE",
+      dx:      "CQ DX W1AW W1AW K",
+      contest: "CQ TEST W1AW W1AW",
+    };
+    for (const [label, build, prof, role] of CALL_CQ) {
+      const step = callCqStep(build, prof, role);
+      expect(gradeSend(step.mustContain, proper[label]).score, label).toBe(100);
+    }
+  });
+
+  it("Keystone-2: the exact reported grade cases", () => {
+    const ragchew = callCqStep(buildRagchew, PROFILE, "call");       // ["CQ","K9MTE"]
+    const pota    = callCqStep(buildPota,    PROFILE, "activator");   // ["CQ","POTA","K9MTE"]
+    const contest = callCqStep(buildContest, CONTEST_PROF, "run");    // ["TEST","W1AW"]
+    // Proper calls = 100
+    expect(gradeSend(ragchew.mustContain, "CQ CQ CQ DE K9MTE").score).toBe(100);
+    expect(gradeSend(pota.mustContain,    "CQ POTA K9MTE").score).toBe(100);
+    expect(gradeSend(contest.mustContain, "TEST W1AW").score).toBe(100);        // no CQ needed
+    expect(gradeSend(contest.mustContain, "CQ TEST W1AW").score).toBe(100);
+    expect(gradeSend(contest.mustContain, "CQ CONTEST W1AW").score).toBe(100);  // CONTEST≡TEST
+    // Bare call = partial (the fixed gap)
+    expect(gradeSend(ragchew.mustContain, "K9MTE").score).toBeLessThan(100);
+    expect(gradeSend(pota.mustContain,    "K9MTE").score).toBeLessThan(100);
+    expect(gradeSend(contest.mustContain, "W1AW").score).toBeLessThan(100);
+  });
+
+  it("each CALL-CQ step requires exactly its activity element set", () => {
+    // A strict lock (mutation-bite for every added token): dropping any one
+    // element from any builder reddens the matching row here.
+    expect(callCqStep(buildRagchew, PROFILE, "call").mustContain).toEqual(["CQ", "K9MTE"]);
+    expect(callCqStep(buildPota,    PROFILE, "activator").mustContain).toEqual(["CQ", "POTA", "K9MTE"]);
+    expect(callCqStep(buildSota,    PROFILE, "activator").mustContain).toEqual(["CQ", "SOTA", "K9MTE"]);
+    expect(callCqStep(buildIota,    PROFILE, "activator").mustContain).toEqual(["CQ", "IOTA", "K9MTE"]);
+    expect(callCqStep(buildDx,      DX_PROF, "callcq").mustContain).toEqual(["CQ", "DX", "W1AW"]);
+    expect(callCqStep(buildContest, CONTEST_PROF, "run").mustContain).toEqual(["TEST", "W1AW"]);
+  });
+
+  it("ANSWER steps did NOT gain a CQ requirement (a bare-call answer still = 100)", () => {
+    // Regression guard: the CQ requirement must not leak into answering steps —
+    // answering a CQ with a bare call is ratified as valid. MUTATION: add "CQ" to
+    // an answer step → red.
+    const answerSteps = [
+      ["ragchew answer", buildRagchew(PROFILE, "answer").steps[1], "K9MTE"],
+      ["pota hunter",    buildPota(PROFILE, "hunter").steps[1],    "K9MTE"],
+      ["sota chaser",    buildSota(PROFILE, "chaser").steps[1],    "K9MTE"],
+      ["iota chaser",    buildIota(PROFILE, "chaser").steps[1],    "K9MTE"],
+      ["dx hunt",        buildDx(DX_PROF, "hunt").steps[1],        "W1AW"],
+      ["contest sp",     buildContest(CONTEST_PROF, "sp").steps[1],"W1AW"],
+    ];
+    for (const [label, step, myCall] of answerSteps) {
+      expect(step.mustContain, `${label}: answer requires call only`).toEqual([myCall]);
+      expect(step.mustContain, `${label}: no CQ leak`).not.toContain("CQ");
+      expect(gradeSend(step.mustContain, myCall).score, label).toBe(100);
+    }
+  });
+
+  it("mustContain ⊆ suggested holds for every CALL-CQ step across random cqCall variants", () => {
+    // cqCall randomises the CQ format (3×3 / 3×2 / terse); every variant must still
+    // literally carry CQ + the activity word + the call, so the guardrail invariant
+    // never breaks for any draw.
+    for (let i = 0; i < 40; i++) {
+      for (const [label, build, prof, role] of CALL_CQ) {
+        const step = callCqStep(build, prof, role);
+        for (const token of step.mustContain) {
+          expect(step.suggested.includes(token), `${label}: "${token}" in "${step.suggested}"`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("contest TEST element: TEST, CONTEST, and lower-case all satisfy it; a bare call does not", () => {
+    // "CQ" is credited-if-present, never required, for the contest run step.
+    expect(gradeSend(["TEST", "W1AW"], "TEST W1AW").score).toBe(100);        // CQ dropped
+    expect(gradeSend(["TEST", "W1AW"], "CQ TEST W1AW").score).toBe(100);     // CQ present
+    expect(gradeSend(["TEST", "W1AW"], "CQ CONTEST W1AW").score).toBe(100);  // CONTEST spelling
+    expect(gradeSend(["TEST", "W1AW"], "cq contest w1aw").score).toBe(100);  // case-insensitive
+    const bare = gradeSend(["TEST", "W1AW"], "W1AW");
+    expect(bare.score).toBe(50);
+    expect(bare.missing).toEqual(["TEST"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Builder: buildPota opts.dx and opts.p2p
 // ---------------------------------------------------------------------------
 const POTA_PROF = { myCall: "W1AW", myQth: "MADISON WI", cut: false };

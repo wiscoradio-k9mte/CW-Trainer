@@ -243,12 +243,17 @@ export function similarity(a, b) {
    send are all fine — there is nothing to penalise and nothing to order. The
    score IS the ✓ checklist (one computation), so they can never disagree. */
 
-// Courtesy-literal equivalence (fork 3): on-air spellings that convey the SAME
-// courtesy element. A small EXPLICIT curated table — not fuzzy matching — so it
+// On-air spelling equivalence (fork 3): sets of tokens that convey the SAME
+// required element. A small EXPLICIT curated table — not fuzzy matching — so it
 // stays predictable and Travis can seed more. Any member satisfies a required
 // member of the same set (e.g. required "TU" is met by a sent "TNX").
 export const COURTESY_EQUIVALENTS = [
   ["TU", "TNX", "TKS"],
+  // TEST is short for CONTEST in a contest CQ ("CQ TEST"); the operator may key
+  // either spelling, so both satisfy the contest CALL-CQ's required "TEST".
+  // Explicit/documentary: with today's substring matcher "TEST" already matches
+  // inside "CONTEST", so this pair only bites if the matcher ever goes token-based.
+  ["TEST", "CONTEST"],
 ];
 
 // courtesyForms(token) → accepted spellings for a courtesy literal. Returns
@@ -311,9 +316,12 @@ export function gradeSend(requiredElements, sent, opts = {}) {
     // 2. Courtesy literal: any curated-equivalent spelling counts.
     const courtesy = courtesyForms(E);
     if (courtesy.length > 1) return courtesy.some((f) => flat.includes(f));
-    // 3. Everything else (callsign, park, state, name, zone, serial, 73): the
-    //    token in any cut-number form, as a substring of the space-stripped
-    //    send — so repetition / adjacency / surrounding signals are all fine.
+    // 3. Everything else (callsign, park, state, name, zone, serial, 73, and the
+    //    CALL-CQ "CQ" / activity qualifier): the token in any cut-number form, as
+    //    a substring of the space-stripped send — so repetition / adjacency /
+    //    surrounding signals are all fine. Accepted edge (per design): a required
+    //    "CQ" also matches when the operator's OWN callsign contains the letters
+    //    "CQ" — vanishingly rare, and the same substring edge every element carries.
     return numericForms(E).some((f) => flat.includes(f.replace(/\s+/g, "")));
   };
 
@@ -868,7 +876,10 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         who: "you",
         suggested: cqCall("ragchew", myCall),
         prompt: "Call CQ — CQ, DE, your call, K. The number of repeats varies by habit and conditions.",
-        mustContain: [myCall],
+        // CALL-CQ archetype: calling CQ requires "CQ" AND your callsign. A bare
+        // callsign is how you ANSWER a CQ, not how you call one — so this differs
+        // intentionally from the answer steps below, which require [myCall] only.
+        mustContain: ["CQ", myCall],
       },
       {
         who: "dx",
@@ -1044,7 +1055,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: cqCall("pota", myCall),
         prompt: `Call CQ POTA. The park reference (${park}) goes in your log, not on the air.`,
-        mustContain: [myCall],
+        mustContain: ["CQ", "POTA", myCall],
       },
       {
         who: "dx",
@@ -1217,7 +1228,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: cqCall("sota", `${myCall}/P`, summit),
         prompt: `Call CQ SOTA signing portable. Summit ref ${summit} goes in the CQ — chasers expect it there.`,
-        mustContain: [myCall],
+        mustContain: ["CQ", "SOTA", myCall],
       },
       {
         who: "dx",
@@ -1301,7 +1312,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: cqCall("iota", myCall, ref),
         prompt: `Call CQ IOTA with your island ref ${ref}. Contest pace.`,
-        mustContain: [myCall],
+        mustContain: ["CQ", "IOTA", myCall],
       },
       {
         who: "dx",
@@ -1395,7 +1406,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: cqCall("dx", myCall),
         prompt: "Call CQ DX — CQ DX, DE, your call. Keep calling until someone answers.",
-        mustContain: [myCall],
+        mustContain: ["CQ", "DX", myCall],
       },
       {
         who: "dx",
@@ -1463,7 +1474,11 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
           who: "you",
           suggested: `CQ TEST ${myCall} ${myCall}`,
           prompt: "Call CQ TEST — your call twice. Short and fast.",
-          mustContain: [myCall],
+          // Contest CALL-CQ: "CQ TEST" (TEST = short for CONTEST). In a run "CQ"
+          // and "DE" are routinely dropped ("TEST K9MTE" is a valid call), so
+          // TEST + call are required and CQ is credited-if-present, never required.
+          // CONTEST satisfies TEST via COURTESY_EQUIVALENTS.
+          mustContain: ["TEST", myCall],
         },
         {
           who: "dx",
