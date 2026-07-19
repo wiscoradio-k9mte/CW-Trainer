@@ -99,9 +99,11 @@ sudo snap install wr-cw-trainer
 ```
 
 **Testing the next version (edge channel):** International/DX and word-list
-enhancements, plus **compact dropdown menus and a reworked practice layout that
+enhancements, **compact dropdown menus and a reworked practice layout that
 keeps the on-screen key reachable without scrolling** (better for small and touch
-screens), are currently in testing on the edge channel — install with
+screens), plus **improved QSO transmission grading** — your sending is now scored
+on the real-world elements you actually convey (any valid way of sending them),
+not on matching a script — are currently in testing on the edge channel. Install with
 `sudo snap install wr-cw-trainer --edge` (or `snap refresh --edge`) if you'd
 like to try them early and report issues.
 
