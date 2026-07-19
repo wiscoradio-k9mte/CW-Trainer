@@ -55,7 +55,7 @@ function keyCallsign(call) {
   }
 }
 
-async function startRagchewCallCq() {
+async function startRagchewCallCq({ autoAdvance = false } = {}) {
   window.localStorage.clear();
   const user = userEvent.setup();
   render(<CWTrainer />);
@@ -63,6 +63,11 @@ async function startRagchewCallCq() {
   await gotoTab(user, "QSO");
   await chooseOption(user, "Activity", /Ragchew/i);
   await chooseOption(user, "Role", /Call CQ/i);
+  // Opt in to hands-free auto-advance (default OFF) BEFORE starting the contact.
+  if (autoAdvance) {
+    const autoBtn = screen.queryByRole("button", { name: /AUTO OFF/i });
+    if (autoBtn) await user.click(autoBtn);
+  }
   // Call CQ → step 0 is a you-send whose only required element is your call.
   await user.click(screen.getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ }));
   const skBtn = screen.queryByRole("button", { name: "STRAIGHT KEY" });
@@ -115,5 +120,42 @@ describe("QSO send grading — reported bug is fixed end-to-end", () => {
     expect(screen.queryByText("PSE AGN")).not.toBeInTheDocument();
     // The ✓ checklist still shows the required element as met.
     expect(screen.getByText("✓ W1AW")).toBeInTheDocument();
+  });
+
+  // Send-step auto-advance was practically DEAD under the old score: reaching
+  // sim===100 on a verbose `suggested` script was near-impossible, so the
+  // hands-free advance silently never fired on a send step. Element grading
+  // makes a correct minimal send score 100, which UNBLOCKS the advance gate.
+  // This proves it now actually FIRES on the realistic keyer-driven send path —
+  // asserting produced state (the send step gives way to the next step), not
+  // "a timer was set".
+  //
+  // MUTATION verified: gating armAutoAdvance on the old sim (never 100 here) —
+  // or forcing `if (pct !== 100) return` to never arm — leaves CHECK TRANSMISSION
+  // present after the advance window → this assertion goes red.
+  it("with AUTO on, a 100% keyed send auto-advances off the send step (fires)", async () => {
+    const { user } = await startRagchewCallCq({ autoAdvance: true });
+
+    // On the you-send step: CHECK TRANSMISSION is the tell.
+    expect(screen.getByRole("button", { name: /CHECK TRANSMISSION/i })).toBeInTheDocument();
+
+    vi.useFakeTimers();
+    keyCallsign("W1AW");
+    await act(async () => {});
+
+    // Let the idle-pause timer fire checkSend → score 100 → arm the advance timer.
+    act(() => { vi.advanceTimersByTime(3000); });
+    await act(async () => {});
+    expect(screen.getByText(/Send: 100% — SOLID COPY/)).toBeInTheDocument();
+    // Still on the send step — the 4s advance window hasn't elapsed yet.
+    expect(screen.getByRole("button", { name: /CHECK TRANSMISSION/i })).toBeInTheDocument();
+
+    // Elapse QSO_AUTO_ADVANCE_MS (4000ms) — the same advance the TRANSMIT button
+    // calls now fires on its own, leaving the send step.
+    act(() => { vi.advanceTimersByTime(4001); });
+    await act(async () => {});
+    expect(
+      screen.queryByRole("button", { name: /CHECK TRANSMISSION/i })
+    ).not.toBeInTheDocument();
   });
 });
