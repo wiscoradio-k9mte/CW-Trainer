@@ -6,7 +6,7 @@
 // tests survive the controls moving between columns and stay meaningful: each
 // one fails if the *behavior or affordance* disappears, not if the layout moves.
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
 
@@ -29,4 +29,20 @@ export async function gotoTab(user, label) {
   await user.click(screen.getByRole("button", { name: label }));
 }
 
-export { screen };
+// Open a CompactSelect (found by its combobox accessible name) and commit the
+// option whose accessible name matches `optionName`. Mirrors the real interaction:
+// click the trigger to open the listbox, then click the option to commit + close.
+//
+// `scope` optionally narrows the search (pass the rail/main element or a within()
+// result) so a portaled selector isn't ambiguous with another copy on the page.
+// `comboName` / `optionName` accept a string (exact) or RegExp (substring), like
+// Testing Library's own name matchers.
+export async function chooseOption(user, comboName, optionName, scope) {
+  const q = scope ? within(scope) : screen;
+  const trigger = q.getByRole("combobox", { name: comboName });
+  await user.click(trigger);
+  await user.click(q.getByRole("option", { name: optionName }));
+  return trigger;
+}
+
+export { screen, within };

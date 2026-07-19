@@ -39,5 +39,13 @@ export default defineConfig({
     // is written to no-op when there is no `window` (i.e. the node suite) — see
     // src/test/setup.dom.js. That keeps the node suite's purity intact.
     setupFiles: ["./src/test/setup.dom.js"],
+    // The QSO-flow jsdom tests drive a full multi-step contact with REAL timers
+    // and userEvent (no fake clock), so they legitimately take several seconds —
+    // and more under the parallel run's CPU contention. The CompactSelect setup
+    // (open + commit a combobox) adds a small real-time cost per selection, which
+    // pushed the heaviest contact-drive test past the 5s default. 15s gives these
+    // real-timer integration tests headroom; a logic error still fails fast (as a
+    // wrong assertion), so this doesn't mask a hang — it only absorbs contention.
+    testTimeout: 15000,
   },
 });

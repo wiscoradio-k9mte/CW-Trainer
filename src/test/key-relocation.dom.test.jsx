@@ -39,10 +39,14 @@ describe("KEY relocation — WIDE: options live in the rail, practice in main", 
     expect(within(rail).getByRole("button", { name: "Previous category" })).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "Next category" })).toBeInTheDocument();
 
-    // Direct-pick row: all category buttons in the rail.
+    // Direct-pick dropdown: the CompactSelect combobox is in the rail, and opening
+    // it (within the rail, proving the panel portals with railEl) reveals every
+    // category as a role=option.
+    await user.click(within(rail).getByRole("combobox", { name: /Drill category/ }));
     for (const cat of DRILL_CATEGORIES) {
-      expect(within(rail).getByRole("button", { name: cat.label })).toBeInTheDocument();
+      expect(within(rail).getByRole("option", { name: cat.label })).toBeInTheDocument();
     }
+    await user.keyboard("{Escape}");
 
     // Key-type toggle buttons in the rail.
     // Use exact text "PADDLE" to avoid matching the PaddleKey surface buttons
@@ -63,8 +67,8 @@ describe("KEY relocation — WIDE: options live in the rail, practice in main", 
     // Stepper must not be in main on wide.
     expect(within(main).queryByRole("button", { name: "Previous category" })).not.toBeInTheDocument();
     expect(within(main).queryByRole("button", { name: "Next category" })).not.toBeInTheDocument();
-    // Direct-pick must not be in main on wide.
-    expect(within(main).queryByRole("button", { name: DRILL_CATEGORIES[0].label })).not.toBeInTheDocument();
+    // The category dropdown (combobox) must not be in main on wide.
+    expect(within(main).queryByRole("combobox", { name: /Drill category/ })).not.toBeInTheDocument();
     // Key-type toggle must not be in main on wide.
     // Exact text match to avoid false positives from PaddleKey's "Dit paddle" aria-labels.
     expect(within(main).queryByRole("button", { name: "PADDLE" })).not.toBeInTheDocument();
@@ -112,13 +116,17 @@ describe("KEY relocation — WIDE: options live in the rail, practice in main", 
     await gotoTab(user, "KEY");
 
     const rail = screen.getByRole("complementary", { name: "Options" });
-    // First category starts pressed.
-    expect(within(rail).getByRole("button", { name: DRILL_CATEGORIES[0].label })).toHaveAttribute("aria-pressed", "true");
-    // Pick a different category from the rail.
-    const third = within(rail).getByRole("button", { name: DRILL_CATEGORIES[2].label });
-    await user.click(third);
-    expect(third).toHaveAttribute("aria-pressed", "true");
-    expect(within(rail).getByRole("button", { name: DRILL_CATEGORIES[0].label })).toHaveAttribute("aria-pressed", "false");
+    const trigger = within(rail).getByRole("combobox", { name: /Drill category/ });
+    // First category starts selected.
+    await user.click(trigger);
+    expect(within(rail).getByRole("option", { name: DRILL_CATEGORIES[0].label })).toHaveAttribute("aria-selected", "true");
+    // Pick a different category from the rail; committing updates the trigger.
+    await user.click(within(rail).getByRole("option", { name: DRILL_CATEGORIES[2].label }));
+    expect(trigger).toHaveTextContent(DRILL_CATEGORIES[2].label);
+    // Reopen: the new category is selected, the first is not.
+    await user.click(trigger);
+    expect(within(rail).getByRole("option", { name: DRILL_CATEGORIES[2].label })).toHaveAttribute("aria-selected", "true");
+    expect(within(rail).getByRole("option", { name: DRILL_CATEGORIES[0].label })).toHaveAttribute("aria-selected", "false");
   });
 
   it("toggling key type from the rail flips the key SURFACE rendered in main (keyer-linkage)", async () => {
@@ -208,12 +216,16 @@ describe("KEY relocation — NARROW: options render inline, no rail", () => {
     // The rail must NOT be mounted on narrow.
     expect(screen.queryByRole("complementary", { name: "Options" })).not.toBeInTheDocument();
 
-    // Category controls present inline.
+    // Category controls present inline: stepper arrows + the dropdown combobox.
     expect(screen.getByRole("button", { name: "Previous category" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next category" })).toBeInTheDocument();
+    const trigger = screen.getByRole("combobox", { name: /Drill category/ });
+    expect(trigger).toBeInTheDocument();
+    await user.click(trigger);
     for (const cat of DRILL_CATEGORIES) {
-      expect(screen.getByRole("button", { name: cat.label })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: cat.label })).toBeInTheDocument();
     }
+    await user.keyboard("{Escape}");
 
     // Key-type controls present inline. Exact text match avoids PaddleKey's aria-labels.
     expect(screen.getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
@@ -222,6 +234,7 @@ describe("KEY relocation — NARROW: options render inline, no rail", () => {
     // All controls are inside <main>.
     const main = screen.getByRole("main");
     expect(within(main).getByRole("button", { name: "Previous category" })).toBeInTheDocument();
+    expect(within(main).getByRole("combobox", { name: /Drill category/ })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
     // SwapToggle travels with optionsJSX — on narrow it is inline in main alongside
     // the type selector (default is paddle, so swap is visible).

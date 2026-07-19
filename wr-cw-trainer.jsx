@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo, useId } from "react";
 import { createPortal } from "react-dom";
 import {
   MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
@@ -1427,6 +1427,263 @@ function Tag({ verdict, children }) {
   );
 }
 
+/* ================= COMPACT SELECT (the standard compact-selector) ================= */
+//
+// One reusable single-select disclosure used by every content/setup menu in the
+// app (KEY drill category, QSO Activity/Role/Conditions, COPY Conditions). It is
+// the WAI-ARIA "select-only combobox" pattern: a <button role="combobox"> trigger
+// opens a <div role="listbox"> of <div role="option"> rows; focus never leaves the
+// trigger and the keyboard-active row is tracked with aria-activedescendant.
+//
+// Behavior is driven ENTIRELY by the shape of `options[]` — an option may carry a
+// `description` (renders a gray sub-line in the panel) and/or a `ladderIndex` (a
+// leading rung numeral). There are NO per-section variant flags; one data shape,
+// one component, one role structure across all five uses.
+//
+// LOAD-BEARING RULE: onChange fires ONLY on commit (Enter / Space / click / Tab) —
+// never on arrow/Home/End/typeahead navigation, which move the highlight only.
+// Callers hang real side effects on onChange (pickCat runs keyer.clear() + a live
+// announcement; QSO's Activity change resets Role); firing those on every arrow
+// keypress would be destructive. Navigation must stay side-effect-free.
+//
+// The open panel is an absolutely-positioned OVERLAY: it never reflows the
+// controls beneath it, so opening a menu can't push the key surface or START out
+// of view (the whole point of the compaction).
+//
+// Exported (named) so it can be unit-tested in isolation with a controlled
+// harness; the app's default export (CWTrainer) is unaffected.
+export function CompactSelect({ label, options, value, onChange, disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [flipUp, setFlipUp] = useState(false);
+  const triggerRef = useRef(null);
+  const listboxRef = useRef(null);
+  // Typeahead accumulator: buffer of typed chars + the idle-reset timer id.
+  const typeahead = useRef({ buffer: "", timer: null });
+
+  const baseId = useId();
+  const labelId = `${baseId}-label`;
+  const listboxId = `${baseId}-listbox`;
+  const optionId = (i) => `${baseId}-opt-${i}`;
+
+  // The index of the currently-committed value (what the trigger reflects and
+  // where the highlight starts when the menu opens). -1 → clamp to 0.
+  const currentIndex = Math.max(0, options.findIndex((o) => o.value === value));
+  const current = options[currentIndex];
+  // Trigger text: the selected label, prefixed with its rung numeral when present.
+  // Defensive fallback: if `value` matches no option, show the raw value.
+  const valueText = current
+    ? (current.ladderIndex != null ? `${current.ladderIndex} — ${current.label}` : current.label)
+    : String(value);
+
+  // A printable character opens/typeaheads. Space is excluded — it is the
+  // commit/open key, not a typeahead char.
+  const isPrintable = (e) =>
+    e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey;
+
+  const openMenu = (toIndex = currentIndex) => {
+    if (disabled) return;
+    // Decide open direction from the live viewport: below by default, above if the
+    // trigger is near the bottom and there is more room overhead. Guarded for jsdom
+    // (getBoundingClientRect returns zeros → stays "below", the safe default).
+    const rect = triggerRef.current?.getBoundingClientRect?.();
+    if (rect) {
+      const below = window.innerHeight - rect.bottom;
+      const above = rect.top;
+      setFlipUp(below < 240 && above > below);
+    }
+    setActiveIndex(toIndex);
+    setOpen(true);
+  };
+
+  const closeMenu = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  // Commit the option at `index`: fire onChange with its value, close, and (unless
+  // committing via Tab, which must let focus advance) return focus to the trigger.
+  const commit = (index, { keepFocus = false } = {}) => {
+    const opt = options[index];
+    if (opt) onChange(opt.value);
+    setOpen(false);
+    if (!keepFocus) triggerRef.current?.focus();
+  };
+
+  // Typeahead: accumulate the typed buffer, move the highlight to the next option
+  // whose label starts with it (search wraps from the active row), reset after
+  // 500ms idle. Moves the highlight ONLY — never commits.
+  const runTypeahead = (char) => {
+    const t = typeahead.current;
+    if (t.timer) clearTimeout(t.timer);
+    t.buffer += char.toLowerCase();
+    t.timer = setTimeout(() => { t.buffer = ""; }, 500);
+    const buf = t.buffer;
+    const n = options.length;
+    for (let k = 1; k <= n; k++) {
+      const idx = (activeIndex + k) % n;
+      if (options[idx].label.toLowerCase().startsWith(buf)) {
+        setActiveIndex(idx);
+        return;
+      }
+    }
+    // No forward match — try from the very start (covers matching the active row itself).
+    const idx = options.findIndex((o) => o.label.toLowerCase().startsWith(buf));
+    if (idx >= 0) setActiveIndex(idx);
+  };
+
+  const onKeyDown = (e) => {
+    if (disabled) return;
+    if (!open) {
+      if (["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) || isPrintable(e)) {
+        e.preventDefault();
+        openMenu();
+        if (isPrintable(e)) runTypeahead(e.key);
+      }
+      return;
+    }
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); setActiveIndex((i) => Math.min(options.length - 1, i + 1)); break;
+      case "ArrowUp":   e.preventDefault(); setActiveIndex((i) => Math.max(0, i - 1)); break;
+      case "Home":      e.preventDefault(); setActiveIndex(0); break;
+      case "End":       e.preventDefault(); setActiveIndex(options.length - 1); break;
+      case "PageDown":  e.preventDefault(); setActiveIndex((i) => Math.min(options.length - 1, i + 5)); break;
+      case "PageUp":    e.preventDefault(); setActiveIndex((i) => Math.max(0, i - 5)); break;
+      case "Enter":
+      case " ":         e.preventDefault(); commit(activeIndex); break;
+      // Tab commits but must NOT preventDefault or re-focus the trigger — let the
+      // browser move focus to the next control after the commit.
+      case "Tab":       commit(activeIndex, { keepFocus: true }); break;
+      case "Escape":    e.preventDefault(); closeMenu(); break;
+      default:
+        if (isPrintable(e)) { e.preventDefault(); runTypeahead(e.key); }
+    }
+  };
+
+  // Close on a click outside the component (no commit — value unchanged). Focus
+  // then follows normal document behavior (spec §2.4), so no forced refocus here.
+  useEffect(() => {
+    if (!open) return;
+    const onDocPointerDown = (e) => {
+      const root = triggerRef.current?.parentElement;
+      if (root && !root.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    return () => document.removeEventListener("mousedown", onDocPointerDown);
+  }, [open]);
+
+  // Keep the keyboard-active option scrolled into view. Guarded — jsdom does not
+  // implement scrollIntoView; the app relies on it only for the 14-item KEY list.
+  useEffect(() => {
+    if (!open) return;
+    const el = listboxRef.current?.querySelector(`#${CSS.escape(optionId(activeIndex))}`);
+    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeIndex]);
+
+  return (
+    <div style={{ position: "relative", marginBottom: 14 }}>
+      <div id={labelId} style={{ ...S.label, marginBottom: 8 }}>{label}</div>
+      <button
+        ref={triggerRef}
+        type="button"
+        role="combobox"
+        className="wr-select-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-labelledby={labelId}
+        aria-activedescendant={open && options[activeIndex] ? optionId(activeIndex) : undefined}
+        disabled={disabled}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={onKeyDown}
+        style={{
+          ...S.btn,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          width: "100%", minHeight: 44, padding: "10px 14px", textAlign: "left", boxSizing: "border-box",
+        }}
+      >
+        <span style={{
+          color: S.text.amber, fontWeight: 600, fontSize: "0.8125rem",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{valueText}</span>
+        <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0 }}>{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div
+          ref={listboxRef}
+          role="listbox"
+          id={listboxId}
+          aria-labelledby={labelId}
+          tabIndex={-1}
+          className="wr-select-panel"
+          style={{
+            position: "absolute", left: 0, right: 0,
+            ...(flipUp ? { bottom: "100%", marginBottom: 4 } : { top: "100%", marginTop: 4 }),
+            zIndex: 30,
+            background: S.ground.panel, border: S.border.control, borderRadius: S.radius.sm,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.55)",
+            maxHeight: "min(60vh, 360px)", overflowY: "auto",
+          }}
+        >
+          {options.length === 0 && (
+            <div role="option" aria-disabled="true" style={S.srOnly}>No options</div>
+          )}
+          {options.map((opt, i) => {
+            const selected = opt.value === value;
+            const active = i === activeIndex;
+            return (
+              <div
+                key={opt.value}
+                id={optionId(i)}
+                role="option"
+                aria-selected={selected}
+                className="wr-select-option"
+                onClick={() => commit(i)}
+                onMouseEnter={() => setActiveIndex(i)}
+                style={{
+                  display: "flex",
+                  alignItems: opt.description ? "flex-start" : "center",
+                  gap: 8, minHeight: 40, padding: "10px 12px", cursor: "pointer",
+                  // Keyboard-active cue: gray wash + a 3px amber left-bar (a lightness
+                  // + shape signal that survives grayscale). Inactive rows keep a
+                  // transparent bar so the pointer :hover CSS can still tint them.
+                  borderLeft: active ? "3px solid #F2A93B" : "3px solid transparent",
+                  ...(active ? { background: "#2A313A" } : {}),
+                }}
+              >
+                {opt.ladderIndex != null && (
+                  <span aria-hidden="true" style={{
+                    fontFamily: "ui-monospace, monospace", fontSize: S.type.micro,
+                    color: S.text.dim, minWidth: 16, flexShrink: 0, lineHeight: 1.4,
+                  }}>{opt.ladderIndex}</span>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                  <span style={{
+                    fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem",
+                    // Selected cue: amber + weight 700 (a color + WEIGHT signal, paired
+                    // with the ✓ below — both non-color-only, per the standing L2 rule).
+                    color: selected ? S.text.amber : S.text.body, fontWeight: selected ? 700 : 400,
+                  }}>{opt.label}</span>
+                  {opt.description && (
+                    <div style={{
+                      fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif",
+                      marginTop: 3, letterSpacing: 0, lineHeight: 1.4,
+                    }}>{opt.description}</div>
+                  )}
+                </div>
+                {selected && (
+                  <span aria-hidden="true" style={{ color: S.text.amber, flexShrink: 0, fontWeight: 700 }}>✓</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ================= COPY TRAINER ================= */
 // Graduated copy ladder — each rung is a real step up in difficulty, simplest first.
 const COPY_LEVELS = [
@@ -1589,15 +1846,23 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
           </button>
         ))}
       </div>
-      <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
-      <div style={{ display: "flex", gap: 8 }}>
-        {[["easy", "EASY"], ["normal", "NORMAL"], ["real", "REAL LIFE"]].map(([v, l]) => (
-          <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
-            style={{ ...S.btn, flex: 1, padding: "8px 4px", fontSize: "0.6875rem", ...(difficulty === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : {}) }}>
-            {l}
-          </button>
-        ))}
-      </div>
+      {/* Conditions selector — label-only (COPY has no per-option descriptions, per
+          DoR T2). This is a CONSISTENCY change, not a compaction one: a closed
+          trigger is about the same height as (or a hair taller than) the old
+          3-button row, but it renders as the identical standard component as QSO
+          Conditions and buys a compliant ≥44px touch target the old row missed.
+          The existing conditional helpers below the trigger are unchanged (T4):
+          the EASY helper line iff easy; the noise slider + note iff real. */}
+      <CompactSelect
+        label="Conditions"
+        options={[
+          { value: "easy",   label: "EASY" },
+          { value: "normal", label: "NORMAL" },
+          { value: "real",   label: "REAL LIFE" },
+        ]}
+        value={difficulty}
+        onChange={setDifficulty}
+      />
       {difficulty === "easy" && (
         <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
           Text appears letter by letter as it plays — hear it and see it together.
@@ -1912,41 +2177,34 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // type selector in both layouts. Handlers close over local state and the keyer.
   const optionsJSX = (
     <>
-      <div style={{ ...S.label, marginBottom: 8 }}>Drill category — climb as you improve</div>
-      {/* Compact stepper: left arrow / current position label / right arrow */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+      {/* Fused stepper + dropdown: [◀] [ CompactSelect ▾ ] [▶].
+          The arrows are the kept one-tap prev/next (F2); the centre trigger is the
+          direct-pick dropdown (F1) that replaces the old 14-button wrap — the row
+          that spent the vertical space. All three drive the same pickCat, so the
+          keyer.clear() + catLive side effects run once per change regardless of
+          which control fired it. alignItems flex-end bottom-aligns the arrows with
+          the trigger (the CompactSelect renders its own label above the trigger). */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
         <button
           aria-label="Previous category"
-          style={{ ...S.btn, padding: "10px 14px" }}
+          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
           disabled={catIdx === 0}
           onClick={() => pickCat(Math.max(0, catIdx - 1))}
         >◀</button>
-        <span style={{ flex: 1, textAlign: "center", fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.8125rem", letterSpacing: 1 }}>
-          {catIdx + 1} / {DRILL_CATEGORIES.length} — {DRILL_CATEGORIES[catIdx].label}
-        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <CompactSelect
+            label="Drill category — climb as you improve"
+            options={DRILL_CATEGORIES.map((cat, i) => ({ value: cat.id, label: cat.label, ladderIndex: i + 1 }))}
+            value={DRILL_CATEGORIES[catIdx].id}
+            onChange={(id) => pickCat(DRILL_CATEGORIES.findIndex((c) => c.id === id))}
+          />
+        </div>
         <button
           aria-label="Next category"
-          style={{ ...S.btn, padding: "10px 14px" }}
+          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
           disabled={catIdx === DRILL_CATEGORIES.length - 1}
           onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
         >▶</button>
-      </div>
-      {/* Direct-pick row: toggle buttons, one per category, amber border on active */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {DRILL_CATEGORIES.map((cat, i) => (
-          <button
-            key={cat.id}
-            aria-pressed={catIdx === i}
-            onClick={() => pickCat(i)}
-            style={{
-              // E1: pad to ≥40px effective touch target (was 6px 10px — too small on mobile)
-              ...S.btn, padding: "10px 12px", fontSize: "0.6875rem",
-              ...(catIdx === i ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }),
-            }}
-          >
-            {cat.label}
-          </button>
-        ))}
       </div>
       {/* Key-type toggle (PADDLE / STRAIGHT KEY / BUG) + swap toggle clustered together.
           SwapToggle follows immediately below so it travels with the type selector:
@@ -2735,70 +2993,44 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // intro in a single combined panel (today's layout, no mobile regression).
   const optionsJSX = !qso && (
     <>
-      {/* Activity selector — D1: each button shows a description sub-line matching
-          the Conditions-button pattern ([value, label, desc] rendered left-aligned) */}
-      <div style={{ ...S.label, marginBottom: 8 }}>Activity</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {Object.entries(ACTIVITY_LABELS).map(([v, l]) => (
-          <button
-            key={v}
-            aria-pressed={activity === v}
-            onClick={() => {
-              setActivity(v);
-              // Default to the last role in the list: for every existing and new
-              // activity this is the "listener / responder" role (answer, hunter,
-              // chaser, hunt, sp) — the more natural starting point for a learner.
-              const terms = ROLE_TERMS[v];
-              setRole(terms[terms.length - 1][0]);
-            }}
-            style={{
-              ...S.btn, textAlign: "left", padding: "10px 14px",
-              ...(activity === v ? { borderColor: "#F2A93B" } : {}),
-            }}
-          >
-            <span style={{ color: activity === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.75rem" }}>{l}</span>
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ACTIVITY_DESCS[v]}</div>
-          </button>
-        ))}
-      </div>
+      {/* Activity selector — CompactSelect; the D1 description sub-lines move into
+          the open panel's option rows. onChange keeps the existing side effect:
+          default Role → the last (answering/responder) role for the new activity. */}
+      <CompactSelect
+        label="Activity"
+        options={Object.entries(ACTIVITY_LABELS).map(([v, l]) => ({ value: v, label: l, description: ACTIVITY_DESCS[v] }))}
+        value={activity}
+        onChange={(v) => {
+          setActivity(v);
+          // Default to the last role in the list: for every existing and new
+          // activity this is the "listener / responder" role (answer, hunter,
+          // chaser, hunt, sp) — the more natural starting point for a learner.
+          const terms = ROLE_TERMS[v];
+          setRole(terms[terms.length - 1][0]);
+        }}
+      />
 
-      {/* Role selector — D1: same description pattern; labels are program-correct per activity */}
-      <div style={{ ...S.label, marginBottom: 8 }}>Role</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {ROLE_TERMS[activity].map(([v, l]) => (
-          <button
-            key={v}
-            aria-pressed={role === v}
-            onClick={() => setRole(v)}
-            style={{
-              ...S.btn, textAlign: "left", padding: "10px 14px",
-              ...(role === v ? { borderColor: "#F2A93B" } : {}),
-            }}
-          >
-            <span style={{ color: role === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.75rem" }}>{l}</span>
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{ROLE_DESCS[activity][v]}</div>
-          </button>
-        ))}
-      </div>
+      {/* Role selector — activity-dependent options (re-renders when Activity changes). */}
+      <CompactSelect
+        label="Role"
+        options={ROLE_TERMS[activity].map(([v, l]) => ({ value: v, label: l, description: ROLE_DESCS[activity][v] }))}
+        value={role}
+        onChange={setRole}
+      />
 
-      {/* Difficulty selector.
-          Internal values ("easy", "normal", "real") are unchanged — the QSB/noise
-          conditionals throughout this component test `difficulty === "real"`.
-          Only the display label for "real" is changed to "Real life". */}
-      <div style={{ ...S.label, marginBottom: 8 }}>Conditions</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-        {[
-          ["easy",   "EASY",      "Text appears letter by letter as it's sent — hear it and see it together."],
-          ["normal", "NORMAL",    "Clean signal, no help. Copy by ear, check yourself, then continue."],
-          ["real",   "REAL LIFE", "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here."],
-        ].map(([v, l, desc]) => (
-          <button key={v} aria-pressed={difficulty === v} onClick={() => setDifficulty(v)}
-            style={{ ...S.btn, textAlign: "left", padding: "10px 14px", ...(difficulty === v ? { borderColor: "#F2A93B" } : {}) }}>
-            <span style={{ color: difficulty === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700 }}>{l}</span>
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 3, letterSpacing: 0 }}>{desc}</div>
-          </button>
-        ))}
-      </div>
+      {/* Conditions selector — internal values ("easy"/"normal"/"real") unchanged;
+          the QSB/noise conditionals throughout this component still test
+          `difficulty === "real"`. Descriptions move into the open panel. */}
+      <CompactSelect
+        label="Conditions"
+        options={[
+          { value: "easy",   label: "EASY",      description: "Text appears letter by letter as it's sent — hear it and see it together." },
+          { value: "normal", label: "NORMAL",    description: "Clean signal, no help. Copy by ear, check yourself, then continue." },
+          { value: "real",   label: "REAL LIFE", description: "Band noise at your comfort level, and the signal fades up and down like real HF. QSB is the teacher here." },
+        ]}
+        value={difficulty}
+        onChange={setDifficulty}
+      />
       {difficulty === "real" && (
         <div style={{ marginBottom: 6 }}>
           <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
@@ -4591,6 +4823,23 @@ export default function CWTrainer() {
         @media (prefers-reduced-motion: reduce) {
           .wr-coffee:hover { transition: none; }
         }
+
+        /*
+          CompactSelect stateful styles. Inline styles can't do :hover, so the
+          pointer-hover tints live here; keyboard state (active/selected) is set
+          inline in the component. The trigger's :active press-down is cancelled
+          — a menu trigger is not a physical key.
+          #303842 is the ONE new literal: a neutral hover tint one step above
+          S.btn's #2A313A. Reusing the amber #3A2E18 wash here would read faintly
+          "selected", so a neutral gray is the correct tint (flagged to Travis).
+        */
+        .wr-select-trigger:hover:not(:disabled) { background-color: #303842; }
+        .wr-select-trigger:active { transform: none; }
+        .wr-select-option:hover { background-color: #2A313A; }
+        /* Panel open fade — reduced-motion-gated (matches the .wr-coffee/.wr-splash precedent) */
+        @keyframes wrSelectIn { from { opacity: 0 } to { opacity: 1 } }
+        .wr-select-panel { animation: wrSelectIn 110ms ease both; }
+        @media (prefers-reduced-motion: reduce) { .wr-select-panel { animation: none !important; } }
       `}</style>
 
       {/*

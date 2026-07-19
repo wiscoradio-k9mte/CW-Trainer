@@ -15,18 +15,22 @@ import { renderApp, gotoTab, screen } from "./helpers.jsx";
 import { WIDE_WORD_POOL, COMMON_WORDS } from "../cw-core.js";
 
 describe("COPY tab — setup and interaction", () => {
-  it("renders the level ladder and the Conditions controls", async () => {
+  it("renders the level ladder and the Conditions control", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "COPY");
 
     expect(screen.getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(screen.getByText("Conditions")).toBeInTheDocument();
 
-    // A couple of the level options and all three conditions.
+    // A couple of the level-ladder options (unchanged — still buttons, out of scope).
     expect(screen.getByRole("button", { name: /1 character/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Callsigns/ })).toBeInTheDocument();
+
+    // Conditions is now a CompactSelect combobox; all three difficulties are its
+    // options (label-only for COPY, no descriptions per DoR T2).
+    await user.click(screen.getByRole("combobox", { name: "Conditions" }));
     for (const label of ["EASY", "NORMAL", "REAL LIFE"]) {
-      expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
     }
   });
 
