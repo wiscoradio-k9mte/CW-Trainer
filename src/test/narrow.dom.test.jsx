@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
+import { chooseOption } from "./helpers.jsx";
 
 // Save the wide-default mock the shared setup installed, override it with a
 // narrow one for this file only, and restore it afterward so no other test file
@@ -192,6 +193,44 @@ describe("narrow (mobile) layout — KEY compact practice card", () => {
     const targetReadout = screen.getByText("Send this").nextElementSibling;
     const decodedReadout = screen.getByText(/Decoded from your key/).nextElementSibling;
     for (const readout of [targetReadout, decodedReadout]) {
+      expect(readout).not.toBeNull();
+      expect(readout.style.maxHeight).toBe("76px");
+      expect(readout.style.overflowY).toBe("auto");
+    }
+  });
+});
+
+// QSO SEND-STEP content-independence guard (gate hardening, 2026-07-19).
+//
+// The QSO fix bundle applies the SAME `Display compact` cap to the QSO send-step
+// readouts (the revealed suggested script + the decoded buffer), so a long "Full
+// QSO line" script cannot push the key/paddle surface below the 390x844 fold. The
+// headed re-gate measured it (key bottom 651 collapsed / 699 revealed / 735 both
+// readouts maxed, all <=844; and ~923 with the cap removed). But NOTHING in the
+// jsdom suite guarded the WIRING: stripping `compact={!isWide}` from these two QSO
+// Displays left the ENTIRE suite green (verified during the gate). This locks the
+// load-bearing inline cap on the QSO send step, the counterpart to the KEY guard
+// above — if a future edit drops `compact` from either QSO readout, this bites.
+describe("narrow (mobile) layout — QSO send-step readouts capped", () => {
+  it("caps BOTH QSO send-step readouts (suggested script + decoded) on narrow", async () => {
+    const { user } = await renderNarrow();
+    await user.click(screen.getByRole("button", { name: "QSO" }));
+
+    // Ragchew + "Call CQ" role → the FIRST step is a you-send step (activator
+    // calls CQ), so we land on a send step without walking the whole contact.
+    await chooseOption(user, "Activity", /Ragchew/i);
+    await chooseOption(user, "Role", /Call CQ/i);
+    await user.click(screen.getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ }));
+
+    // The decoded readout is always present on a send step; the suggested script
+    // readout only renders after SHOW SUGGESTED SCRIPT is revealed.
+    await user.click(screen.getByRole("button", { name: /SHOW SUGGESTED SCRIPT/ }));
+
+    const decodedLabel = screen.getByText(/Decoded from your key/);
+    const decodedReadout = decodedLabel.nextElementSibling; // <Display cursor compact>
+    const suggestedReadout = decodedLabel.previousElementSibling; // revealed <Display compact>
+
+    for (const readout of [suggestedReadout, decodedReadout]) {
       expect(readout).not.toBeNull();
       expect(readout.style.maxHeight).toBe("76px");
       expect(readout.style.overflowY).toBe("auto");
