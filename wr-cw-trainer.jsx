@@ -1104,9 +1104,17 @@ const S = {
   },
 };
 
-function Display({ children, cursor }) {
+// Display — the recessed code readout. `compact` (narrow KEY only) shrinks the
+// type and, crucially, CAPS the height with an internal scroll so a long target
+// scrolls INSIDE the readout instead of pushing the key surface down the page —
+// the key's vertical position becomes independent of target length. Default
+// (compact=false) is byte-identical to the shipped readout.
+function Display({ children, cursor, compact }) {
+  const style = compact
+    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem", letterSpacing: 2, maxHeight: 76, overflowY: "auto" }
+    : S.display;
   return (
-    <div style={S.display}>
+    <div style={style}>
       {children}
       {cursor && <span className="wr-cursor" style={{ color: "#F2A93B" }}>▮</span>}
     </div>
@@ -1243,13 +1251,30 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
   );
 }
 
-// SwapToggle — standalone swap button rendered immediately after KeyModeControls.
+// SwapToggle — standalone swap button rendered alongside KeyModeControls.
 // Visible for paddle and bug; hidden for straight key (no levers to swap).
-// In KeyTrainer it lives in optionsJSX alongside the type selector, so it
-// portals into the rail on wide and renders inline on narrow — matching QSO's
-// KeyInput, where it also sits directly below the type selector.
-function SwapToggle({ swap, onSwap, keyType }) {
+// KeyTrainer wide + QsoSim render the default (full) variant next to the type
+// selector; KeyTrainer narrow renders the `compact` variant on the one-row
+// instrument strip beside the key (see narrowInstrumentStrip).
+function SwapToggle({ swap, onSwap, keyType, compact }) {
   if (keyType !== "paddle" && keyType !== "bug") return null;
+  // Narrow instrument-strip variant: just the ⇄ button on a ≥40px touch target,
+  // sized to sit on one row beside the key-type toggle. The verbose help sentence
+  // is dropped on narrow — the button's aria-label already carries the meaning, so
+  // no information is lost to AT (design §1.3-B). Uses `border` (not `borderColor`)
+  // to override S.btn's border shorthand cleanly when active.
+  if (compact) {
+    return (
+      <button
+        onClick={() => onSwap(!swap)}
+        title="Swap dit/dah for left-handed keying"
+        aria-label={`Swap dit and dah paddles — currently ${swap ? "left-handed" : "right-handed"}`}
+        style={{ ...S.btn, minHeight: 40, padding: "0 12px", fontSize: "0.75rem",
+          ...(swap ? { border: "1px solid #F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: S.text.dim }) }}>
+        ⇄ {swap ? "L" : "R"}
+      </button>
+    );
+  }
   const helpText = keyType === "bug"
     ? `swaps which bracket is the dit lever — Space is always the dah`
     : `swaps which paddle sends dit vs dah — set it to ${swap ? "L for left-handed" : "R for right-handed"}`;
@@ -1278,35 +1303,52 @@ function SwapToggle({ swap, onSwap, keyType }) {
 // by the caller immediately after this component so they travel as a cluster.
 // modeB / onModeB: optional — only passed when the parent is KeyTrainer (not QsoSim,
 // which shows the full KeyInput). The Mode B toggle is only visible for keyType==="paddle".
-function KeyModeControls({ keyType, onKeyType, modeB, onModeB }) {
+// IambicToggle — the Mode A/B segmented pair (paddle only). Extracted so both the
+// wide KeyModeControls (its default position, below the type row) and the narrow
+// KEY layout (below the key surface, keeping the instrument strip to one row) render
+// the SAME control with no duplication. `compact` bumps the touch target to ≥40px.
+// compact=false is byte-identical to the shipped wide control.
+function IambicToggle({ modeB, onModeB, compact }) {
   return (
-    <div style={{ marginTop: 12 }}>
+    <div style={{ marginTop: compact ? 12 : 8 }}>
+      <div style={{ ...S.label, marginBottom: 4 }}>Iambic mode</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {[["a", "MODE A", false], ["b", "MODE B", true]].map(([id, label, val]) => (
+          <button key={id}
+            aria-pressed={modeB === val}
+            onClick={() => onModeB(val)}
+            style={{ ...S.btn, flex: 1, ...(compact ? { minHeight: 40, padding: "0 8px" } : { padding: "6px 8px" }), fontSize: "0.6875rem",
+              ...(modeB === val ? S.selected : { color: S.text.dim }) }}>
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// KeyModeControls — the key-type toggle row (+ Iambic sub-toggle when this is the
+// KEY tab's full control). `compact` (narrow instrument strip) bumps the type
+// buttons to a ≥40px touch target and drops the top margin so the buttons sit flush
+// on the strip row. compact=false is byte-identical to the shipped wide control.
+// When compact, Iambic is NOT rendered here — the narrow layout renders IambicToggle
+// below the key so the strip stays one row (pass no onModeB in that case).
+function KeyModeControls({ keyType, onKeyType, modeB, onModeB, compact }) {
+  return (
+    <div style={{ marginTop: compact ? 0 : 12 }}>
       <div style={{ display: "flex", gap: 6 }}>
         {/* BUG is only offered when BUG_KEY_ENABLED is true (shelved pending research). */}
         {/* L2: S.selected spreads fontWeight:700 as the non-color selected cue */}
         {[["paddle", "PADDLE"], ["straight", "STRAIGHT KEY"], ...(BUG_KEY_ENABLED ? [["bug", "BUG"]] : [])].map(([v, l]) => (
           <button key={v} aria-pressed={keyType === v} onClick={() => onKeyType(v)}
-            style={{ ...S.btn, flex: 1, padding: "7px 10px", fontSize: "0.6875rem", ...(keyType === v ? S.selected : { color: S.text.dim }) }}>
+            style={{ ...S.btn, flex: 1, ...(compact ? { minHeight: 40, padding: "0 10px" } : { padding: "7px 10px" }), fontSize: "0.6875rem", ...(keyType === v ? S.selected : { color: S.text.dim }) }}>
             {l}
           </button>
         ))}
       </div>
       {/* Mode A/B toggle — only shown for paddle, only when callbacks provided */}
       {keyType === "paddle" && onModeB !== undefined && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ ...S.label, marginBottom: 4 }}>Iambic mode</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[["a", "MODE A", false], ["b", "MODE B", true]].map(([id, label, val]) => (
-              <button key={id}
-                aria-pressed={modeB === val}
-                onClick={() => onModeB(val)}
-                style={{ ...S.btn, flex: 1, padding: "6px 8px", fontSize: "0.6875rem",
-                  ...(modeB === val ? S.selected : { color: S.text.dim }) }}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <IambicToggle modeB={modeB} onModeB={onModeB} />
       )}
     </div>
   );
@@ -1600,12 +1642,20 @@ export function CompactSelect({ label, options, value, onChange, disabled = fals
         style={{
           ...S.btn,
           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-          width: "100%", minHeight: 44, padding: "10px 14px", textAlign: "left", boxSizing: "border-box",
+          // minWidth:0 so this button can shrink as a flex item and let its value
+          // span ellipsize (rather than setting a width floor that overflows a
+          // narrow row); pairs with the value span's own minWidth:0 below.
+          width: "100%", minWidth: 0, minHeight: 44, padding: "10px 14px", textAlign: "left", boxSizing: "border-box",
         }}
       >
         <span style={{
           color: S.text.amber, fontWeight: 600, fontSize: "0.8125rem",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          // minWidth:0 lets this flex child shrink below its content's intrinsic
+          // width so a long category label (e.g. "14 — Numbers (incl. cut)")
+          // ellipsizes instead of setting a width floor that overflows the row
+          // at 360px. flexShrink:1 is the flex default, stated for clarity.
+          minWidth: 0, flexShrink: 1,
         }}>{valueText}</span>
         <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0 }}>{open ? "▴" : "▾"}</span>
       </button>
@@ -2170,45 +2220,48 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     setCatLive(`Category ${newIdx + 1} of ${DRILL_CATEGORIES.length} — ${DRILL_CATEGORIES[newIdx].label}`);
   };
 
-  // optionsJSX — category selector (stepper + direct-pick) + key-type controls
-  // (PADDLE / STRAIGHT KEY toggle) + SwapToggle, clustered together.
-  // On wide these portal into the rail; on narrow they render inline above the
-  // practice panels. Matches QSO's KeyInput pattern: swap directly below the
-  // type selector in both layouts. Handlers close over local state and the keyer.
+  // categoryRow — the fused stepper + dropdown: [◀] [ CompactSelect ▾ ] [▶].
+  // Extracted from optionsJSX so the narrow KEY layout can render it as its own
+  // compact block (the key-type/mode controls relocate to an instrument strip with
+  // the key on narrow). The arrows are the kept one-tap prev/next (F2); the centre
+  // trigger is the direct-pick dropdown (F1) that replaced the old 14-button wrap.
+  // All three drive the same pickCat, so keyer.clear() + catLive fire once per
+  // change regardless of which control fired it. alignItems flex-end bottom-aligns
+  // the arrows with the trigger (CompactSelect renders its own label above it).
+  const categoryRow = (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+      <button
+        aria-label="Previous category"
+        style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+        disabled={catIdx === 0}
+        onClick={() => pickCat(Math.max(0, catIdx - 1))}
+      >◀</button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <CompactSelect
+          label="Drill category — climb as you improve"
+          options={DRILL_CATEGORIES.map((cat, i) => ({ value: cat.id, label: cat.label, ladderIndex: i + 1 }))}
+          value={DRILL_CATEGORIES[catIdx].id}
+          onChange={(id) => pickCat(DRILL_CATEGORIES.findIndex((c) => c.id === id))}
+        />
+      </div>
+      <button
+        aria-label="Next category"
+        style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+        disabled={catIdx === DRILL_CATEGORIES.length - 1}
+        onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
+      >▶</button>
+    </div>
+  );
+
+  // optionsJSX — WIDE ONLY now: category row + key-type controls + SwapToggle,
+  // clustered together and portaled into the rail. Output is byte-identical to
+  // before the categoryRow extraction. (On narrow, categoryRow + the controls are
+  // recomposed by narrowKeyLayout below — see the return block.)
   const optionsJSX = (
     <>
-      {/* Fused stepper + dropdown: [◀] [ CompactSelect ▾ ] [▶].
-          The arrows are the kept one-tap prev/next (F2); the centre trigger is the
-          direct-pick dropdown (F1) that replaces the old 14-button wrap — the row
-          that spent the vertical space. All three drive the same pickCat, so the
-          keyer.clear() + catLive side effects run once per change regardless of
-          which control fired it. alignItems flex-end bottom-aligns the arrows with
-          the trigger (the CompactSelect renders its own label above the trigger). */}
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
-        <button
-          aria-label="Previous category"
-          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
-          disabled={catIdx === 0}
-          onClick={() => pickCat(Math.max(0, catIdx - 1))}
-        >◀</button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <CompactSelect
-            label="Drill category — climb as you improve"
-            options={DRILL_CATEGORIES.map((cat, i) => ({ value: cat.id, label: cat.label, ladderIndex: i + 1 }))}
-            value={DRILL_CATEGORIES[catIdx].id}
-            onChange={(id) => pickCat(DRILL_CATEGORIES.findIndex((c) => c.id === id))}
-          />
-        </div>
-        <button
-          aria-label="Next category"
-          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
-          disabled={catIdx === DRILL_CATEGORIES.length - 1}
-          onClick={() => pickCat(Math.min(DRILL_CATEGORIES.length - 1, catIdx + 1))}
-        >▶</button>
-      </div>
+      {categoryRow}
       {/* Key-type toggle (PADDLE / STRAIGHT KEY / BUG) + swap toggle clustered together.
-          SwapToggle follows immediately below so it travels with the type selector:
-          into the rail on wide, inline on narrow — same pattern as QSO's KeyInput.
+          SwapToggle follows immediately below so it travels with the type selector.
           Mode B toggle appears below the type row when paddle is active. */}
       <KeyModeControls
         keyType={settings.keyType}
@@ -2256,58 +2309,74 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     </div>
   );
 
-  // practicePanels — target display + keying + results. Always in main.
-  // The key surface (PaddleKey/TouchKey) renders here, reading settings.keyType
-  // which is also what KeyModeControls in the rail writes. One state, two render sites.
-  const practicePanels = (
-    <>
-      {/* ---- Target text panel ---- */}
-      <div style={S.panel}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          <button style={S.btnAmber} onClick={newTarget}>▶ NEW TEXT</button>
-          <button style={S.btn} onClick={() => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq })}>
-            ♪ HEAR IT
-          </button>
-          <button style={S.btn} onClick={() => { autoGradeFired.current = false; recordWritten.current = false; keyer.clear(); setResult(null); setAnalysis(null); }}>✕ CLEAR</button>
-        </div>
-        <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
-        <Display>{target || "press NEW TEXT"}</Display>
-      </div>
+  // ---- Shared practice pieces (identical in the wide + narrow layouts) ----
+  // Extracted so the wide two-panel layout and the narrow single merged card
+  // render the SAME leaf controls with no duplication. Only the surrounding panel
+  // structure and the Display compactness differ between the two layouts. All are
+  // defined before practicePanels/narrowKeyLayout so those can reference them.
 
-      {/* ---- Keying panel: decoded output + key surface + CHECK ---- */}
-      {/* The key-type toggle (KeyModeControls) is in optionsJSX — it writes
-          settings.keyType via setSettings, which is the same value read here
-          to decide which key surface to render. The keyer mode also follows
-          settings.keyType (passed to useKeyer above). No duplication of state. */}
-      <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 6 }}>
-          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-        </div>
-        <Display cursor>{keyer.decoded}</Display>
-        {errFlash && (
-          <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8 }}>
-            ◉ HH — ERROR SIGNAL, CLEARED
-          </div>
-        )}
-        {/* Key surface — type toggle and swap are in optionsJSX (rail on wide,
-            inline on narrow), keeping them clustered together in both layouts.
-            Surface picks the correct component for each mode. */}
-        <div style={{ marginTop: 4 }}>
-          {settings.keyType === "paddle"
-            ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
-            : settings.keyType === "bug"
-            ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
-                dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-                swap={settings.paddleSwap} />
-            : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
-        </div>
+  // Action row — NEW TEXT / HEAR IT / CLEAR. One descriptor list drives both
+  // layouts so the (identical) handlers live once. Wide wraps in the roomy main
+  // column; narrow packs the three onto ONE ≥40px row (flex:1) so they don't wrap
+  // to a second row and push the key down (they wrapped at 390px otherwise).
+  const actionBtns = [
+    { key: "new", style: S.btnAmber, onClick: newTarget, label: "▶ NEW TEXT" },
+    { key: "hear", style: S.btn, label: "♪ HEAR IT",
+      onClick: () => target && player.play(target, { charWpm: settings.charWpm, effWpm: settings.effWpm, freq: settings.freq }) },
+    { key: "clear", style: S.btn, label: "✕ CLEAR",
+      onClick: () => { autoGradeFired.current = false; recordWritten.current = false; keyer.clear(); setResult(null); setAnalysis(null); } },
+  ];
+  const actionButtons = (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+      {actionBtns.map((b) => <button key={b.key} style={b.style} onClick={b.onClick}>{b.label}</button>)}
+    </div>
+  );
+  const narrowActionButtons = (
+    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      {actionBtns.map((b) => (
+        <button key={b.key} onClick={b.onClick}
+          style={{ ...b.style, flex: 1, minHeight: 40, padding: "0 6px", fontSize: "0.8125rem" }}>
+          {b.label}
+        </button>
+      ))}
+    </div>
+  );
 
-        {/* ---- Results: CharDiff + Score + Fist panel ---- */}
-        {result !== null && (
-          <div style={{ marginTop: 12 }}>
+  // HH error-signal notice (visual-only) — sits directly above the key surface.
+  const errFlashEl = errFlash && (
+    <div style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8 }}>
+      ◉ HH — ERROR SIGNAL, CLEARED
+    </div>
+  );
+
+  // Key surface for the active key type. data-testid is a stable, refactor-proof
+  // hook for the headed geometry re-gate (design §2.3); it is a layout-neutral
+  // attribute, so the wide DOM is unaffected. The key-type toggle lives elsewhere
+  // (rail on wide, instrument strip on narrow) and writes settings.keyType — the
+  // same value read here. One keyer, one state; only the render position moves.
+  const keySurfaceEl = (
+    <div style={{ marginTop: 4 }} data-testid="key-surface">
+      {settings.keyType === "paddle"
+        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
+        : settings.keyType === "bug"
+        ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
+            dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
+            swap={settings.paddleSwap} />
+        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
+    </div>
+  );
+
+  const checkEl = (
+    <div style={{ marginTop: 12 }}>
+      <button style={S.btnAmber} onClick={check} disabled={!target}>CHECK</button>
+    </div>
+  );
+
+  // resultsEl — CharDiff + Score + Fist-feedback panel, shown after the first
+  // CHECK. Shared by both layouts so the fist-feedback rendering lives in ONE
+  // place. Body unchanged from the shipped inline block.
+  const resultsEl = result !== null && (
+    <div style={{ marginTop: 12 }}>
             <CharDiff target={target} attempt={keyer.decoded} />
             <Score pct={result} />
 
@@ -2427,7 +2496,76 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
               </div>
             )}
           </div>
-        )}
+  );
+
+  // practicePanels — WIDE two-panel layout (target panel + keying panel). Byte-
+  // identical rendered output to the shipped version; only the leaf pieces are now
+  // shared consts.
+  const practicePanels = (
+    <>
+      {/* ---- Target text panel ---- */}
+      <div style={S.panel}>
+        {actionButtons}
+        <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
+        <Display>{target || "press NEW TEXT"}</Display>
+      </div>
+
+      {/* ---- Keying panel: decoded output + key surface + CHECK + results ---- */}
+      <div style={S.panel}>
+        <div style={{ ...S.label, marginBottom: 6 }}>
+          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
+        </div>
+        <Display cursor>{keyer.decoded}</Display>
+        {errFlashEl}
+        {keySurfaceEl}
+        {checkEl}
+        {resultsEl}
+      </div>
+    </>
+  );
+
+  // ---- Narrow (phone) KEY layout ----
+  // narrowInstrumentStrip — key-type toggle + swap on ONE ≥40px row, relocated from
+  // the options block to sit WITH the key (the ratified "instrument/mode toggles sit
+  // with the key" rule, and the v1.2 open item). The verbose swap help sentence is
+  // dropped on narrow (its meaning is carried by the button's aria-label). Iambic
+  // Mode A/B renders below the key (narrowIambic) so this strip stays one row.
+  const narrowInstrumentStrip = (
+    <div style={{ display: "flex", gap: 6, alignItems: "stretch", marginTop: 12 }}>
+      <div style={{ flex: 1 }}>
+        <KeyModeControls compact keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} />
+      </div>
+      <SwapToggle compact swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} keyType={settings.keyType} />
+    </div>
+  );
+  const narrowIambic = settings.keyType === "paddle" && (
+    <IambicToggle compact modeB={settings.iambicModeB} onModeB={(v) => setSettings((s) => ({ ...s, iambicModeB: v }))} />
+  );
+
+  // narrowKeyLayout — the compact single practice card that clears the 390×844 fold
+  // without scrolling (measured, headed — see the re-gate numbers). Order: category
+  // (its own compact block) → [card] actions → instrument strip → compact target
+  // readout → compact decoded readout → KEY → Iambic (set-once, paddle) → CHECK →
+  // results. The decoded readout stays ABOVE the key (no pedagogical reorder — the
+  // measured budget clears the fold without it). The compact Displays cap + scroll
+  // internally, so a long target never pushes the key down.
+  const narrowKeyLayout = (
+    <>
+      <div style={{ marginBottom: 14 }}>{categoryRow}</div>
+      <div style={S.panel}>
+        {narrowActionButtons}
+        {narrowInstrumentStrip}
+        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>Send this</div>
+        <Display compact>{target || "press NEW TEXT"}</Display>
+        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>
+          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
+        </div>
+        <Display compact cursor>{keyer.decoded}</Display>
+        {errFlashEl}
+        {keySurfaceEl}
+        {narrowIambic}
+        {checkEl}
+        {resultsEl}
       </div>
     </>
   );
@@ -2439,8 +2577,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   //   railEl may be null on the very first paint (before the callback ref fires) —
   //   the portal is skipped for that one imperceptible frame.
   //
-  // Narrow: intro (if !target) + options inline above practice — exactly today's
-  //   single-column appearance.
+  // Narrow: intro (if !target) + narrowKeyLayout — the category block plus one
+  //   compact practice card (controls relocated to an instrument strip with the
+  //   key, compact+capped Displays) so the key surface clears the 390×844 fold.
   //
   // The always-mounted scoreLive + catLive regions are in the component root,
   // never gated by isWide, so AT sees changes in both layouts.
@@ -2460,10 +2599,12 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
       {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
       {isWide && practicePanels}
 
-      {/* Narrow layout: intro + options + practice inline — today's single-column order. */}
+      {/* Narrow layout: intro (if before first target) + the compact single-card
+          KEY layout — category as its own block, then one practice card with the
+          key-type/mode controls relocated to an instrument strip WITH the key, so
+          the key surface clears the 390×844 fold without scrolling. */}
       {!isWide && introJSX}
-      {!isWide && <div style={S.panel}>{optionsJSX}</div>}
-      {!isWide && practicePanels}
+      {!isWide && narrowKeyLayout}
     </div>
   );
 }
@@ -4750,10 +4891,15 @@ export default function CWTrainer() {
           max-width: 1180px;
           margin: 0 auto;
         }
-        /* Narrow (<900px): collapse to today's single column */
+        /* Narrow (<900px): collapse to today's single column.
+           minmax(0, 1fr) (not bare 1fr) so the column can shrink below its
+           content's min-content — otherwise a long CompactSelect value (e.g.
+           "5 — Numbers (incl. cut)") forces the whole grid wider than the phone
+           viewport (horizontal scroll). This matches the wide layout, which
+           already uses minmax(0, 1fr) for its middle column. */
         @media (max-width: 899px) {
           .wr-shell {
-            grid-template-columns: 1fr;
+            grid-template-columns: minmax(0, 1fr);
             max-width: 560px;
             gap: 0;
           }

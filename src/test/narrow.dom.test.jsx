@@ -118,3 +118,63 @@ describe("narrow (mobile) layout — collapse path", () => {
     expect(screen.getAllByRole("status").length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// The narrow KEY tab is reflowed into ONE compact practice card so the key/paddle
+// surface clears the phone fold (headed geometry is the re-gate's job — jsdom has
+// no layout). This suite locks the STRUCTURE that reflow depends on: every control
+// still present + labeled, and the DOM order that keeps the key-type/mode controls
+// WITH the key (instrument strip above the readouts; Iambic below the key). If a
+// future edit drops a control or scrambles the order, these bite.
+describe("narrow (mobile) layout — KEY compact practice card", () => {
+  // a precedes b in document order
+  const precedes = (a, b) =>
+    Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  async function keyNarrowWithTarget() {
+    const { user } = await renderNarrow();
+    await user.click(screen.getByRole("button", { name: "KEY" }));
+    // Set a target so the intro auto-hides and the active practice card is shown.
+    await user.click(screen.getByRole("button", { name: /NEW TEXT/ }));
+    return { user };
+  }
+
+  it("renders every KEY control present + labeled in the merged card", async () => {
+    await keyNarrowWithTarget();
+    // Category selector (fused stepper + dropdown) relocated to its own block.
+    expect(screen.getByRole("combobox", { name: /Drill category/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous category" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next category" })).toBeInTheDocument();
+    // Instrument strip: key-type toggle + swap (relocated from the options block).
+    expect(screen.getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "STRAIGHT KEY" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Swap dit and dah paddles/ })).toBeInTheDocument();
+    // Iambic sub-toggle (paddle is the default keyType) — below the key on narrow.
+    expect(screen.getByRole("button", { name: "MODE A" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "MODE B" })).toBeInTheDocument();
+    // Action row + both readouts + key surface + CHECK.
+    expect(screen.getByRole("button", { name: /NEW TEXT/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /HEAR IT/ })).toBeInTheDocument();
+    expect(screen.getByText("Send this")).toBeInTheDocument();
+    expect(screen.getByText(/Decoded from your key/)).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="key-surface"]')).not.toBeNull();
+    expect(screen.getByRole("button", { name: "CHECK" })).toBeInTheDocument();
+  });
+
+  it("orders the card so the controls sit WITH the key (strip + Iambic-below-key)", async () => {
+    await keyNarrowWithTarget();
+    const strip = screen.getByRole("button", { name: "PADDLE" });
+    const sendThis = screen.getByText("Send this");
+    const key = document.querySelector('[data-testid="key-surface"]');
+    const modeA = screen.getByRole("button", { name: "MODE A" });
+    const check = screen.getByRole("button", { name: "CHECK" });
+
+    // Instrument strip comes before the "Send this" readout (top of the card).
+    expect(precedes(strip, sendThis)).toBe(true);
+    // The target readout is above the key.
+    expect(precedes(sendThis, key)).toBe(true);
+    // Iambic Mode A/B is banked BELOW the key (keeps the strip to one row).
+    expect(precedes(key, modeA)).toBe(true);
+    // CHECK is below the key.
+    expect(precedes(key, check)).toBe(true);
+  });
+});
