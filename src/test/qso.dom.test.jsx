@@ -63,6 +63,30 @@ describe("QSO tab — setup controls", () => {
     expect(screen.queryByRole("option", { name: /Answer a CQ/ })).not.toBeInTheDocument();
   });
 
+  it("defaults the Role to the ANSWERING (last) role when the Activity changes", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    // Ragchew's answering role is "Answer a CQ" (the LAST ROLE_TERMS entry) —
+    // the app's default learner starting point.
+    expect(screen.getByRole("combobox", { name: "Role" })).toHaveTextContent("Answer a CQ");
+
+    // Switching Activity must RESET Role to the new activity's ANSWERING (last)
+    // role. For POTA that is "Hunter", NOT "Activator" (the calling/first role).
+    // This pins the activity→role default seam (DoR T4): defaulting to the first
+    // role instead, OR not resetting at all (a stale "answer" clamps to the first
+    // option), both surface as "Activator" here and turn this test red.
+    await chooseOption(user, "Activity", /POTA/);
+    const roleAfter = screen.getByRole("combobox", { name: "Role" });
+    expect(roleAfter).toHaveTextContent("Hunter");
+    expect(roleAfter).not.toHaveTextContent("Activator");
+
+    // Reopen: Hunter is the programmatically-selected option; Activator is not.
+    await user.click(roleAfter);
+    expect(screen.getByRole("option", { name: /Hunter/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: /Activator/ })).toHaveAttribute("aria-selected", "false");
+  });
+
   it("marks the selected activity selected", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "QSO");
