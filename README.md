@@ -99,7 +99,9 @@ sudo snap install wr-cw-trainer
 ```
 
 **Testing the next version (edge channel):** International/DX and word-list
-enhancements are currently in testing on the edge channel — install with
+enhancements, plus **compact dropdown menus and a reworked practice layout that
+keeps the on-screen key reachable without scrolling** (better for small and touch
+screens), are currently in testing on the edge channel — install with
 `sudo snap install wr-cw-trainer --edge` (or `snap refresh --edge`) if you'd
 like to try them early and report issues.
 
