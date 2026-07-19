@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   MORSE, REV, similarity, timing,
+  gradeSend, similarityCw, canonicalizeCw,
+  isWellFormedRst, isRstReport, courtesyForms, numericForms,
+  COURTESY_EQUIVALENTS,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   cutNum, isReadyToAdvance,
   PROSIGNS, PROSIGN_CODES, QCODES_ABBREV, DRILL_CATEGORIES,
@@ -74,6 +77,200 @@ describe("similarity()", () => {
   // Under Math.min the denominator would be 3, giving ≈ 0.333 — wrong.
   it("unequal-length: similarity('PARIS','PAR') ≈ 0.6 (validates Math.max denominator)", () => {
     expect(similarity("PARIS", "PAR")).toBeCloseTo(0.6, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gradeSend() — element-based QSO send grading (the ratified real-world model).
+// These BITE: each asserts the produced score/hits/missing. The keystone case
+// (K9MTE answering a CQ) went from 23% (edit-distance vs the verbose script) to
+// 100%. Mutation notes are inline: reverting gradeSend to similarity(suggested,·)
+// or dropping a form-equivalence turns the relevant assertion red.
+// ---------------------------------------------------------------------------
+describe("gradeSend() — required-element scoring", () => {
+  it("KEYSTONE: minimal answer-a-CQ (just the call) scores 100, not 23", () => {
+    // The reported bug: mustContain=[myCall], the operator sends only their call.
+    // Old score = similarity("N8ZZU DE K9MTE K9MTE K", "K9MTE")*100 ≈ 23.
+    // MUTATION: revert checkSend to similarity(suggested,·) → this goes red (23).
+    const r = gradeSend(["K9MTE"], "K9MTE");
+    expect(r.score).toBe(100);
+    expect(r.hits).toEqual(["K9MTE"]);
+    expect(r.missing).toEqual([]);
+  });
+
+  it("all valid forms of the callsign element score 100 (repetition, DE/K, order)", () => {
+    // Every one of these is a correct on-air answer; each must be 100.
+    for (const sent of [
+      "K9MTE",
+      "K9MTE K9MTE K9MTE",
+      "N8ZZU DE K9MTE K9MTE K",
+      "DE K9MTE",
+      "K9MTE K",              // trailing procedural K
+    ]) {
+      expect(gradeSend(["K9MTE"], sent).score).toBe(100);
+    }
+  });
+
+  it("a wrong / absent callsign is a miss (score 0)", () => {
+    // A different call is not the required element present — correct to fail.
+    const r = gradeSend(["K9MTE"], "W1AW");
+    expect(r.score).toBe(0);
+    expect(r.hits).toEqual([]);
+    expect(r.missing).toEqual(["K9MTE"]);
+  });
+
+  it("score ≡ checklist invariant: 100 IFF all required elements are hits", () => {
+    // Two-element step: both present → 100; one → 50; none → 0.
+    expect(gradeSend(["599", "BOB"], "UR RST 599 599 NAME BOB").score).toBe(100);
+    const half = gradeSend(["599", "BOB"], "UR RST 599 599");
+    expect(half.score).toBe(50);
+    expect(half.hits).toEqual(["599"]);
+    expect(half.missing).toEqual(["BOB"]);
+    expect(gradeSend(["599", "BOB"], "QRZ?").score).toBe(0);
+  });
+
+  it("reordered + repeated multi-element send still scores 100", () => {
+    // Name before report, each doubled, procedural = / BK around — all fine.
+    const r = gradeSend(["599", "BOB"], "BK NAME BOB BOB = UR 599 599 BK");
+    expect(r.score).toBe(100);
+  });
+
+  it("cut numbers count in the SCORE: 599 ↔ 5NN both directions", () => {
+    // The quiet second defect: the checklist tolerated cut forms but the old
+    // score did not. MUTATION: drop numericForms in isConveyed → these go red.
+    // (Required 599 is the RST slot; a sent 5NN is a well-formed RST → hit.)
+    expect(gradeSend(["599"], "5NN").score).toBe(100);
+    expect(gradeSend(["5NN"], "599").score).toBe(100);
+    // A non-RST numeric element (contest zone) still cut-matches via numericForms.
+    expect(gradeSend(["05"], "T5").score).toBe(100);
+    expect(gradeSend(["T5"], "05").score).toBe(100);
+  });
+
+  it("fork 2: the RST element accepts ANY well-formed report (579, 559)", () => {
+    // Required RST slot is always 599, but an honest 579/559 send must count.
+    expect(gradeSend(["599"], "579").score).toBe(100);
+    expect(gradeSend(["599"], "UR 559 559 K").score).toBe(100);
+    // ...but a malformed report (S=0) is NOT credited.
+    expect(gradeSend(["599"], "509").score).toBe(0);
+  });
+
+  it("fork 2 OFF (acceptAnyRst:false): only the literal 599/5NN counts", () => {
+    // Data-driven flag: with it off, 579 no longer satisfies the RST slot.
+    expect(gradeSend(["599"], "579", { acceptAnyRst: false }).score).toBe(0);
+    expect(gradeSend(["599"], "5NN", { acceptAnyRst: false }).score).toBe(100);
+  });
+
+  it("a contest serial that is RST-shaped is matched literally, not as the RST slot", () => {
+    // serial 123 is a valid RST SHAPE but is not the report — it must be sent
+    // literally to count. isRstReport (canonical 599 only) prevents misclassing.
+    expect(gradeSend(["123"], "599").score).toBe(0);   // sent a report, not the serial
+    expect(gradeSend(["123"], "123").score).toBe(100); // sent the actual serial
+  });
+
+  it("fork 3: courtesy abbrev equivalence — TU ≡ TNX ≡ TKS in the send", () => {
+    // MUTATION: empty COURTESY_EQUIVALENTS → TNX/TKS stop satisfying required TU.
+    expect(gradeSend(["TU"], "TU 73").score).toBe(100);
+    expect(gradeSend(["TU"], "TNX FER FB QSO").score).toBe(100);
+    expect(gradeSend(["TU"], "TKS 73").score).toBe(100);
+    // A non-courtesy close is a miss.
+    expect(gradeSend(["TU"], "73 DE K9MTE").score).toBe(0);
+  });
+
+  it("extra content and procedural signals never reduce the score", () => {
+    const r = gradeSend(["K9MTE"], "R R N8ZZU DE K9MTE = GM OM TNX FER CALL K9MTE KN");
+    expect(r.score).toBe(100);
+  });
+
+  it("empty / whitespace-only send scores 0 with everything missing", () => {
+    expect(gradeSend(["K9MTE"], "").score).toBe(0);
+    expect(gradeSend(["599", "BOB"], "   ").missing).toEqual(["599", "BOB"]);
+  });
+
+  it("hits/missing preserve original tokens (original case) for the ✓/✗ render", () => {
+    // Name comes from settings and may be mixed-case; matching is case-insensitive
+    // but the render must echo the operator's own spelling.
+    const r = gradeSend(["599", "Bob"], "ur 599 name bob");
+    expect(r.hits).toEqual(["599", "Bob"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The element-classification helpers gradeSend rests on.
+// ---------------------------------------------------------------------------
+describe("RST / courtesy / numeric classifiers", () => {
+  it("isWellFormedRst accepts R∈1-5 S∈1-9 T∈1-9 and cut forms; rejects the rest", () => {
+    for (const ok of ["599", "579", "559", "5NN", "5N9", "111", "313"]) {
+      expect(isWellFormedRst(ok)).toBe(true);
+    }
+    for (const no of ["509", "690", "60", "5999", "TU", "K9MTE", "05", "T5"]) {
+      expect(isWellFormedRst(no)).toBe(false);
+    }
+  });
+
+  it("isRstReport is the canonical 599/5NN only (not other well-formed reports)", () => {
+    expect(isRstReport("599")).toBe(true);
+    expect(isRstReport("5NN")).toBe(true);
+    expect(isRstReport("579")).toBe(false); // valid RST, but not the report slot
+    expect(isRstReport("123")).toBe(false); // RST-shaped serial
+  });
+
+  it("courtesyForms expands the curated set; passes non-members through", () => {
+    expect(courtesyForms("TU")).toEqual(["TU", "TNX", "TKS"]);
+    expect(courtesyForms("tnx")).toEqual(["TU", "TNX", "TKS"]);
+    expect(courtesyForms("73")).toEqual(["73"]);
+    // The table is the single source Travis seeds.
+    expect(COURTESY_EQUIVALENTS[0]).toContain("TU");
+  });
+
+  it("numericForms gives cut equivalents for pure numeric tokens only", () => {
+    expect(numericForms("599")).toContain("5NN");
+    expect(numericForms("05")).toContain("T5");
+    expect(numericForms("K-1234")).toEqual(["K-1234"]); // park ref untouched
+    expect(numericForms("WI")).toEqual(["WI"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canonicalizeCw() + similarityCw() — the COPY/KEY/QSO-copy fidelity paths.
+// Digit-anchored cut normalization: numbers get cut credit, letters are safe.
+// ---------------------------------------------------------------------------
+describe("canonicalizeCw() — digit-anchored cut normalization", () => {
+  it("cut-normalizes runs that contain a real digit", () => {
+    expect(canonicalizeCw("5NN")).toBe("599");
+    expect(canonicalizeCw("T5")).toBe("05");
+    expect(canonicalizeCw("5T9")).toBe("509");
+    expect(canonicalizeCw("ur 5nn 5nn")).toBe("UR 599 599");
+  });
+
+  it("SAFETY: letter runs with no digit are left intact (NAME/TU/TNX/NN)", () => {
+    // A blind global N→9 / T→0 would corrupt these. The run must contain a digit.
+    expect(canonicalizeCw("NAME")).toBe("NAME");
+    expect(canonicalizeCw("TU")).toBe("TU");
+    expect(canonicalizeCw("TNX")).toBe("TNX");
+    expect(canonicalizeCw("NN")).toBe("NN"); // bare cut-run, no digit → untouched
+  });
+});
+
+describe("similarityCw() — fidelity grade with cut tolerance", () => {
+  it("credits the cut form: copying 5NN for 599 is 100%", () => {
+    // MUTATION: strip the cut-normalize from canonicalizeCw → this drops to 50%.
+    expect(similarityCw("599", "5NN")).toBe(1);
+    expect(similarityCw("UR RST 5NN", "UR RST 599")).toBe(1);
+  });
+
+  it("SAFETY: a real mis-copy of a letter word stays penalized (no letter mangling)", () => {
+    // Correct (digit-anchored): target "NAME" keeps its letters, so mis-typing
+    // it as "9AME" is a genuine 1-of-4 error → 75%. A blind global N→9 would
+    // corrupt the target to "9AME" too and wrongly return 100% — this BITES that.
+    expect(similarityCw("NAME", "9AME")).toBeCloseTo(0.75, 5);
+    // And "0U" must NOT be accepted as "TU" (blind global would equate them).
+    expect(similarityCw("TU", "0U")).toBeCloseTo(0.5, 5);
+  });
+
+  it("plain-text fidelity is unchanged from similarity() (no cut runs)", () => {
+    expect(similarityCw("PARIS", "PARIS")).toBe(1);
+    expect(similarityCw("K", "K")).toBe(1);
+    expect(similarityCw("DIPOLE", "DIPOLE")).toBe(1);
   });
 });
 
@@ -2914,6 +3111,125 @@ describe("buildContest() — sp role", () => {
     expect(ROLE_TERMS.dx.map(([v]) => v)).toContain("callcq");
     expect(ROLE_TERMS.contest.map(([v]) => v)).toContain("run");
     expect(ROLE_TERMS.contest.map(([v]) => v)).toContain("sp");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CALL-CQ required elements — calling CQ vs answering a CQ
+// ---------------------------------------------------------------------------
+// The reported defect: calling CQ with a bare callsign scored 100 because the six
+// CALL-CQ steps required only [myCall]. Calling CQ requires "CQ" (and the activity
+// word) AND your call; a bare call is a valid ANSWER, not a valid CQ. These grade
+// each CALL-CQ step's own mustContain through gradeSend (the real grader) so they
+// bite: removing "CQ"/"POTA"/"SOTA"/"IOTA"/"DX"/"TEST" from a step turns the
+// matching "bare call < 100" or "proper call = 100" assertion red.
+describe("CALL-CQ required elements (calling CQ vs answering)", () => {
+  const callCqStep = (build, prof, role) => build(prof, role).steps[0];
+  // [label, builder, profile, role, myCall in that profile]
+  const CALL_CQ = [
+    ["ragchew", buildRagchew, PROFILE,      "call",      "K9MTE"],
+    ["pota",    buildPota,    PROFILE,      "activator", "K9MTE"],
+    ["sota",    buildSota,    PROFILE,      "activator", "K9MTE"],
+    ["iota",    buildIota,    PROFILE,      "activator", "K9MTE"],
+    ["dx",      buildDx,      DX_PROF,      "callcq",    "W1AW"],
+    ["contest", buildContest, CONTEST_PROF, "run",       "W1AW"],
+  ];
+
+  it("KEYSTONE: calling CQ with a bare callsign scores < 100 (missing CQ/qualifier)", () => {
+    // The exact reported gap. MUTATION: revert any CALL-CQ mustContain to [myCall]
+    // → that builder's bare call returns to 100 → red.
+    for (const [label, build, prof, role, myCall] of CALL_CQ) {
+      const r = gradeSend(callCqStep(build, prof, role).mustContain, myCall);
+      expect(r.score, `${label}: bare call must be partial`).toBeLessThan(100);
+      // The callsign IS present — the miss is the CQ/qualifier, not the call.
+      expect(r.hits, `${label}: call still credited`).toContain(myCall);
+    }
+  });
+
+  it("a proper CQ (CQ + activity word + call) scores 100 for every CALL-CQ builder", () => {
+    const proper = {
+      ragchew: "CQ CQ CQ DE K9MTE K9MTE K",
+      pota:    "CQ POTA K9MTE",
+      sota:    "CQ SOTA K9MTE/P",
+      iota:    "CQ IOTA K9MTE",
+      dx:      "CQ DX W1AW W1AW K",
+      contest: "CQ TEST W1AW W1AW",
+    };
+    for (const [label, build, prof, role] of CALL_CQ) {
+      const step = callCqStep(build, prof, role);
+      expect(gradeSend(step.mustContain, proper[label]).score, label).toBe(100);
+    }
+  });
+
+  it("Keystone-2: the exact reported grade cases", () => {
+    const ragchew = callCqStep(buildRagchew, PROFILE, "call");       // ["CQ","K9MTE"]
+    const pota    = callCqStep(buildPota,    PROFILE, "activator");   // ["CQ","POTA","K9MTE"]
+    const contest = callCqStep(buildContest, CONTEST_PROF, "run");    // ["TEST","W1AW"]
+    // Proper calls = 100
+    expect(gradeSend(ragchew.mustContain, "CQ CQ CQ DE K9MTE").score).toBe(100);
+    expect(gradeSend(pota.mustContain,    "CQ POTA K9MTE").score).toBe(100);
+    expect(gradeSend(contest.mustContain, "TEST W1AW").score).toBe(100);        // no CQ needed
+    expect(gradeSend(contest.mustContain, "CQ TEST W1AW").score).toBe(100);
+    expect(gradeSend(contest.mustContain, "CQ CONTEST W1AW").score).toBe(100);  // CONTEST≡TEST
+    // Bare call = partial (the fixed gap)
+    expect(gradeSend(ragchew.mustContain, "K9MTE").score).toBeLessThan(100);
+    expect(gradeSend(pota.mustContain,    "K9MTE").score).toBeLessThan(100);
+    expect(gradeSend(contest.mustContain, "W1AW").score).toBeLessThan(100);
+  });
+
+  it("each CALL-CQ step requires exactly its activity element set", () => {
+    // A strict lock (mutation-bite for every added token): dropping any one
+    // element from any builder reddens the matching row here.
+    expect(callCqStep(buildRagchew, PROFILE, "call").mustContain).toEqual(["CQ", "K9MTE"]);
+    expect(callCqStep(buildPota,    PROFILE, "activator").mustContain).toEqual(["CQ", "POTA", "K9MTE"]);
+    expect(callCqStep(buildSota,    PROFILE, "activator").mustContain).toEqual(["CQ", "SOTA", "K9MTE"]);
+    expect(callCqStep(buildIota,    PROFILE, "activator").mustContain).toEqual(["CQ", "IOTA", "K9MTE"]);
+    expect(callCqStep(buildDx,      DX_PROF, "callcq").mustContain).toEqual(["CQ", "DX", "W1AW"]);
+    expect(callCqStep(buildContest, CONTEST_PROF, "run").mustContain).toEqual(["TEST", "W1AW"]);
+  });
+
+  it("ANSWER steps did NOT gain a CQ requirement (a bare-call answer still = 100)", () => {
+    // Regression guard: the CQ requirement must not leak into answering steps —
+    // answering a CQ with a bare call is ratified as valid. MUTATION: add "CQ" to
+    // an answer step → red.
+    const answerSteps = [
+      ["ragchew answer", buildRagchew(PROFILE, "answer").steps[1], "K9MTE"],
+      ["pota hunter",    buildPota(PROFILE, "hunter").steps[1],    "K9MTE"],
+      ["sota chaser",    buildSota(PROFILE, "chaser").steps[1],    "K9MTE"],
+      ["iota chaser",    buildIota(PROFILE, "chaser").steps[1],    "K9MTE"],
+      ["dx hunt",        buildDx(DX_PROF, "hunt").steps[1],        "W1AW"],
+      ["contest sp",     buildContest(CONTEST_PROF, "sp").steps[1],"W1AW"],
+    ];
+    for (const [label, step, myCall] of answerSteps) {
+      expect(step.mustContain, `${label}: answer requires call only`).toEqual([myCall]);
+      expect(step.mustContain, `${label}: no CQ leak`).not.toContain("CQ");
+      expect(gradeSend(step.mustContain, myCall).score, label).toBe(100);
+    }
+  });
+
+  it("mustContain ⊆ suggested holds for every CALL-CQ step across random cqCall variants", () => {
+    // cqCall randomises the CQ format (3×3 / 3×2 / terse); every variant must still
+    // literally carry CQ + the activity word + the call, so the guardrail invariant
+    // never breaks for any draw.
+    for (let i = 0; i < 40; i++) {
+      for (const [label, build, prof, role] of CALL_CQ) {
+        const step = callCqStep(build, prof, role);
+        for (const token of step.mustContain) {
+          expect(step.suggested.includes(token), `${label}: "${token}" in "${step.suggested}"`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("contest TEST element: TEST, CONTEST, and lower-case all satisfy it; a bare call does not", () => {
+    // "CQ" is credited-if-present, never required, for the contest run step.
+    expect(gradeSend(["TEST", "W1AW"], "TEST W1AW").score).toBe(100);        // CQ dropped
+    expect(gradeSend(["TEST", "W1AW"], "CQ TEST W1AW").score).toBe(100);     // CQ present
+    expect(gradeSend(["TEST", "W1AW"], "CQ CONTEST W1AW").score).toBe(100);  // CONTEST spelling
+    expect(gradeSend(["TEST", "W1AW"], "cq contest w1aw").score).toBe(100);  // case-insensitive
+    const bare = gradeSend(["TEST", "W1AW"], "W1AW");
+    expect(bare.score).toBe(50);
+    expect(bare.missing).toEqual(["TEST"]);
   });
 });
 
