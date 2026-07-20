@@ -1450,7 +1450,11 @@ function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, o
           fontWeight: armed ? 700 : 400,
         }}
       >
-        <span style={{ minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {/* Wraps rather than ellipsizes: measured at 390px the label truncated to
+            "BREAK IN — ASK FOR A REPE…", which cuts off exactly the half that
+            disambiguates this control from "send your answer". A second line
+            costs a few px; losing the meaning costs the whole point of the row. */}
+        <span style={{ minWidth: 0, flexShrink: 1, textAlign: "left" }}>
           <span aria-hidden="true">⚡ </span>
           {armed ? "BREAK-IN ARMED — KEYING" : "BREAK IN — ASK FOR A REPEAT"}
         </span>
@@ -3614,7 +3618,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               onClick={() => setBreakIn(false)}
               style={{
                 ...S.btn, display: "flex", alignItems: "center", justifyContent: "space-between",
-                gap: 8, width: "100%", minHeight: 44, padding: "10px 14px",
+                // flexWrap: measured at 390px the two halves did not fit on one
+                // line and the summary ellipsized to "no…" — worse than useless.
+                // Wrapping to two lines costs ~20px and keeps both halves readable.
+                gap: 8, flexWrap: "wrap", width: "100%", minHeight: 44, padding: "10px 14px",
                 textAlign: "left", boxSizing: "border-box", marginBottom: 12,
               }}
             >
