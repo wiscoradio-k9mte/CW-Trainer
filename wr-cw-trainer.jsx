@@ -3572,8 +3572,22 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               : <>◉ Receiving — step {step + 1} of {qso.steps.length}</>}
             {difficulty === "real" && <span style={{ color: "#E07A5F", marginLeft: 8 }}>QSB</span>}
           </div>
+          {/* copyHint is a FOCUS AID, not an instruction — it names where to put your
+              attention ("the callsign is what matters"), while copy is graded on
+              fidelity to the WHOLE transmission. Unlabelled prose directly under the
+              heading read as "do this", so a user who copied only the callsign got a
+              20% score they could not explain. The label gives the sentence its role.
+              The hint wording itself is deliberately untouched: directing attention to
+              the one element that matters is real operating practice and good teaching.
+              Rendered as a div rather than a <p> so its bottom margin is explicit —
+              that reclaimed margin pays for most of the label line. */}
           {difficulty !== "real" && (
-            <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", marginTop: 0 }}>{cur.copyHint}</p>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ ...S.label, marginBottom: 2 }}>Listen for</div>
+              <div style={{ color: S.text.dim, fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>
+                {cur.copyHint}
+              </div>
+            </div>
           )}
 
           {/* Countdown: shown in the Display area (same spot as easy-mode live text)
@@ -3636,7 +3650,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                   the user to do something this step does not support — it is the
                   sentence that authored the reported error. The optionality is still
                   visible in the affordance: CONTINUE sits right there, enabled. */}
-              <div style={{ ...S.label, marginBottom: 6 }}>Your copy — what did you hear?</div>
+              <div style={{ ...S.label, marginBottom: 2 }}>Your copy — what did you hear?</div>
+              {/* States the scoring rule up front so nobody has to infer it from a bad
+                  score. Copy is graded on fidelity to the whole transmission, while
+                  "Listen for" above names only the element that matters most — without
+                  this line the two read as contradicting each other. Deliberately
+                  self-contained (no "not just the part above"): `real` difficulty hides
+                  the hint entirely, so a back-reference would dangle there. */}
+              <div style={{ color: S.text.dim, fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5, marginBottom: 6 }}>
+                Type everything you heard — the whole transmission is graded.
+              </div>
               <input ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") checkCopy();

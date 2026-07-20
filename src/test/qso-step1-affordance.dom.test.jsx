@@ -304,6 +304,62 @@ describe("C1 — the copy field label", () => {
 });
 
 // ---------------------------------------------------------------------------
+// HINT — the copyHint is a focus aid, and the grader wants the whole transmission.
+//
+// THE DEFECT: every copyHint in cw-core.js names the ONE element that matters
+// ("the callsign is what matters", "Grab the call", "copy that zone") — ~16 of
+// them share the shape. Copy is graded by fidelity edit-distance against the FULL
+// transmission. Rendered as unlabelled prose under the step heading the hint read
+// as an instruction, so copying exactly what it said scored 20% — PSE AGN with no
+// explanation. Travis's ruling: fidelity grading is correct and the hints are
+// correct; only their ROLE was invisible. So these tests pin the LABEL and the
+// scoring cue, and deliberately do NOT pin hint wording or grading behaviour.
+// ---------------------------------------------------------------------------
+describe("HINT — the focus aid is marked as guidance, not instruction", () => {
+  it("the copyHint carries a 'Listen for' role label, and the hint text is untouched", async () => {
+    await startDxStep();
+
+    const label = screen.getByText("Listen for");
+    expect(label).toBeInTheDocument();
+    // Role label, not decoration: it sits immediately before the hint prose, so a
+    // reader meets "what this sentence is for" before the sentence itself.
+    const hint = label.nextElementSibling;
+    expect(hint).not.toBeNull();
+    // The default Ragchew answer-role step 1 hint. Asserting the REAL string means
+    // this fails if the hint is silently reworded — which the ruling forbids.
+    expect(hint).toHaveTextContent("the callsign is what matters");
+  });
+
+  it("the copy field states that the WHOLE transmission is graded", async () => {
+    await startDxStep();
+    expect(
+      screen.getByText("Type everything you heard — the whole transmission is graded.")
+    ).toBeInTheDocument();
+  });
+
+  it("the scoring cue stands alone on 'real', where the hint is hidden", async () => {
+    // real difficulty renders no copyHint (and no 'Listen for' label), so the cue
+    // must not back-reference it — a dangling "not just the part above" would be
+    // pointing at nothing. This is why the sentence is self-contained.
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "straight" }));
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await user.click(screen.getByRole("button", { name: "QSO" }));
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    await user.click(within(rail).getByRole("combobox", { name: "Conditions" }));
+    await user.click(within(rail).getByRole("option", { name: /Real life/i }));
+    await user.click(within(rail).getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+
+    expect(screen.queryByText("Listen for")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Type everything you heard — the whole transmission is graded.")
+    ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Edge cases from the spec that silently break the mode model.
 // ---------------------------------------------------------------------------
 describe("break-in mode never survives a step transition", () => {
