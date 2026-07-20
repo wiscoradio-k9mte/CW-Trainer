@@ -1130,13 +1130,16 @@ function Display({ children, cursor, compact }) {
   );
 }
 
-function TouchKey({ keyDown, keyUp }) {
+function TouchKey({ keyDown, keyUp, surfaceRef }) {
   // role="button" + tabIndex makes this focusable and announced by AT.
   // Keying is owned by the window keydown handler — do not add a competing
   // handler here (double-fire). The window handler's preventDefault on Space
   // suppresses page scroll even when this div is focused.
+  // surfaceRef (optional): lets a parent move focus HERE — QSO break-in needs
+  // focus off the copy <input>, or the keyer's inField guard eats every keystroke.
   return (
     <div
+      ref={surfaceRef}
       role="button"
       tabIndex={0}
       aria-label="Straight key — press and hold Space, or hold this control, to send"
@@ -1162,14 +1165,16 @@ function TouchKey({ keyDown, keyUp }) {
   );
 }
 
-function PaddleKey({ paddleDown, paddleUp, swap }) {
+function PaddleKey({ paddleDown, paddleUp, swap, surfaceRef }) {
   // role="button" + tabIndex + aria-label make each zone focusable and announced by AT.
   // Keying is owned by the window keydown handler — do not add a competing
   // handler here (double-fire). The aria-label names the keyboard shortcut so a
   // screen-reader user knows how to key from the keyboard, which already works.
-  const zone = (el, label, glyph, ariaLabel) => (
+  // surfaceRef (optional) lands on the DIT zone — see TouchKey for why.
+  const zone = (el, label, glyph, ariaLabel, ref) => (
     <div
       key={el}
+      ref={ref}
       role="button"
       tabIndex={0}
       aria-label={ariaLabel}
@@ -1190,7 +1195,7 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
       <div style={{ fontSize: S.type.label, color: S.text.eyebrowText, marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
     </div>
   );
-  const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow");
+  const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow", surfaceRef);
   const dah = zone("-", "DAH", "—", "Dah paddle — press and hold X or right arrow");
   return (
     <div>
@@ -1208,9 +1213,11 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
 // Two zones: DIT (pointer-down = auto dits via keep-alive-free touch path)
 // and DAH (pointer-down = manual element, forced to "-" by straightUp).
 // Styled identically to PaddleKey using the same zone helper.
-function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
-  const zone = (label, glyph, sub, ariaLabel, onDown, onUp) => (
+function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap, surfaceRef }) {
+  // surfaceRef (optional) lands on the DIT zone — see TouchKey for why.
+  const zone = (label, glyph, sub, ariaLabel, onDown, onUp, ref) => (
     <div
+      ref={ref}
       role="button"
       tabIndex={0}
       aria-label={ariaLabel}
@@ -1237,6 +1244,7 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
     "Bug dit lever — press and hold for automatic dits (bracket key or this control)",
     () => bugDitDown(true),  // fromTouch=true: pointer gives clean up/down, skip keep-alive
     bugDitUp,
+    surfaceRef,
   );
   const dahZone = zone(
     "DAH", "—", "hold = one dah, you time it",
@@ -1367,18 +1375,124 @@ function KeyModeControls({ keyType, onKeyType, modeB, onModeB, compact }) {
 // been split (the key is part of the exchange flow there, not a separate pane).
 // KeyTrainer uses KeyModeControls + inlined key surface instead (see Phase 3 split).
 // SwapToggle is now rendered inline here so it appears above the surface in QsoSim too.
-function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
+// surfaceRef (optional): forwarded to whichever key surface is currently rendered,
+// so a parent can move keyboard focus onto it. Undefined for every existing caller.
+function KeyInput({ keyer, keyType, onKeyType, swap, onSwap, surfaceRef }) {
   return (
     <div>
       <KeyModeControls keyType={keyType} onKeyType={onKeyType} />
       <SwapToggle swap={swap} onSwap={onSwap} keyType={keyType} />
       {keyType === "paddle"
-        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
+        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} surfaceRef={surfaceRef} />
         : keyType === "bug"
         ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
             dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-            swap={swap} />
-        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
+            swap={swap} surfaceRef={surfaceRef} />
+        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} surfaceRef={surfaceRef} />}
+    </div>
+  );
+}
+
+/* ================= BREAK-IN PANEL (QSO DX step) ================= */
+//
+// A DX step has exactly ONE required action: copy what you heard, then continue.
+// The key is a REPAIR tool here (? / AGN / QRS / partial-call fill), not the way
+// you answer — you answer on the NEXT step. Before 2.4.1 the key pad was always
+// expanded at step 1, which read as "key your reply here" and was the single most
+// misleading thing on the screen. Worse, it could not work: the copy <input> is
+// auto-focused on every DX step and the keyer's window listener drops any event
+// whose target is an INPUT, so SPACEBAR typed a space instead of keying.
+//
+// So this panel does two jobs at once:
+//   1. Presentation — collapse the whole key block behind one 44px disclosure, so
+//      at rest the copy field is the only prominent input.
+//   2. Behaviour — arming it BLURS the copy field and moves focus onto the key
+//      surface. That is what makes `e.target` a div instead of an INPUT, which is
+//      what makes the keyer hear the keyboard at all. The two are not separable:
+//      the disclosure IS the mode switch.
+//
+// The trigger borrows CompactSelect's chrome (S.btn ground, control border, 44px,
+// caret) without its mechanism, per design-compact-selectors.md §4.6.
+//
+// Armed state is carried by THREE non-colour signals (the standing L2 rule):
+// the words change, the caret flips and the body appears, and aria-expanded is
+// exposed. Amber + weight 700 are additional, never the only cue.
+function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, onSwap, fillMsg, compact }) {
+  const surfaceRef = useRef(null);
+
+  // Arming must land focus on the key surface, or the keyer stays deaf. The panel
+  // owns this rather than the parent because the surface only exists once armed —
+  // this effect runs on the commit that mounts it.
+  useEffect(() => {
+    if (armed) surfaceRef.current?.focus();
+  }, [armed]);
+
+  return (
+    <div
+      style={{ marginBottom: 12 }}
+      // Esc is the symmetric escape hatch: it arms from the copy field and
+      // disarms from anywhere inside the panel, so no mode can trap you.
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && armed) { e.stopPropagation(); onArmedChange(false); }
+      }}
+    >
+      <button
+        type="button"
+        aria-expanded={armed}
+        aria-controls="qso-breakin-body"
+        onClick={() => onArmedChange(!armed)}
+        style={{
+          ...S.btn,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          width: "100%", minWidth: 0, minHeight: 44, padding: "10px 14px",
+          textAlign: "left", boxSizing: "border-box",
+          color: armed ? S.text.amber : S.text.body,
+          fontWeight: armed ? 700 : 400,
+        }}
+      >
+        <span style={{ minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span aria-hidden="true">⚡ </span>
+          {armed ? "BREAK-IN ARMED — KEYING" : "BREAK IN — ASK FOR A REPEAT"}
+        </span>
+        <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0 }}>{armed ? "▴" : "▾"}</span>
+      </button>
+
+      {armed && (
+        <div id="qso-breakin-body" style={{
+          background: S.ground.panel, border: S.border.panel, borderRadius: S.radius.sm,
+          padding: 12, marginTop: 8,
+        }}>
+          <p style={{
+            color: S.text.dim, fontSize: S.type.label, fontFamily: "system-ui, sans-serif",
+            margin: "0 0 10px", lineHeight: 1.6,
+          }}>
+            This interrupts them for a repeat. It is not your answer — you answer on the next step.
+          </p>
+          <div style={{ ...S.label, marginBottom: 6 }}>
+            Decoded from your key <span style={{ color: S.text.amber }}>{keyer.buffer}</span>
+          </div>
+          {/* data-testid: a layout-neutral hook so the keyboard-reachability tests
+              can read the decode OUTPUT directly instead of walking siblings. */}
+          <div data-testid="breakin-decode">
+            <Display compact={compact}>{keyer.decoded}</Display>
+          </div>
+          {/* Always-mounted status container: a live region only announces when the
+              text of an ALREADY-MOUNTED node changes. Mounting the node together
+              with its text is an addition, not a change, and AT stays silent —
+              the exact bug design-keying-qso §0 fixed everywhere else. */}
+          <div role="status" aria-live="polite" aria-atomic="true" style={{
+            fontFamily: "ui-monospace, monospace", color: S.tone.ok,
+            fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8, minHeight: "1.2em",
+          }}>
+            {fillMsg && <><span aria-hidden="true">◉ </span>{fillMsg}</>}
+          </div>
+          <KeyInput keyer={keyer} keyType={keyType} onKeyType={onKeyType}
+            swap={swap} onSwap={onSwap} surfaceRef={surfaceRef} />
+          <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
+            <span>?</span> or <span>AGN</span> — repeat the whole transmission · partial call + <span>?</span> (NM0?) — they confirm their full call · <span>QRS</span> — slower please
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2771,6 +2885,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // to the Role CompactSelect as pulseKey — each bump replays a brief amber glow on
   // its trigger (the sighted-user counterpart to roleLive, reduced-motion-gated).
   const [roleAutoPulse, setRoleAutoPulse] = useState(0);
+  // modeLive: announces the COPY ⇄ BREAK-IN mode switch on a DX step. The switch
+  // also MOVES FOCUS, which is the worst case to do silently for a screen-reader
+  // user. Polite, always-mounted (see the region block in the return).
+  const [modeLive, setModeLive] = useState("");
+
+  // armed: true = BREAK-IN mode on the current DX step (key pad revealed, copy
+  // field parked). Component state only, never persisted, and force-reset on every
+  // step advance / start / abandon — a mode that survived a step transition would
+  // open step 2 in a stale state.
+  const [armed, setArmed] = useState(false);
 
   // Phase 4 (B4) — per-conversation score accumulation for averageScore().
   // We accumulate copy % and send % across every graded step in a contact so
@@ -2810,7 +2934,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     keyWpm: settings.keyWpm,
     freq: settings.freq,
     player,
-    enabled: !!qso && step < qso.steps.length,
+    // On a DX (copy) step the keyer is live ONLY while break-in is armed, so the
+    // two input modes are genuinely mutually exclusive rather than incidentally
+    // so. Without this gate a stray SPACEBAR — after clicking ↻ REPLAY, say, when
+    // focus is on a button rather than the copy field — would decode invisibly and
+    // could fire a break-in repeat the user never asked for. On "you" (send) steps
+    // the keyer is always live, exactly as before.
+    enabled: !!qso && step < qso.steps.length && (qso.steps[step]?.who !== "dx" || armed),
     mode: settings.keyType,
     swap: settings.paddleSwap,
     onError: () => { setSendResult(null); showFill("HH — error signal, cleared"); },
@@ -2854,12 +2984,37 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // Auto-focus copy input when a dx step is active (normal/real mode shows the
   // copy input; easy mode shows CONTINUE instead). Guard: qsoCopyInputRef.current
   // is null when the input isn't rendered (easy mode, you-step, or before start).
+  //
+  // `armed` in the DEP LIST is load-bearing: DISarming must re-fire this so focus
+  // returns to the copy field. Removing the dep leaves focus stranded on the
+  // trigger button and typing silently does nothing (mutation-verified, KB-3/KB-5).
+  //
+  // `!armed` in the CONDITION is defence-in-depth, and the comment says so on
+  // purpose. What actually keeps focus out of the <input> while armed is that the
+  // copy block UNMOUNTS (the swap layout below) — so `qsoCopyInputRef.current` is
+  // already null and the third clause blocks first. Removing `!armed` alone was
+  // mutation-tested and did NOT change behaviour. It is kept because it is the
+  // guard that would still hold if this panel ever stacked instead of swapping,
+  // which is precisely how the original deaf-keyer bug happened.
   const cur = qso?.steps[step];
   useEffect(() => {
-    if (cur && cur.who === "dx" && qsoCopyInputRef.current) {
+    if (cur && cur.who === "dx" && !armed && qsoCopyInputRef.current) {
       qsoCopyInputRef.current.focus();
     }
-  }, [cur]);
+  }, [cur, armed]);
+
+  // The one place the DX-step input mode changes. Blurs the copy field on the way
+  // in (BreakInPanel then focuses the key surface); the effect above restores
+  // focus to the field on the way out.
+  const setBreakIn = (next) => {
+    setArmed(next);
+    if (next) {
+      qsoCopyInputRef.current?.blur();
+      setModeLive("Break-in armed. Key question mark, or A G N, to ask for a repeat.");
+    } else {
+      setModeLive("Copy field. Type what you heard.");
+    }
+  };
 
   const start = () => {
     const builder = ACTIVITY_BUILDERS[activity];
@@ -2890,6 +3045,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
     setFillMsg(null);
+    setArmed(false); // a new contact always opens in COPY mode
     keyer.clear();
     // Cancel any pending auto-advance from the previous contact before starting fresh.
     clearTimeout(qsoAdvanceTimer.current);
@@ -2922,6 +3078,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
     setFillMsg(null);
+    setArmed(false); // every step opens in COPY mode — break-in never carries over
     keyer.clear();
 
     setStep(next);
@@ -3383,10 +3540,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           - stepLive:   step transitions in the normal QSO loop (polite)
           - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite)
           - roleLive:   the Role when an Activity change auto-resets it (polite)
+          - modeLive:   the DX-step COPY ⇄ BREAK-IN switch, which also moves focus (polite)
           Not gated by isWide — render in both layouts. */}
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{stepLive}</div>
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{resultLive}</div>
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{roleLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{modeLive}</div>
 
       {/* Wide layout: intro in its own main-column panel; options OR context portaled to rail. */}
       {isWide && !qso && <div style={S.panel}>{introJSX}</div>}
@@ -3444,38 +3603,52 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
           </div>
 
-          <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <div style={{ ...S.label, marginBottom: 6 }}>
-              Break in with your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-            </div>
-            <Display>{keyer.decoded}</Display>
-            {fillMsg && (
-              <div style={{ fontFamily: "ui-monospace, monospace", color: "#8FCB9B", fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8 }}>
-                ◉ {fillMsg}
-              </div>
-            )}
-            <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
-              <span style={{ color: "#8A929C" }}>?</span> or <span style={{ color: "#8A929C" }}>AGN</span> — repeat the whole transmission · partial call + <span style={{ color: "#8A929C" }}>?</span> (NM0?) — they confirm their full call · <span style={{ color: "#8A929C" }}>QRS</span> — slower please
-            </div>
-          </div>
-
+          {/* Required path FIRST, repair tool second — the reading order now matches
+              the doing order: hear it → type it → check it → continue. In BREAK-IN
+              mode the copy block collapses to a one-line summary so the panel swaps
+              rather than stacks and the key surface stays inside the fold. */}
           {difficulty === "easy" ? (
-            <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE →</button>
+            <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE → YOUR TURN</button>
+          ) : armed ? (
+            <button
+              onClick={() => setBreakIn(false)}
+              style={{
+                ...S.btn, display: "flex", alignItems: "center", justifyContent: "space-between",
+                gap: 8, width: "100%", minHeight: 44, padding: "10px 14px",
+                textAlign: "left", boxSizing: "border-box", marginBottom: 12,
+              }}
+            >
+              <span style={{ minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: S.text.dim }}>
+                YOUR COPY · {copyAttempt.trim() ? copyAttempt.trim().slice(0, 24) : "not started"}
+              </span>
+              <span style={{ flexShrink: 0 }}><span aria-hidden="true">✎ </span>BACK TO COPY</span>
+            </button>
           ) : (
             <>
-              <div style={{ ...S.label, marginBottom: 6 }}>Your copy (optional — check it or just answer)</div>
+              {/* C1: was "(optional — check it or just answer)". "Or just answer" told
+                  the user to do something this step does not support — it is the
+                  sentence that authored the reported error. The optionality is still
+                  visible in the affordance: CONTINUE sits right there, enabled. */}
+              <div style={{ ...S.label, marginBottom: 6 }}>Your copy — what did you hear?</div>
               <input ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") checkCopy(); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") checkCopy();
+                  // Esc from the copy field is the reflex reach for the key.
+                  else if (e.key === "Escape") setBreakIn(true);
+                }}
                 aria-label="Your copy of what you heard"
                 placeholder="type what you hear..." autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
-              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", marginBottom: 12 }}>
                 <button style={S.btn} onClick={checkCopy} disabled={!copyAttempt.trim()}>CHECK COPY</button>
                 <button style={S.btn} onClick={() => setRevealed(true)}>👁 REVEAL</button>
-                <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE →</button>
+                {/* C2: naming the destination is the whole fix for the mistake —
+                    at the moment of decision the screen states that answering
+                    happens AFTER this button, in the app's own vocabulary
+                    ("Your turn — step N of M" is the next screen's heading). */}
+                <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE → YOUR TURN</button>
               </div>
               {revealed && (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 14, marginBottom: 12 }}>
                   <div style={{ ...S.label, marginBottom: 6 }}>Sent</div>
                   {copyResult !== null ? <CharDiff target={cur.text} attempt={copyAttempt} /> : <Display>{cur.text}</Display>}
                   {copyResult !== null && <Score pct={copyResult} />}
@@ -3483,6 +3656,19 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               )}
             </>
           )}
+
+          <BreakInPanel
+            keyer={keyer}
+            armed={armed}
+            onArmedChange={setBreakIn}
+            keyType={settings.keyType}
+            onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
+            swap={settings.paddleSwap}
+            onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+            fillMsg={fillMsg}
+            compact={!isWide}
+          />
+
           {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
           <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
             <button
@@ -3494,6 +3680,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
                 clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
                 qsoAutoGradeFired.current = false;
+                setArmed(false);
                 setQso(null); keyer.clear();
               }}
             >✕ ABANDON CONTACT / back to setup</button>
@@ -3563,6 +3750,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
                 clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
                 qsoAutoGradeFired.current = false;
+                setArmed(false);
                 setQso(null); keyer.clear();
               }}
             >✕ ABANDON CONTACT / back to setup</button>
@@ -4940,8 +5128,13 @@ export default function CWTrainer() {
 
         * { -webkit-tap-highlight-color: transparent; }
         button { outline: none; }
-        button:focus { outline: none; }
-        button:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
+        button:focus, [role="button"]:focus { outline: none; }
+        /* [role="button"] is included deliberately: the key surfaces (TouchKey /
+           PaddleKey / BugKey zones) are focusable role="button" DIVS, so a
+           button-only selector left them with NO visible focus ring. That matters
+           now that arming break-in MOVES focus onto one of them — a keyboard user
+           would otherwise be sent somewhere invisible. */
+        button:focus-visible, [role="button"]:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
         input[type="text"]:focus, input:not([type]):focus { outline: 1px solid #F2A93B; }
         input[type="range"]:focus { outline: none; }
         button:active { transform: translateY(1px); }
@@ -5253,8 +5446,21 @@ export default function CWTrainer() {
           <div style={{ fontFamily: "ui-monospace, monospace", color: S.text.dim, fontSize: "0.6875rem", letterSpacing: 3 }}>
             ·−− ·−·&nbsp;&nbsp;WISCO RADIO LABS
           </div>
+          {/* Version rides the EXISTING tagline line — no new row, wordmark untouched.
+              It sits at S.text.dim rather than the tagline's faint: H2's rule makes
+              faint decorative-only, and a version string someone is meant to read and
+              transcribe into a bug report is not decorative. The visible token is
+              aria-hidden with an sr-only twin so AT says "Version 2.4.0" instead of
+              spelling out "vee two point four point zero". */}
           <div style={{ fontFamily: "system-ui, sans-serif", color: S.text.faint, fontSize: S.type.micro, letterSpacing: 1, marginTop: 4 }}>
             made in the Driftless
+            <span aria-hidden="true"> · </span>
+            <span aria-hidden="true" style={{ color: S.text.dim }}>
+              v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}
+            </span>
+            <span style={S.srOnly}>
+              Version {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}
+            </span>
           </div>
         </footer>
 

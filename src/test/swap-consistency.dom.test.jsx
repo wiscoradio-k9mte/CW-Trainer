@@ -127,11 +127,20 @@ describe("swap-toggle consistency — QSO tab", () => {
   // QSO always renders KeyInput inline in the exchange panel (never portaled to the rail).
   // Swap and type selector are always together in main, regardless of layout width.
 
+  // 2.4.1: the first step of the default Ragchew "Answer a CQ" contact is a DX
+  // (copy) step, and the key block there now lives behind the BREAK IN disclosure.
+  // These tests therefore arm break-in first. The contract under test is unchanged
+  // — swap stays clustered with the type selector, in main, never in the rail —
+  // only its container moved behind a disclosure.
   async function startQso(user) {
     await gotoTab(user, "QSO");
     // KeyInput only renders once a QSO is active. Start with the default Ragchew role.
     const startBtn = screen.getByRole("button", { name: /CALL CQ|LISTEN FOR CQ/ });
     await user.click(startBtn);
+  }
+
+  async function armBreakIn(user) {
+    await user.click(screen.getByRole("button", { name: /BREAK IN — ASK FOR A REPEAT/ }));
   }
 
   it("type selector and swap are both in <main> on QSO wide (exchange panel, not the rail)", async () => {
@@ -140,6 +149,14 @@ describe("swap-toggle consistency — QSO tab", () => {
 
     const main = screen.getByRole("main");
     const rail = screen.getByRole("complementary", { name: "Options" });
+
+    // ADDED (2.4.1, strictly stronger): at rest on a DX step the key block is
+    // collapsed, so neither control is on screen. This pins the M1 contract —
+    // step 1 presents ONE prominent input, the copy field.
+    expect(within(main).queryByRole("button", { name: "PADDLE" })).not.toBeInTheDocument();
+    expect(within(main).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
+
+    await armBreakIn(user);
 
     // KeyInput renders in main — both controls are there together.
     // Exact text "PADDLE" avoids matching the PaddleKey surface buttons.
@@ -154,6 +171,7 @@ describe("swap-toggle consistency — QSO tab", () => {
   it("swap absent for STRAIGHT KEY in QSO", async () => {
     const { user } = await renderApp();
     await startQso(user);
+    await armBreakIn(user);
 
     // Switch to straight key — swap must disappear.
     const main = screen.getByRole("main");
@@ -186,8 +204,10 @@ describe("swap-toggle consistency — cross-tab contract", () => {
     const main = screen.getByRole("main");
     expect(within(main).queryByRole("button", { name: /Swap dit and dah/ })).not.toBeInTheDocument();
 
-    // QSO: type selector + swap both in main (exchange panel).
+    // QSO: type selector + swap both in main (exchange panel), behind the 2.4.1
+    // BREAK IN disclosure on a DX step.
     await startQso(user);
+    await user.click(screen.getByRole("button", { name: /BREAK IN — ASK FOR A REPEAT/ }));
     const main2 = screen.getByRole("main");
     expect(within(main2).getByRole("button", { name: "PADDLE" })).toBeInTheDocument();
     expect(within(main2).getByRole("button", { name: /Swap dit and dah/ })).toBeInTheDocument();

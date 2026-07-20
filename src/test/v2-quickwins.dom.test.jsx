@@ -34,13 +34,34 @@ async function openSettings(user) {
 describe("v2.0 item 6 — version display sources the real package version", () => {
   it("renders v{package.json version} in Settings (Vite define), not a hardcode", async () => {
     // vitest evaluates vite.config.mjs, so __APP_VERSION__ is defined as
-    // JSON.stringify(pkg.version).  The footer must show that exact value.
+    // JSON.stringify(pkg.version).  Settings must show that exact value.
     const { user } = await renderApp();
     await openSettings(user);
-    // The footer reads "v1.0.1" today (whatever package.json carries).  Asserting
-    // against pkg.version — not a literal — means the test tracks the real bump and
-    // fails if the display reverts to "dev" or a stale hardcoded string.
-    expect(screen.getByText(`v${pkg.version}`)).toBeInTheDocument();
+    // RETARGET (2.4.1): the version now ALSO appears in the footer, so an
+    // unscoped getByText matches twice.  Scoping to the Settings panel (portaled
+    // into the rail on wide) is strictly stronger than the old document-wide
+    // query — that one would have passed on any element anywhere carrying the
+    // string, including the footer, even if Settings had lost its version.
+    const settingsPanel = screen.getByRole("complementary", { name: "Options" });
+    // Asserting against pkg.version — not a literal — means the test tracks the
+    // real bump and fails if the display reverts to "dev" or a stale hardcode.
+    expect(within(settingsPanel).getByText(`v${pkg.version}`)).toBeInTheDocument();
+  });
+
+  // 2.4.1 (N-2): the version also rides the footer tagline, because that is where
+  // someone filing a bug report looks — Settings is a rail takeover you must leave
+  // your practice to open.
+  it("footer tagline carries the same version, with a screen-reader-friendly twin", async () => {
+    await renderApp();
+
+    const footer = screen.getByRole("contentinfo");
+    // The visible token is the literal "v2.4.0" form...
+    expect(within(footer).getByText(`v${pkg.version}`)).toBeInTheDocument();
+    // ...and an sr-only twin spells it as words so AT does not read it as
+    // "vee two point four point zero".  Both must track package.json.
+    expect(within(footer).getByText(`Version ${pkg.version}`)).toBeInTheDocument();
+    // The wordmark line is untouched — the version rides the tagline, not the brand mark.
+    expect(within(footer).getByText(/WISCO RADIO LABS/)).not.toHaveTextContent(pkg.version);
   });
 });
 
