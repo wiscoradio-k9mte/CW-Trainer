@@ -111,17 +111,21 @@ International/DX operating, the generated word list, compact option menus and th
 reach-the-key layout, and the improved QSO transmission grading.
 
 **Trying what's next (edge channel):** in-progress work lands on the edge channel
-first. Install it with `sudo snap install wr-cw-trainer --edge` (or
+first. On **amd64**, install it with `sudo snap install wr-cw-trainer --edge` (or
 `snap refresh --edge`) if you'd like to try new features early and report issues.
+(**arm64 users — read the note below before installing from edge.**)
 
 **arm64 (aarch64):** an arm64 build is produced and tested natively in CI on every
-release, but it is **not published to stable** (or to any channel), pending validation
-on real ARM hardware — so `sudo snap install wr-cw-trainer` will not install on arm64.
-To run it, download `wr-cw-trainer_<version>_arm64.snap` from the
+release, but it is **not published to stable**, pending validation on real ARM
+hardware — so `sudo snap install wr-cw-trainer` will not install on arm64.
+arm64 snaps *are* pushed to the **edge** channel during feature testing, so
+`--edge` may well install for you — but edge carries pre-release builds that can
+be **older than the current stable release**, so it is not a substitute. To run
+2.4.0 on arm64, download `wr-cw-trainer_2.4.0_arm64.snap` from the
 [releases page](https://github.com/wiscoradio-k9mte/CW-Trainer/releases):
 
 ```bash
-sudo snap install --dangerous wr-cw-trainer_<version>_arm64.snap
+sudo snap install --dangerous wr-cw-trainer_2.4.0_arm64.snap
 ```
 
 A `--dangerous` install isn't tracked by a channel, so it won't auto-update — you'll

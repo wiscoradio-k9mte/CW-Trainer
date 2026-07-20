@@ -43,9 +43,18 @@
 # `stable` and NEVER touches `edge` — edge is populated only by a manual
 # workflow_dispatch of release-edge.yml, which additionally rejects bare X.Y.Z
 # versions, so a plain `2.4.0` can never land on edge. Consequence: on arm64
-# this release is reachable ONLY as a GitHub Release asset installed with
-# `--dangerous`; it is not on any channel. That holds until Travis validates
-# arm64 on real ARM hardware — arm64 `stable` is intentionally empty. Both
+# THIS EXACT VERSION is reachable only as a GitHub Release asset installed with
+# `--dangerous`.
+#
+# Careful with that sentence: it is scoped to this version, NOT to the arm64
+# build in general. arm64 snaps DO reach the `edge` channel — release-edge.yml's
+# upload-edge job is matrixed [amd64, arm64] with --release=edge — they just
+# carry a `X.Y.Z-edge.N` version, never a plain `X.Y.Z`. So "arm64 is on no
+# channel" is FALSE and dangerously so (it hides that `--edge` will install a
+# pre-release build possibly OLDER than stable). State the version scope.
+#
+# arm64 stays off `stable` until Travis validates it on real ARM hardware —
+# arm64 `stable` is intentionally empty. Both
 # arches DO ship under one version string when arm64 is eventually enabled; the
 # Snap Store's channel map is per (channel, architecture), so that's collision-free.
 #
@@ -239,6 +248,18 @@ jobs:
 
       - name: Create GitHub Release
         id: gh-release
+        # WORDING WARNING — do not "tighten" the arm64 sentence below.
+        # It says arm64 "is not AUTOMATICALLY published to any channel". That
+        # adverb is load-bearing and deliberate: this tag workflow publishes
+        # arm64 nowhere, but release-edge.yml's upload-edge job IS matrixed
+        # [amd64, arm64] with --release=edge, so arm64 snaps DO reach the edge
+        # channel during feature testing. Dropping "automatically" turns a true
+        # statement into a false one — and false in the dangerous direction,
+        # because it tells an arm64 user nothing is on any channel while
+        # `--edge` will happily install a pre-release build that may be OLDER
+        # than current stable. (Exactly this shipped in the README and was
+        # caught by the brand-truth gate, 2026-07-20.) Deny nothing here;
+        # state what this workflow does and let the README carry the warning.
         # softprops/action-gh-release v3.0.1
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b
         with:

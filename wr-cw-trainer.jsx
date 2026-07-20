@@ -177,7 +177,7 @@ const LINGO = [
       //   (cqww.com/cq_waz_list.htm), and ARRL's LoTW WAZ support announcement.
       //   The 90 ITU ZONES are used by the IARU HF World Championship exchange and
       //   its per-ITU-zone certificates (contests.arrl.org/ContestRules/IARU-HF-Rules.pdf).
-      // Pinned by src/test/zone-systems.test.js so this can't silently regress.
+      // Pinned by src/test/zone-systems.test.jsx so this can't silently regress.
       ["CQ zone", "One of 40 geographic zones worldwide, used in the CQ World Wide contest and the WAZ (Worked All Zones) award (e.g. '5NN 14'). The contiguous US spans zones 3–5. NOT the same as ITU zones or ITU regions"],
       ["ITU region", "One of 3 world regions that set band allocations (Region 1 = Europe/Africa/Middle East; Region 2 = the Americas; Region 3 = Asia-Pacific). 40 m CW is allocated in all three. NOT the same as CQ zones"],
       ["ITU zone", "One of 90 zones used in the IARU HF World Championship exchange — a different numbering from the 40 CQ zones. The three systems (3 regions / 40 CQ zones / 90 ITU zones) are easy to confuse; name the system when you say 'zone'"],
@@ -3781,7 +3781,7 @@ function OnAirGuide({ player, settings }) {
                   "CQ zone"/"ITU zone" entries: WAZ is a CQ Magazine award on the 40 CQ zones
                   (cq-amateur-radio.com, cqww.com/cq_waz_list.htm, ARRL LoTW-WAZ); the 90 ITU
                   zones are the IARU HF World Championship exchange (ARRL IARU-HF-Rules.pdf).
-                  Pinned by src/test/zone-systems.test.js. */}
+                  Pinned by src/test/zone-systems.test.jsx. */}
               <li><span style={{ color: "#FFD89B" }}>40 CQ zones</span> — used in the CQ World Wide contest and the WAZ (Worked All Zones) award. The contiguous US spans zones 3–5.</li>
               <li><span style={{ color: "#FFD89B" }}>90 ITU zones</span> — used in the IARU HF World Championship exchange. Different numbering from the 40 CQ zones.</li>
             </ul>
