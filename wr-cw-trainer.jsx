@@ -170,9 +170,17 @@ const LINGO = [
     items: [
       ["CQ TEST", "The contest CQ. Distinct from 'CQ CQ DE' — you hear this on busy contest weekends. Answered with just your callsign, then the exchange follows fast"],
       ["NR", "Number — a running serial in a WPX or other serial-exchange contest (e.g. '5NN 001'). The answering station sends their own serial back"],
-      ["CQ zone", "One of 40 geographic zones worldwide, used in the CQ World Wide contest exchange (e.g. '5NN 14'). The contiguous US spans zones 3–5. NOT the same as ITU zones or ITU regions"],
+      // ZONE-SYSTEM ATTRIBUTION — sourced, do not "correct" from memory:
+      //   WAZ (Worked All Zones) is a CQ Magazine award based on the 40 CQ ZONES,
+      //   NOT the ITU zones. Sources: CQ's own award rules
+      //   (cq-amateur-radio.com/cq_awards/cq_waz_awards/), the CQ zone list
+      //   (cqww.com/cq_waz_list.htm), and ARRL's LoTW WAZ support announcement.
+      //   The 90 ITU ZONES are used by the IARU HF World Championship exchange and
+      //   its per-ITU-zone certificates (contests.arrl.org/ContestRules/IARU-HF-Rules.pdf).
+      // Pinned by src/test/zone-systems.test.jsx so this can't silently regress.
+      ["CQ zone", "One of 40 geographic zones worldwide, used in the CQ World Wide contest and the WAZ (Worked All Zones) award (e.g. '5NN 14'). The contiguous US spans zones 3–5. NOT the same as ITU zones or ITU regions"],
       ["ITU region", "One of 3 world regions that set band allocations (Region 1 = Europe/Africa/Middle East; Region 2 = the Americas; Region 3 = Asia-Pacific). 40 m CW is allocated in all three. NOT the same as CQ zones"],
-      ["ITU zone", "One of 90 zones used in the WAZ award and some ITU contests — a different numbering from the 40 CQ zones. The three systems (3 regions / 40 CQ zones / 90 ITU zones) are easy to confuse; name the system when you say 'zone'"],
+      ["ITU zone", "One of 90 zones used in the IARU HF World Championship exchange — a different numbering from the 40 CQ zones. The three systems (3 regions / 40 CQ zones / 90 ITU zones) are easy to confuse; name the system when you say 'zone'"],
     ],
   },
   {
@@ -3769,8 +3777,13 @@ function OnAirGuide({ player, settings }) {
             </p>
             <ul style={{ color: "#C9CDD3", fontSize: "0.84375rem", fontFamily: "system-ui, sans-serif", paddingLeft: 20, lineHeight: 1.8, margin: "0 0 8px" }}>
               <li><span style={{ color: "#FFD89B" }}>3 ITU regions</span> — set band allocations worldwide (the US is Region 2). 40 m CW is allocated in all three.</li>
-              <li><span style={{ color: "#FFD89B" }}>40 CQ zones</span> — used in the CQ World Wide contest exchange. The contiguous US spans zones 3–5.</li>
-              <li><span style={{ color: "#FFD89B" }}>90 ITU zones</span> — used in the WAZ award and some ITU contests. Different numbering from the 40 CQ zones.</li>
+              {/* Attribution sourced — see the ZONE-SYSTEM ATTRIBUTION comment on LINGO's
+                  "CQ zone"/"ITU zone" entries: WAZ is a CQ Magazine award on the 40 CQ zones
+                  (cq-amateur-radio.com, cqww.com/cq_waz_list.htm, ARRL LoTW-WAZ); the 90 ITU
+                  zones are the IARU HF World Championship exchange (ARRL IARU-HF-Rules.pdf).
+                  Pinned by src/test/zone-systems.test.jsx. */}
+              <li><span style={{ color: "#FFD89B" }}>40 CQ zones</span> — used in the CQ World Wide contest and the WAZ (Worked All Zones) award. The contiguous US spans zones 3–5.</li>
+              <li><span style={{ color: "#FFD89B" }}>90 ITU zones</span> — used in the IARU HF World Championship exchange. Different numbering from the 40 CQ zones.</li>
             </ul>
             <p style={{ color: "#8A929C", fontSize: "0.78125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
               The DX exchange in the walkthrough below sends the CQ zone — the most common contest zone exchange. "Zone 05" is a common CQ zone for US stations.
@@ -5078,7 +5091,9 @@ export default function CWTrainer() {
               the gear's toggle affordance. */}
           <div style={{ display: "flex", alignItems: "center", gap: S.space.sm }}>
             {/*
-              Opens the developer's Venmo page in the user's real browser.
+              Opens the developer's Buy Me a Coffee page in the user's real browser.
+              (2.4.0: moved from Venmo to Buy Me a Coffee — a support platform built
+              for this, rather than a peer-to-peer payment app.)
               Must be window.open(..., "_blank") — NOT a same-window href — because
               an href would navigate the Electron SPA away from the app.
               The setWindowOpenHandler in electron/main.cjs intercepts _blank opens,
@@ -5089,7 +5104,7 @@ export default function CWTrainer() {
             <button
               type="button"
               className="wr-coffee"
-              aria-label="Support the developer via Venmo — opens in your web browser"
+              aria-label="Support the developer on Buy Me a Coffee — opens in your web browser"
               style={{
                 background: "transparent",
                 border: S.border.amber,
@@ -5102,7 +5117,7 @@ export default function CWTrainer() {
                 fontWeight: 600,
                 cursor: "pointer",
               }}
-              onClick={() => window.open("https://venmo.com/u/K9MTE", "_blank", "noopener,noreferrer")}
+              onClick={() => window.open("https://buymeacoffee.com/wiscoradiolabs", "_blank", "noopener,noreferrer")}
             >
               <span aria-hidden="true" style={{ marginRight: S.space.xs }}>☕</span>Coffee?
             </button>

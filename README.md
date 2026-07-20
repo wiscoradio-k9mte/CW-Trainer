@@ -7,7 +7,7 @@
 <p align="center">
   <em>by Wisco Radio Labs</em><br><br>
   Learn Morse code the way hams actually use it — from your first two characters to a full on-air contact.<br>
-  Koch-method lessons · copy &amp; sending practice · a POTA / SOTA / IOTA / ragchew QSO simulator. <b>Fully offline.</b>
+  Koch-method lessons · copy &amp; sending practice · a ragchew / POTA / SOTA / IOTA / DX / contest QSO simulator. <b>Fully offline.</b>
 </p>
 
 <p align="center">
@@ -28,8 +28,9 @@ all the way from recognizing your first two characters to running a complete on-
 - 🎧 **Audio-first**, the way CW is really learned — full-speed characters with Farnsworth spacing.
 - 🛠️ **Bring your own key** — practice on screen, on the keyboard, or with your real straight key or
   paddle through a VBand-style USB adapter.
-- 📻 **Real operating, simulated** — work POTA, SOTA, IOTA, and ragchew contacts as either side of the QSO.
-- 📈 **See your progress** — lessons, sending, and copy tracked across sessions, with simple trends and dates.
+- 📻 **Real operating, simulated** — work ragchew, POTA, SOTA, IOTA, DX, and contest contacts as either side of the QSO.
+- 🌍 **Work the world** — a bundled DXCC dataset drives realistic foreign prefixes, callsigns, and DX/contest exchanges.
+- 📈 **See your progress** — lessons, sending, copy, and QSO accuracy scored across sessions, with simple trends and dates.
 - 🔌 **Offline forever** — it never asks for the network.
 
 ---
@@ -38,7 +39,7 @@ all the way from recognizing your first two characters to running a complete on-
 
 |  |  |
 |:--:|:--:|
-| <img src="build/screenshots/WiscoRadioLabs-Learn.png" width="100%"><br>**Learn** — Koch-method character lessons | <img src="build/screenshots/WiscoRadioLabs-Copy.png" width="100%"><br>**Copy** — the six-rung copy ladder |
+| <img src="build/screenshots/WiscoRadioLabs-Learn.png" width="100%"><br>**Learn** — Koch-method character lessons | <img src="build/screenshots/WiscoRadioLabs-Copy.png" width="100%"><br>**Copy** — the eight-rung copy ladder |
 | <img src="build/screenshots/WiscoRadioLabs-Key.png" width="100%"><br>**Key** — sending practice with a live decoder | <img src="build/screenshots/WiscoRadioLabs-QSO.png" width="100%"><br>**QSO** — work a simulated contact |
 | <img src="build/screenshots/WiscoRadioLabs-Progress-Settings.png" width="100%"><br>**Progress &amp; Settings** — track your sessions; tune speed, Farnsworth, sidetone, band conditions | |
 
@@ -54,16 +55,21 @@ with extra space between characters (Farnsworth) so your ear has time. A new cha
 once you're copying the current set at 90%. Answer by tapping the on-screen letter or just typing it.
 
 ### 📥 Copy
-Copy practice up a six-rung ladder — single characters, pairs, random groups, real ham words,
-callsigns, and finally full QSO phrases. Pick **Easy** (see the text as you hear it), **Normal**
+Copy practice up an eight-rung ladder — single characters, two-character groups, random letter
+groups, common words, a wider vocabulary, real ham words, callsigns, and finally full QSO
+phrases. The word rungs draw on a frequency-ranked English list built from public-domain texts
+("Common words" is the top 500; "Wider vocabulary" steps up to ranks 1001–5000).
+Pick **Easy** (see the text as you hear it), **Normal**
 (copy by ear, then check yourself), or **Real life** (band noise and QSB fading — the way it
 really sounds on the air).
 
 ### 📤 Key (sending)
 Sending practice with a built-in iambic-paddle and straight-key decoder that shows *exactly* what
-your fist sends — not what you meant. Choose a **drill category** (callsigns, calling CQ, signal
-reports, numbers, prosigns, Q-codes, common words, or full QSO lines) and climb the ladder as you
-improve. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
+your fist sends — not what you meant. Choose from **fourteen drill categories** and climb the
+ladder as you improve — common words, a wider vocabulary, Q-codes &amp; abbreviations, prosigns,
+numbers (including cut numbers), RST &amp; exchanges, calling CQ, full QSO lines, callsigns, and
+then the DX end of the ladder: DX callsigns, DX exchanges, contest fragments, split &amp; pileup,
+and abroad callsigns. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
 paddle — with selectable iambic **Mode A or B**), or with **your own key or paddle** through a USB adapter (the `[` / `]` brackets a
 VBand-style adapter sends; flip the dit/dah swap if your levers come out reversed). Afterward you
 get **fist feedback** — your estimated speed and how tight your letter/word spacing reads. Finish
@@ -71,12 +77,14 @@ the word and it grades **automatically** — no button to press.
 
 ### 📻 QSO
 A simulated contact, set up the way you'd actually operate: pick the **activity** (Ragchew, POTA,
-SOTA, or IOTA), your **role** (Activator or Hunter/Chaser; or, for a ragchew, Call CQ or Answer a
-CQ), and the **difficulty**. Then work the whole exchange — call, signal report, the back-and-forth,
+SOTA, IOTA, Work DX, or Contest), your **role** (Activator or Hunter/Chaser; Call CQ or Answer a
+CQ for a ragchew; Call CQ DX or Hunt the DX; Running or Search &amp; Pounce for a contest), and the
+**difficulty**. Then work the whole exchange — call, signal report, the back-and-forth,
 and the sign-off — copying by ear and sending with your key. Real-life difficulty adds QSB fading,
 band noise, and on-air break-in fills (`?`, `AGN`, `QRS`). Both **how you copy and how you send**
 are scored each contact — the type box auto-focuses when it's your turn, your over grades when you
-pause, and it all feeds the Progress view.
+pause, and it all feeds the Progress view. Your sending is graded on the elements you actually
+need to convey, in **any valid on-air form** — not on matching one scripted wording.
 
 ### 📈 Progress
 A running history of how you're doing — your Koch-lesson accuracy, your sending (speed and fist),
@@ -98,19 +106,31 @@ filtering, QSB, AGC).
 sudo snap install wr-cw-trainer
 ```
 
-**Testing the next version (edge channel):** International/DX and word-list
-enhancements, **compact dropdown menus and a reworked practice layout that
-keeps the on-screen key reachable without scrolling** (better for small and touch
-screens), plus **improved QSO transmission grading** — your sending is now scored
-on the real-world elements you actually convey (any valid way of sending them),
-not on matching a script — are currently in testing on the edge channel. Install with
-`sudo snap install wr-cw-trainer --edge` (or `snap refresh --edge`) if you'd
-like to try them early and report issues.
+That installs the current stable release (**2.4.0**, amd64/x86-64), which includes
+International/DX operating, the generated word list, compact option menus and the
+reach-the-key layout, and the improved QSO transmission grading.
 
-**arm64:** an arm64 build is also available on the edge channel
-(`snap install wr-cw-trainer --edge`). It's built and tested natively in CI on
-every release, but not yet validated on real ARM hardware — tester reports
-welcome via the issue tracker.
+**Trying what's next (edge channel):** in-progress work lands on the edge channel
+first. On **amd64**, install it with `sudo snap install wr-cw-trainer --edge` (or
+`snap refresh --edge`) if you'd like to try new features early and report issues.
+(**arm64 users — read the note below before installing from edge.**)
+
+**arm64 (aarch64):** an arm64 build is produced and tested natively in CI on every
+release, but it is **not published to stable**, pending validation on real ARM
+hardware — so `sudo snap install wr-cw-trainer` will not install on arm64.
+arm64 snaps *are* pushed to the **edge** channel during feature testing, so
+`--edge` may well install for you — but edge carries pre-release builds that can
+be **older than the current stable release**, so it is not a substitute. To run
+2.4.0 on arm64, download `wr-cw-trainer_2.4.0_arm64.snap` from the
+[releases page](https://github.com/wiscoradio-k9mte/CW-Trainer/releases):
+
+```bash
+sudo snap install --dangerous wr-cw-trainer_2.4.0_arm64.snap
+```
+
+A `--dangerous` install isn't tracked by a channel, so it won't auto-update — you'll
+need to repeat this each release. Reports from real ARM hardware are very welcome via
+the issue tracker; that's what will get arm64 onto stable.
 
 **From source** — requires **Node.js 18+** and npm:
 
@@ -171,7 +191,11 @@ any new core behavior. UI behavior in `wr-cw-trainer.jsx` is checked by hand (`n
 ├── src/
 │   ├── cw-core.js           # pure logic: Morse tables, timing, grading, drill + QSO builders
 │   ├── cw-core.test.js      # unit tests for cw-core.js (vitest)
+│   ├── data/                # DXCC entity dataset + word pool consumed by cw-core
+│   ├── test/                # DOM/behavior test suite (vitest + testing-library)
 │   └── main.jsx             # React entry: mounts the trainer
+├── data/                    # generated reference data + DATA_SOURCES.md provenance
+├── scripts/                 # dataset generators and validators (build:words, etc.)
 ├── electron/main.cjs        # Electron main process (window + security)
 ├── electron-builder.yml     # produces the unpacked Electron tree snapcraft packages
 ├── snap/snapcraft.yaml      # Snap package definition (core22 + gnome extension)
@@ -186,8 +210,12 @@ any new core behavior. UI behavior in `wr-cw-trainer.jsx` is checked by hand (`n
 sudo snap install snapcraft --classic
 npm run dist:snap                                  # → release/wr-cw-trainer_*.snap
 sudo snap install --dangerous release/wr-cw-trainer_*.snap   # test locally
-snapcraft login && snapcraft upload --release=stable release/wr-cw-trainer_*.snap
 ```
+
+Publishing is normally done by CI, not by hand — pushing a `v*` tag runs
+`.github/workflows/release.yml`. Note that **only amd64 is published to `stable`**;
+arm64 publishes to `edge` only until it's validated on real ARM hardware. See
+[`.github/RELEASING.md`](.github/RELEASING.md) for the full runbook.
 
 ### Notes & troubleshooting
 

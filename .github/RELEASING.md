@@ -25,8 +25,8 @@ push tag v*.*.*
             │       ├── Extract release notes from metainfo.xml
             │       └── Create GitHub Release
             │
-            ├── Job 3: upload-to-stable  ← MATRIX: amd64 + arm64
-            │       ├── snapcraft upload --release=stable   (one revision per arch)
+            ├── Job 3: upload-to-stable  ← MATRIX: amd64 only (arm64 is edge-only pending ARM validation)
+            │       ├── snapcraft upload --release=stable   (amd64 revision)
             │       └── snapcraft upload-metadata (summary + description + icon from snap; non-fatal)
             │
             └── Job 4: notify-on-failure  (only if any prior job failed)
@@ -123,9 +123,11 @@ pre-release suffix, preventing version-number collisions with stable.
 
 ### Version and grade
 
-**Version:** Use `2.4.0-edge.N` for the International/DX candidate (the next
-release after 2.3.0). Increment `N` for each new edge build from the same
-branch (2.4.0-edge.1, 2.4.0-edge.2, …). The `-edge.N` suffix is valid semver
+**Version:** Use `X.Y.Z-edge.N` for the next candidate — i.e. the version you
+intend to release, with an `-edge.N` suffix. (2.4.0 shipped to stable on
+2026-07-20, so the next candidate is `2.5.0-edge.1` or `2.4.1-edge.1`.)
+Increment `N` for each new edge build from the same
+branch (…-edge.1, …-edge.2, …). The `-edge.N` suffix is valid semver
 and makes the build visible as pre-release in both the store and the app's
 version display.
 
@@ -222,14 +224,23 @@ Edge is a staging channel. When the feature is fully validated:
 
 1. Merge the feature branch to `main` via PR (go through the normal review +
    CI gate).
-2. Bump `package.json` and `snap/snapcraft.yaml` to `2.4.0` (the plain stable
-   version — no suffix).
+2. Bump `package.json` and `snap/snapcraft.yaml` to the plain stable version
+   (no suffix), e.g. `2.4.0`. Also add a `<release>` entry for that version, with
+   the real release date, to `build/…CWTrainer.metainfo.xml`, and bring the
+   snapcraft `description:` and the README current for exactly what ships.
 3. Tag and push to trigger the stable release:
    ```bash
    git tag -a v2.4.0 -m "CW Trainer v2.4.0"
    git push origin v2.4.0
    ```
    `release.yml` fires, builds from `main`, and auto-publishes to stable.
+
+   > **Architecture:** `release.yml` BUILDS both amd64 and arm64 and attaches both
+   > `.snap` files to the GitHub Release, but only **amd64** is uploaded to the
+   > `stable` channel (`upload-to-stable` matrix is `arch: [amd64]`). arm64 remains
+   > **edge-only** until it is validated on real ARM hardware — that is Travis's
+   > call to lift. To enable arm64 on stable later, restore
+   > `arch: [amd64, arm64]` in that job; nothing else needs to change.
 
    Alternatively, if you want to promote the EXACT snap revision that testers
    validated on edge (same binary, no rebuild):
@@ -373,7 +384,10 @@ Settings → Branches → Add branch protection rule → Branch name pattern: `m
 
 Required settings:
 - [x] Require status checks to pass before merging
-  - Add required checks: `Test & Build` (the job name from ci.yml)
+  - Add required checks: `Test & Build (amd64)` and `Test & Build (arm64)` — ci.yml's
+    Test & Build job is matrixed per architecture, so GitHub reports one check
+    context per leg. The old singular `Test & Build` context no longer fires and
+    must NOT be listed, or every PR will wait forever on a check that never runs.
 - [x] Require branches to be up to date before merging
 - [x] Do not allow bypassing the above settings
 
@@ -433,18 +447,24 @@ human to be present at publish time, the exact thing this model avoids.
    should complete in under 30 minutes (snap build is the slow step, typically
    10-20 min in LXD).
 
-7. **Verify the GitHub Release.** A release named "CW Trainer v2.0.0" should
-   appear with the `.snap` file attached and the release notes from metainfo.xml.
+7. **Verify the GitHub Release.** A release named "CW Trainer v&lt;version&gt;"
+   should appear with BOTH arch `.snap` files attached (amd64 and arm64) and the
+   release notes from metainfo.xml.
 
-8. **Promote the snap to stable.** The snap revision is held in the store. Find
-   the revision number in the workflow log or the Snap Store dashboard, then:
+8. **No manual promotion is needed.** `release.yml` uploads the amd64 revision
+   with `--release=stable`, so a tagged release publishes to stable on its own —
+   the tag IS the authorization. Just confirm the `upload-to-stable` job
+   succeeded and that the revision reached the channel (step 9).
+
+   Only if that upload failed and you are recovering by hand:
 
    ```bash
-   # From your local machine:
+   # From your local machine — recovery path only, not the normal flow:
    snapcraft release wr-cw-trainer <REVISION_NUMBER> stable
    ```
 
    Or use the Snap Store dashboard (https://snapcraft.io/wr-cw-trainer/releases).
+   Do NOT hand-promote an arm64 revision to stable — see the architecture note above.
 
 9. **Verify the store listing.** `snap refresh wr-cw-trainer` on a test machine.
    Confirm the version, description, and "What's new" section.
@@ -474,7 +494,8 @@ ever breaks LXD support, the fallback is a self-hosted runner with LXD pre-insta
 or using `snapcraft` in `--destructive-mode` (builds directly on the host, not in
 a container — fast but less hermetic; works if the runner OS matches core22).
 
-**snapcraft.yaml version:** `snapcraft.yaml` hardcodes `version: "2.0.0"`. The
+**snapcraft.yaml version:** `snapcraft.yaml` hardcodes the version (currently
+`version: "2.4.0"` — check the file rather than trusting this line). The
 release workflow validates that `package.json` matches the tag; `snapcraft.yaml`
 must also match. Keep all three in sync when bumping versions.
 

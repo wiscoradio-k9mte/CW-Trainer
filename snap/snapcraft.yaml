@@ -1,36 +1,42 @@
 name: wr-cw-trainer
 title: CW Trainer
 base: core22
-version: "2.3.0"
+version: "2.4.0"
 summary: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
 description: |
   CW Trainer by Wisco Radio Labs — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.
 
   • Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.
 
-  • A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.
+  • An eight-rung copy ladder — single characters, two-character groups, random letter groups, common words, a wider vocabulary, ham words, callsigns, and full QSO phrases.
 
-  • Sending practice with a built-in decoder that shows exactly what your fist sends — plus fist feedback that scores your estimated speed, dit/dah weighting, and element, character, and word spacing against the standard. Eight drill categories climb from common words to callsigns. Key with an iambic paddle (Mode A or Mode B), a straight key, the on-screen key, the keyboard, or your own key through a USB adapter (VBand-compatible — the [ and ] keys). Send the HH "start over" prosign just like on the air.
+  • Sending practice with a built-in decoder that shows exactly what your fist sends — plus fist feedback that scores your estimated speed, dit/dah weighting, and element, character, and word spacing against the standard. Fourteen drill categories climb from common words through Q-codes, prosigns, numbers, RST exchanges, calling CQ, full QSO lines and callsigns, all the way up to DX callsigns, DX exchanges, contest fragments, and split/pileup work. Key with an iambic paddle (Mode A or Mode B), a straight key, the on-screen key, the keyboard, or your own key through a USB adapter (VBand-compatible — the [ and ] keys). Send the HH "start over" prosign just like on the air.
 
-  • A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — pick your role (activator, hunter, chaser, or call/answer CQ), with on-air break-in fills, honest signal reports, varied CQ calls, and a 5-second "get ready" countdown before the code starts.
+  • A QSO simulator with six kinds of contact — ragchew, POTA, SOTA, IOTA, working DX, and contest — each with its own roles (activator, hunter, chaser, call or answer CQ, call CQ DX or hunt the DX, running or search-and-pounce), plus on-air break-in fills, honest signal reports, varied CQ calls, and a 5-second "get ready" countdown before the code starts.
+
+  • International and DX operating — a bundled DXCC entity dataset drives realistic foreign callsigns, prefixes, and exchanges, with a DX walkthrough in the on-air guide so the conventions make sense before you work them.
 
   • Cross-session progress tracking — your lessons, sending, copy, and QSO accuracy (both how you copy and how you send) are saved and shown as color-coded bar charts with a 90% mastery line and dates, so you can see whether today beat last week.
 
-  • A responsive layout that spreads across a desktop screen and collapses to a clean single column on a small one.
+  • A responsive layout that spreads across a desktop screen and collapses to a clean single column on a small one, with compact option menus that keep the on-screen key reachable without scrolling.
 
   • Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.
 
   • Reference guides on CW lingo, on-air procedure, and the history of the code.
 
-  What's new — from K9MTE:
+  What's new in 2.4.0 — from K9MTE:
 
-  • A color-coded Progress view — bar charts with a 90% mastery line across Learn, Key, Copy, and now QSO (tracking both your copy and your sending, per contact).
+  • International and DX operating. A bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer: two new QSO activities (Work DX and Contest), five new sending drills at the hard end of the ladder (DX callsigns, DX exchanges, contest fragments, split & pileup, and abroad callsigns), and a DX walkthrough in the on-air guide.
 
-  • Your sending grades itself the moment you finish an over — no button to press.
+  • Two new copy rungs from a proper word list. Copy practice now draws on a frequency-ranked English word list built from public-domain texts — "Common words" is the top 500, and a new "Wider vocabulary" rung steps up to ranks 1001–5000.
 
-  • Faster speeds (up to 40 wpm); the copy box auto-focuses when it's your turn to type; Iambic Mode B for paddle operators.
+  • Fairer sending grades in the QSO sim. Your over is now scored on the elements you actually need to convey, in any valid on-air form — not on matching one scripted wording. Send it the way you'd really send it and it counts.
 
-  • A long list of fixes and polish.
+  • Compact option menus and a reworked practice layout that keeps the on-screen key reachable without scrolling — a real difference on small and touch screens.
+
+  • Plus the usual round of fixes and polish.
+
+  Also building for arm64: an aarch64 build is produced and tested natively on every release, but it is not yet published to stable, pending validation on real ARM hardware. ARM users can install it from the .snap asset on the GitHub release page (github.com/wiscoradio-k9mte/CW-Trainer/releases) — reports from real ARM hardware are very welcome, and are what will get arm64 onto stable.
 
   This is actively developed — I'm a ham building the trainer I always wanted, and there's more on the way. 73, K9MTE.
 

@@ -6,6 +6,16 @@
 // accessible name.  They are mutation-verified: removing the URL, the "_blank",
 // or the noopener/noreferrer from the JSX makes the relevant test go red.
 //
+// CONTRACT CHANGE (2.4.0, 2026-07-20): the support destination moved from Venmo
+// (https://venmo.com/u/K9MTE) to Buy Me a Coffee
+// (https://buymeacoffee.com/wiscoradiolabs), and the accessible name changed
+// from "Support the developer via Venmo — …" to "Support the developer on Buy
+// Me a Coffee — …".  Every assertion below was RETARGETED to the new contract,
+// not relaxed: the URL is still pinned with an exact toBe(), the accessible name
+// is still matched in full via getByRole({ name }), and an ADDITIONAL guard
+// (`expect(url).not.toContain("venmo")`) now forbids the old destination.  The
+// strictness of this file went up, not down.
+//
 // The button lives in the persistent header (.wr-full), so it must be
 // reachable on every tab without any navigation.
 
@@ -26,7 +36,7 @@ describe("coffee button — presence and accessible name", () => {
     await renderApp();
     // getByRole throws if not found — this doubles as an existence assertion.
     const btn = screen.getByRole("button", {
-      name: "Support the developer via Venmo — opens in your web browser",
+      name: "Support the developer on Buy Me a Coffee — opens in your web browser",
     });
     expect(btn).toBeInTheDocument();
   });
@@ -36,7 +46,7 @@ describe("coffee button — presence and accessible name", () => {
     await gotoTab(user, "KEY");
     expect(
       screen.getByRole("button", {
-        name: "Support the developer via Venmo — opens in your web browser",
+        name: "Support the developer on Buy Me a Coffee — opens in your web browser",
       })
     ).toBeInTheDocument();
   });
@@ -46,7 +56,7 @@ describe("coffee button — presence and accessible name", () => {
     await gotoTab(user, "QSO");
     expect(
       screen.getByRole("button", {
-        name: "Support the developer via Venmo — opens in your web browser",
+        name: "Support the developer on Buy Me a Coffee — opens in your web browser",
       })
     ).toBeInTheDocument();
   });
@@ -54,7 +64,7 @@ describe("coffee button — presence and accessible name", () => {
   it("hides the ☕ glyph from assistive tech so it does not double-announce", async () => {
     await renderApp();
     const btn = screen.getByRole("button", {
-      name: "Support the developer via Venmo — opens in your web browser",
+      name: "Support the developer on Buy Me a Coffee — opens in your web browser",
     });
     // The cup is decorative; the aria-label carries the name. The glyph span must
     // be aria-hidden so AT reads "Coffee?" (the label), not the emoji name on top
@@ -81,7 +91,7 @@ describe("coffee button — window.open call", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
 
     const btn = screen.getByRole("button", {
-      name: "Support the developer via Venmo — opens in your web browser",
+      name: "Support the developer on Buy Me a Coffee — opens in your web browser",
     });
     await user.click(btn);
 
@@ -90,7 +100,12 @@ describe("coffee button — window.open call", () => {
     const [url, target, features] = openSpy.mock.calls[0];
 
     // Exact URL — wrong destination is a user-facing defect.
-    expect(url).toBe("https://venmo.com/u/K9MTE");
+    expect(url).toBe("https://buymeacoffee.com/wiscoradiolabs");
+
+    // Regression guard: 2.4.0 moved support from Venmo to Buy Me a Coffee.
+    // Pin the OLD destination as forbidden so a bad revert/merge can't silently
+    // restore it while the toBe() above is edited to match.
+    expect(url).not.toContain("venmo");
 
     // Must be _blank so setWindowOpenHandler intercepts it; _self would navigate
     // the Electron window away from the app.
