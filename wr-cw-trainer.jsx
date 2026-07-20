@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, useId } from "react";
 import { createPortal } from "react-dom";
 import {
-  MORSE, REV, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
+  MORSE, decodeChar, COMMON_WORDS, QSO_PHRASES, stateOf, subTokens,
   drillCommonWords, drillWiderWords,
   US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing,
-  gradeSend, similarityCw,
+  gradeSend, similarityCw, CUT_TOLERANT_COPY_SOURCES, CUT_TOLERANT_KEY_DRILLS,
   INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
   randDxStation, zoneToken, reciprocalCall, resolveUSState,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
@@ -640,7 +640,11 @@ function useKeyer({ keyWpm, freq, player, enabled, mode, swap, onError, modeB = 
 
   const finalizeChar = useCallback(() => {
     if (bufRef.current) {
-      const ch = REV[bufRef.current] || "■";
+      // decodeChar resolves fused prosigns (AR/SK/KN) as well as single characters,
+      // so a prosign keyed the way the guide teaches reads back as the two letters
+      // the target shows — and contributes both of them to the decoded length the
+      // auto-grade trigger measures.
+      const ch = decodeChar(bufRef.current);
       setDecoded((d) => d + ch);
       bufRef.current = "";
       setBuffer("");
@@ -1866,9 +1870,12 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   };
 
   const check = () => {
-    // Fidelity grade with cut-number tolerance (§7): copying 5NN for 599 (or T
-    // for 0) is not penalised; NAME/TU/TNX letters are left intact.
-    const pct = Math.round(similarityCw(target, attempt) * 100);
+    // Fidelity grade. Cut-number tolerance (copying 5NN for 599, or T for 0) applies
+    // only on the rungs whose content actually carries exchange numbers — on the
+    // callsign and letter-group rungs an N is the letter N and is graded as such.
+    const pct = Math.round(
+      similarityCw(target, attempt, { cut: CUT_TOLERANT_COPY_SOURCES.has(source) }) * 100
+    );
     const msg = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
     setResult(pct);
     setRevealed(true);
@@ -2185,9 +2192,14 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   };
 
   const check = () => {
-    // Fidelity grade with cut-number tolerance (§7): keying 5NN for 599 counts;
-    // letters in a drill target (NAME/TU/TNX) are not cut-mangled.
-    const pct = Math.round(similarityCw(target, keyer.decoded) * 100);
+    // Fidelity grade. Cut-number tolerance (keying 5NN for 599) applies only on the
+    // exchange-number drills; on the callsign drills an N keyed where a 9 belongs is
+    // a different callsign, so it is graded as an error.
+    const pct = Math.round(
+      similarityCw(target, keyer.decoded, {
+        cut: CUT_TOLERANT_KEY_DRILLS.has(DRILL_CATEGORIES[catIdx].id),
+      }) * 100
+    );
     setResult(pct);
     // Analyze fist timing from the events accumulated since the last clear.
     // Read from the ref directly — no re-render needed to compute this.
@@ -2996,6 +3008,8 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
 
   const checkCopy = () => {
     // Fidelity grade with cut-number tolerance (§7): copying 5NN for 599 counts.
+    // A QSO step is always exchange content, so the tolerance stays on here; the
+    // callsigns inside the step text are protected by the whole-token rule instead.
     const pct = Math.round(similarityCw(cur.text, copyAttempt) * 100);
     const verdict = pct >= 90 ? "SOLID COPY" : pct >= 70 ? "GOOD — AGN FOR PRACTICE" : "PSE AGN";
     setCopyResult(pct);
