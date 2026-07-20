@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   MORSE, REV, similarity, timing,
   gradeSend, similarityCw, canonicalizeCw,
+  CUT_TOLERANT_COPY_SOURCES, CUT_TOLERANT_KEY_DRILLS,
+  decodeChar, DECODE_PROSIGNS, KOCH,
   isWellFormedRst, isRstReport, courtesyForms, numericForms,
   COURTESY_EQUIVALENTS,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
@@ -271,6 +273,165 @@ describe("similarityCw() — fidelity grade with cut tolerance", () => {
     expect(similarityCw("PARIS", "PARIS")).toBe(1);
     expect(similarityCw("K", "K")).toBe(1);
     expect(similarityCw("DIPOLE", "DIPOLE")).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cut-number scoping — the 2.4.0 regression.
+//
+// The shipped rule normalised any [0-9NT]+ RUN anywhere in the string, so a
+// callsign's N/T were rewritten on BOTH sides of the comparison and a WRONG
+// callsign copy scored 100% "SOLID COPY". Cut numbers are never used inside a
+// callsign on the air — the N in N4ABC is the letter N.
+//
+// MUTATION PROOF (run and watched go red): restoring the old body of
+// canonicalizeCw —
+//     .replace(/[0-9NT]+/g, (run) => /[0-9]/.test(run)
+//       ? run.replace(/N/g,"9").replace(/T/g,"0") : run)
+// — turns every assertion in "callsigns are never cut-normalised" red (each
+// mis-copy scores 1 instead of its true partial score).
+// ---------------------------------------------------------------------------
+describe("canonicalizeCw() — cut normalization is scoped to whole cut tokens", () => {
+  it("callsigns are never cut-normalised (the leak that scored a wrong copy 100%)", () => {
+    // The three cases measured on 2.4.0. Each callsign carries a letter outside
+    // the cut alphabet, so the token is not a cut token and must pass through.
+    expect(canonicalizeCw("N4ABC")).toBe("N4ABC");
+    expect(canonicalizeCw("N0TU")).toBe("N0TU");
+    expect(canonicalizeCw("WT9XY")).toBe("WT9XY");
+    expect(canonicalizeCw("K9MTE")).toBe("K9MTE");
+    // ...and inside a sentence, beside a real cut token that DOES normalise.
+    expect(canonicalizeCw("DE N4ABC UR 5NN")).toBe("DE N4ABC UR 599");
+  });
+
+  it("a mis-copied callsign is graded as the error it is, not 100%", () => {
+    // Each of these read 100% SOLID COPY on 2.4.0. One substituted character
+    // out of the callsign's length is the honest score.
+    expect(similarityCw("N4ABC", "94ABC")).toBeCloseTo(0.8, 5);   // was 1
+    expect(similarityCw("N0TU", "90TU")).toBeCloseTo(0.75, 5);    // was 1
+    expect(similarityCw("WT9XY", "W09XY")).toBeCloseTo(0.8, 5);   // was 1
+    // The cut-habit version of the same mistake: keying N where the 9 belongs.
+    expect(similarityCw("K9MTE", "KNMTE")).toBeCloseTo(0.8, 5);
+  });
+
+  it("the intended exchange tolerance survives untouched", () => {
+    expect(canonicalizeCw("5NN")).toBe("599");
+    expect(canonicalizeCw("T5")).toBe("05");
+    expect(canonicalizeCw("TT1")).toBe("001");
+    expect(similarityCw("5NN", "599")).toBe(1);
+    expect(similarityCw("T5", "05")).toBe(1);
+    expect(similarityCw("TT1", "001")).toBe(1);
+    expect(similarityCw("UR 5NN 5NN BK", "UR 599 599 BK")).toBe(1);
+  });
+
+  it("SAFETY: every verified letter-run stays intact", () => {
+    // The full list carried by the brief. A digit-free token can never be a cut
+    // token, so none of these may change under any rule we adopt.
+    const letterRuns = [
+      "NAME", "TU", "TNX", "NAME IS TRAV", "TNX FER CALL", "ANT", "NR",
+      "NT", "TN", "N", "T", "NN", "TT", "QTH NEWINGTON CT", "TEST",
+      "CONTEST", "KN", "NOTE",
+    ];
+    for (const s of letterRuns) expect(canonicalizeCw(s)).toBe(s);
+  });
+
+  it("a correct copy still scores 100% on both kinds of content", () => {
+    // The fix must never overshoot into a false negative.
+    expect(similarityCw("N4ABC", "N4ABC")).toBe(1);
+    expect(similarityCw("CQ CQ DE K9MTE K", "CQ CQ DE K9MTE K")).toBe(1);
+    expect(similarityCw("UR 5NN 5NN BK", "UR 5NN 5NN BK")).toBe(1);
+  });
+});
+
+describe("similarityCw() — the {cut:false} rungs grade strictly", () => {
+  // Second layer: the whole-token rule alone still equates an all-cut-alphabet
+  // token, e.g. the random COPY letter-group "N4T" or a callsign like N8NT.
+  // Rungs whose content has no exchange numbers turn the equivalence off.
+  it("an all-cut-alphabet token is tolerated only where exchanges live", () => {
+    expect(similarityCw("N4T", "940", { cut: true })).toBe(1);
+    // Strict: only the shared "4" / "8" survives — 2 of 3 and 3 of 4 real errors.
+    expect(similarityCw("N4T", "940", { cut: false })).toBeCloseTo(1 / 3, 5);
+    expect(similarityCw("N8NT", "9890", { cut: true })).toBe(1);
+    expect(similarityCw("N8NT", "9890", { cut: false })).toBeCloseTo(0.25, 5);
+  });
+
+  it("{cut:false} never penalises a genuinely correct copy", () => {
+    expect(similarityCw("N4T", "N4T", { cut: false })).toBe(1);
+    expect(similarityCw("N8NT WT9XY", "N8NT WT9XY", { cut: false })).toBe(1);
+  });
+
+  it("the cut-tolerant rung lists name real rungs, and no callsign rung", () => {
+    // A typo here would silently switch a rung's grading, so pin the membership
+    // against the registry itself rather than trusting the strings.
+    const drillIds = new Set(DRILL_CATEGORIES.map((c) => c.id));
+    for (const id of CUT_TOLERANT_KEY_DRILLS) expect(drillIds.has(id)).toBe(true);
+    for (const id of ["callsigns", "dxcalls", "recip", "split", "cq"]) {
+      expect(CUT_TOLERANT_KEY_DRILLS.has(id)).toBe(false);
+    }
+    // COPY: the two rungs that carry 599/5NN in their content, and only those.
+    expect([...CUT_TOLERANT_COPY_SOURCES].sort()).toEqual(["hamwords", "phrases"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decodeChar() — the live decoder reads back what the app teaches and plays.
+//
+// The Prosigns drill tells the operator "BT, AR, SK, and KN are sent as a single
+// run-together sound", HEAR IT plays them fused, and then the decoder rendered ■
+// for SK and KN and "+" for AR — so following the instructions graded as an
+// error and the auto-grade length trigger could never be reached.
+//
+// MUTATION PROOF (run and watched go red): reverting finalizeChar to
+// `REV[bufRef.current] || "■"` turns the KEY end-to-end test in
+// prosign-decode.dom.test.jsx red, and emptying DECODE_PROSIGNS turns the
+// round-trip test below red.
+// ---------------------------------------------------------------------------
+describe("decodeChar() — fused prosigns decode to what the target shows", () => {
+  it("decodes the three fused prosign codes to their taught spelling", () => {
+    expect(decodeChar("...-.-")).toBe("SK");
+    expect(decodeChar("-.--.")).toBe("KN");
+    expect(decodeChar(".-.-.")).toBe("AR");
+    // BT keeps REV's "=" — that is exactly how the drill and QSO scripts spell it.
+    expect(decodeChar("-...-")).toBe("=");
+  });
+
+  it("ordinary characters and unknown patterns are unchanged", () => {
+    expect(decodeChar("....")).toBe("H");
+    expect(decodeChar("-----")).toBe("0");
+    expect(decodeChar("..--..")).toBe("?");
+    expect(decodeChar("-..-.")).toBe("/");
+    expect(decodeChar("........")).toBe("■"); // still marks a bad send
+    expect(decodeChar("")).toBe("■");
+  });
+
+  it("BLAST RADIUS: the overlay displaces no character the app can target", () => {
+    // Every overridden code must be unreachable as a normal character, or adding
+    // it would silently change an existing decode.
+    for (const code of Object.keys(DECODE_PROSIGNS)) {
+      const displaced = REV[code];            // "+" for AR; undefined for SK/KN
+      if (displaced !== undefined) {
+        // "+" is the MORSE alias for AR. It must not be in the Koch pool, or a
+        // LEARN/COPY target could ask for a character the decoder no longer emits.
+        expect(KOCH).not.toContain(displaced);
+        expect(displaced).toBe("+");
+      }
+    }
+    // And no Koch character's code collides with an overlay entry.
+    for (const ch of KOCH) expect(DECODE_PROSIGNS[MORSE[ch]]).toBeUndefined();
+  });
+
+  it("what toCodes PLAYS, decodeChar READS BACK — for the whole prosign drill", () => {
+    // The round trip that the reported bug broke: play a prosign target through
+    // the tokenizer, decode each emitted code, and get the original string back.
+    const decode = (text) =>
+      toCodes(text)
+        .map((tok) => (tok.wordGap ? " " : decodeChar(tok.code)))
+        .join("");
+    expect(decode("AR SK KN =")).toBe("AR SK KN =");
+    expect(decode("SK KN AR BK")).toBe("SK KN AR BK");
+    expect(decode("AR AR SK KN =")).toBe("AR AR SK KN =");
+    expect(decode("W4? KN")).toBe("W4? KN");   // the split-drill fragment
+    // Every prosign the drill can draw survives the round trip.
+    for (const p of PROSIGNS) expect(decode(p)).toBe(p);
   });
 });
 

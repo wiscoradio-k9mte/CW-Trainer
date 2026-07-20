@@ -103,6 +103,36 @@ export const MORSE = {
 };
 export const REV = Object.fromEntries(Object.entries(MORSE).map(([k, v]) => [v, k]));
 
+// DECODE_PROSIGNS — what the live decoder renders for a code that was keyed as one
+// run-together sound.  The app TEACHES and PLAYS BT/AR/SK/KN fused (see the OnAir
+// guide and toCodes/PROSIGN_CODES above); the decoder has to be able to read that
+// back, or following the instructions grades as an error.
+//
+// The value is the spelling the app puts on screen, so a correct send matches its
+// target character-for-character:
+//   ".-.-."  → "AR"  (REV would give "+", the MORSE alias — no target ever shows "+";
+//                     the KEY drill and the guide both spell this prosign "AR")
+//   "...-.-" → "SK"  (absent from MORSE — no REV entry at all, so it decoded as ■)
+//   "-.--."  → "KN"  (same)
+//   "-...-"  → left to REV, which yields "=" — that is exactly how the drill and the
+//                     QSO scripts spell BT, so no override is needed or wanted.
+//
+// None of these codes is reachable any other way: MORSE has no other character whose
+// code is "...-.-" or "-.--.", and the decoder only ever looks up a whole buffered
+// character, so adding them displaces nothing.  "+" is not in KOCH and is not emitted
+// by any drill generator or QSO script, so re-pointing ".-.-." costs no target.
+export const DECODE_PROSIGNS = {
+  ".-.-.": "AR",
+  "...-.-": "SK",
+  "-.--.": "KN",
+};
+
+// decodeChar(code) — the live decoder's single lookup. "■" marks an unrecognised
+// pattern so the operator sees WHERE the send went wrong rather than a silent gap.
+export function decodeChar(code) {
+  return DECODE_PROSIGNS[code] || REV[code] || "■";
+}
+
 export const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
 export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P K-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
 
@@ -334,28 +364,62 @@ export function gradeSend(requiredElements, sent, opts = {}) {
   return { score, hits, missing };
 }
 
-// canonicalizeCw(s) — normalisation for the COPY/KEY/QSO-copy FIDELITY paths:
-// uppercase, collapse whitespace, and cut-number normalise ONLY inside a numeric
-// run. A maximal [0-9NT]+ run that contains a real digit has its N→9 and T→0 (so
-// 5NN→599, T5→05), but a run with NO digit (a bare NN, the N in NAME, the T in
-// TU/TNX) is left untouched — a blind global N→9/T→0 would corrupt real letters
-// (NAME→9AME). Fork 4: cut-number + whitespace + case only on the fidelity paths;
-// NO semantic abbrev equivalence there (copy = write exactly what was sent).
-export function canonicalizeCw(s) {
-  return String(s)
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, " ")
-    .replace(/[0-9NT]+/g, (run) =>
-      /[0-9]/.test(run) ? run.replace(/N/g, "9").replace(/T/g, "0") : run
-    );
+// CUT_TOKEN_RE — a whole token made of nothing but cut-number material ([0-9NT])
+// that carries at least one real digit: "5NN", "599", "T5", "TT1", "T1T".
+//
+// The token must be WHOLE. Cut numbers occupy the number slots of a QSO exchange —
+// an RST, a serial, a zone. They are NEVER used inside a callsign on the air: the N
+// in N4ABC is the letter N, always. Matching a mere [0-9NT]+ RUN anywhere in the
+// string (the pre-2.4.0-fix rule) rewrote N4ABC → 94ABC on BOTH sides of the
+// comparison, so a learner who copied the wrong callsign was told it was perfect.
+// An audit measured 29.2% of generated callsign targets altered that way.
+const CUT_TOKEN_RE = /^[0-9NT]*[0-9][0-9NT]*$/;
+
+// canonicalizeCw(s, {cut}) — normalisation for the COPY/KEY/QSO-copy FIDELITY paths:
+// uppercase, collapse whitespace, and — when `cut` is on — apply the cut-number
+// equivalence to whole cut tokens only (5NN→599, T5→05, TT1→001). Everything else
+// is left exactly as sent: callsigns, letter groups, and any digit-free run (NAME,
+// TU, TNX, NN, TT, KN, CONTEST). Fork 4: cut-number + whitespace + case only on the
+// fidelity paths; NO semantic abbrev equivalence there (copy = write what was sent).
+export function canonicalizeCw(s, { cut = true } = {}) {
+  const norm = String(s).trim().toUpperCase().replace(/\s+/g, " ");
+  if (!cut) return norm;
+  return norm
+    .split(" ")
+    .map((token) =>
+      CUT_TOKEN_RE.test(token) ? token.replace(/N/g, "9").replace(/T/g, "0") : token
+    )
+    .join(" ");
 }
 
-// similarityCw(a, b) — edit-distance fidelity score with cut-number tolerance.
+// similarityCw(a, b, {cut}) — edit-distance fidelity score with cut-number tolerance.
 // Used by COPY/KEY/QSO-copy so copying 5NN for 599 (or T for 0) isn't penalised.
-export function similarityCw(a, b) {
-  return similarity(canonicalizeCw(a), canonicalizeCw(b));
+//
+// `cut` defaults to true (the exchange case, and what QSO copy always wants). Pass
+// {cut:false} on a rung whose content has no exchange numbers in it — see
+// CUT_TOLERANT_COPY_SOURCES / CUT_TOLERANT_KEY_DRILLS below.
+export function similarityCw(a, b, { cut = true } = {}) {
+  return similarity(canonicalizeCw(a, { cut }), canonicalizeCw(b, { cut }));
 }
+
+// Which rungs get the cut-number equivalence at all.
+//
+// The whole-token rule above is what stops a callsign being rewritten, and it holds
+// everywhere. These two sets are the second layer: they switch the equivalence OFF
+// entirely on rungs whose content contains no exchange numbers, so the residual
+// ambiguous case — a token that is ALL cut material yet is not an exchange number,
+// e.g. the callsign N8NT or a random letter group "N4T" on the COPY groups rung —
+// cannot be leniently matched there either.
+//
+// Membership is by content, not by difficulty:
+//   COPY "hamwords" carries 599/73; COPY "phrases" carries a literal "UR 5NN 5NN BK"
+//   (and the operator's own callsign — which is exactly why the whole-token rule has
+//   to do the callsign work even on a cut-tolerant rung).
+//   KEY numbers/rst/qso/dxexch/contest all run their content through cutNum().
+// Every other rung — callsigns, DX calls, reciprocal calls, split/pileup fragments,
+// CQ calls, words, Q-codes, prosigns, letter groups — is graded strictly.
+export const CUT_TOLERANT_COPY_SOURCES = new Set(["hamwords", "phrases"]);
+export const CUT_TOLERANT_KEY_DRILLS = new Set(["numbers", "rst", "qso", "dxexch", "contest"]);
 
 /* ================= KEYING DRILL GENERATORS ================= */
 /* Each generator returns a plain string suitable for display in the KeyTrainer.
