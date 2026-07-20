@@ -123,9 +123,11 @@ pre-release suffix, preventing version-number collisions with stable.
 
 ### Version and grade
 
-**Version:** Use `2.4.0-edge.N` for the International/DX candidate (the next
-release after 2.3.0). Increment `N` for each new edge build from the same
-branch (2.4.0-edge.1, 2.4.0-edge.2, …). The `-edge.N` suffix is valid semver
+**Version:** Use `X.Y.Z-edge.N` for the next candidate — i.e. the version you
+intend to release, with an `-edge.N` suffix. (2.4.0 shipped to stable on
+2026-07-20, so the next candidate is `2.5.0-edge.1` or `2.4.1-edge.1`.)
+Increment `N` for each new edge build from the same
+branch (…-edge.1, …-edge.2, …). The `-edge.N` suffix is valid semver
 and makes the build visible as pre-release in both the store and the app's
 version display.
 
@@ -222,14 +224,23 @@ Edge is a staging channel. When the feature is fully validated:
 
 1. Merge the feature branch to `main` via PR (go through the normal review +
    CI gate).
-2. Bump `package.json` and `snap/snapcraft.yaml` to `2.4.0` (the plain stable
-   version — no suffix).
+2. Bump `package.json` and `snap/snapcraft.yaml` to the plain stable version
+   (no suffix), e.g. `2.4.0`. Also add a `<release>` entry for that version, with
+   the real release date, to `build/…CWTrainer.metainfo.xml`, and bring the
+   snapcraft `description:` and the README current for exactly what ships.
 3. Tag and push to trigger the stable release:
    ```bash
    git tag -a v2.4.0 -m "CW Trainer v2.4.0"
    git push origin v2.4.0
    ```
    `release.yml` fires, builds from `main`, and auto-publishes to stable.
+
+   > **Architecture:** `release.yml` BUILDS both amd64 and arm64 and attaches both
+   > `.snap` files to the GitHub Release, but only **amd64** is uploaded to the
+   > `stable` channel (`upload-to-stable` matrix is `arch: [amd64]`). arm64 remains
+   > **edge-only** until it is validated on real ARM hardware — that is Travis's
+   > call to lift. To enable arm64 on stable later, restore
+   > `arch: [amd64, arm64]` in that job; nothing else needs to change.
 
    Alternatively, if you want to promote the EXACT snap revision that testers
    validated on edge (same binary, no rebuild):

@@ -34,14 +34,16 @@
 #   5. snapcore/action-build (snapcraft → wr-cw-trainer_*.snap)
 #
 # ARCHITECTURE MATRIX (added 2026-07-02, ARM desktop-build work):
-# Every tag now builds amd64 (ubuntu-latest) AND arm64 (ubuntu-24.04-arm)
-# NATIVELY, one leg per arch — no qemu cross-build. Both revisions ship to
-# `stable` under the same version string; the Snap Store's channel map is
-# tracked per (channel, architecture), so this is collision-free. See
-# docs/design-arm64-builds.md for the researched rationale and sources.
-# This branch does NOT re-tag/re-release 2.3.0 — stable stays exactly as it
-# is until Travis tags the next version (2.4.0+), at which point that tag
-# is what first ships arm64 to stable, after arm64 has soaked on edge.
+# Every tag BUILDS amd64 (ubuntu-latest) AND arm64 (ubuntu-24.04-arm)
+# NATIVELY, one leg per arch — no qemu cross-build. Both arch snaps are
+# attached to the GitHub Release. See docs/design-arm64-builds.md for the
+# researched rationale and sources.
+#
+# PUBLISHING, however, is amd64-only on `stable` (see Job 3). arm64 publishes
+# to `edge` only (release-edge.yml) until Travis validates it on real ARM
+# hardware — arm64 `stable` is intentionally empty. Both arches DO ship under
+# one version string when arm64 is eventually enabled; the Snap Store's
+# channel map is tracked per (channel, architecture), so that is collision-free.
 #
 # SECRETS REQUIRED (see RELEASING.md for how to obtain and set each):
 #   SNAPCRAFT_STORE_CREDENTIALS  — snapcraft export-login output (base64 macaroon)
@@ -242,29 +244,49 @@ jobs:
             ${{ steps.release-notes.outputs.notes }}
 
             ---
-            **Install from the Snap Store:**
+            **Install from the Snap Store (amd64 / x86-64):**
             ```
             snap install wr-cw-trainer
             ```
-            Or download the matching `.snap` file below for your architecture
-            and install manually:
+
+            **ARM64 (aarch64):** this release is **not** published to the `stable`
+            channel for arm64 — arm64 stable is intentionally empty, because the
+            arm64 build has not yet been validated on real ARM hardware. The arm64
+            build IS available on the edge channel:
+            ```
+            snap install wr-cw-trainer --edge
+            ```
+            It is built and tested natively in CI on every release; tester reports
+            from real ARM hardware are very welcome via the issue tracker.
+
+            Or download the matching `.snap` file below for your architecture and
+            install it manually:
             ```
             sudo snap install --dangerous wr-cw-trainer_*_amd64.snap
             sudo snap install --dangerous wr-cw-trainer_*_arm64.snap
             ```
-            **ARM64 note:** built and tested natively in CI on every release, but
-            not yet validated on real ARM hardware — Travis doesn't own an ARM
-            device yet. Tester reports welcome.
           files: ./dist-snap/*.snap
           draft: false
           prerelease: false
           generate_release_notes: false
 
   # ──────────────────────────────────────────────────────────────────────
-  # Job 3: Upload each arch's snap revision and release it to `stable`.
+  # Job 3: Upload the amd64 snap revision and release it to `stable`.
   #
-  # Runs once per arch. The deliberate version tag is the human's publish
-  # authorization; a failed build (either arch) never reaches here.
+  # The deliberate version tag is the human's publish authorization; a failed
+  # build (EITHER arch) never reaches here.
+  #
+  # AMD64-ONLY ON STABLE (2026-07-20, Travis's standing constraint):
+  # arm64 is deliberately EXCLUDED from this matrix. The arm64 leg is still
+  # built, fully tested natively in CI, and attached to the GitHub Release
+  # above — and it continues to publish to the `edge` channel via
+  # release-edge.yml. What it does NOT do is reach `stable`, because the arm64
+  # build has never been validated on real ARM hardware (Travis has no ARM
+  # box); arm64 `stable` is intentionally empty. Lifting this is TRAVIS'S CALL
+  # ONLY — do not add arm64 back to this matrix without his explicit go.
+  # When he does lift it, restore `arch: [amd64, arm64]` here; nothing else
+  # needs to change (the Store's channel map already tracks revisions per
+  # (channel, architecture), so the two coexist collision-free).
   # ──────────────────────────────────────────────────────────────────────
   upload-to-stable:
     name: Upload Snap Revision to Stable (${{ matrix.arch }})
@@ -275,7 +297,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        arch: [amd64]
 
     steps:
       - name: Download snap artifact

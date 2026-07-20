@@ -16,9 +16,10 @@
     <p>CW Trainer by Wisco Radio Labs — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.</p>
     <ul>
       <li>Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.</li>
-      <li>A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.</li>
-      <li>Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends — including the HH "start over" prosign. Key on screen, with the keyboard, or with your own paddle or straight key through a USB adapter (VBand-compatible — the [ and ] keys).</li>
-      <li>A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — on-air break-in fills, honest signal reports, and a 5-second "get ready" countdown before the code starts.</li>
+      <li>An eight-rung copy ladder — single characters, two-character groups, random letter groups, common words, a wider vocabulary, ham words, callsigns, and full QSO phrases.</li>
+      <li>Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends — including the HH "start over" prosign. Fourteen drill categories climb from common words up through DX callsigns, contest fragments, and split/pileup work. Key on screen, with the keyboard, or with your own paddle or straight key through a USB adapter (VBand-compatible — the [ and ] keys).</li>
+      <li>A QSO simulator with six kinds of contact — ragchew, POTA, SOTA, IOTA, working DX, and contest — each with its own roles, plus on-air break-in fills, honest signal reports, and a 5-second "get ready" countdown before the code starts.</li>
+      <li>International and DX operating — a bundled DXCC entity dataset drives realistic foreign callsigns, prefixes, and exchanges, with a DX walkthrough in the on-air guide.</li>
       <li>Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.</li>
       <li>Reference guides on CW lingo, on-air procedure, and the history of the code.</li>
     </ul>
@@ -61,7 +62,7 @@
       <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadioLabs-Key.png</image>
     </screenshot>
     <screenshot>
-      <caption>Copy practice across a six-rung ladder</caption>
+      <caption>Copy practice across an eight-rung ladder</caption>
       <image>https://raw.githubusercontent.com/wiscoradio-k9mte/CW-Trainer/main/build/screenshots/WiscoRadioLabs-Copy.png</image>
     </screenshot>
     <screenshot>
@@ -74,6 +75,20 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.4.0" date="2026-07-20" type="stable">
+      <description>
+        <p>International and DX operating, plus fairer sending grades:</p>
+        <ul>
+          <li>Work the world — a bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer, with two new QSO activities (Work DX and Contest) and a DX walkthrough in the on-air guide.</li>
+          <li>Five new sending drills at the hard end of the ladder: DX callsigns, DX exchanges, contest fragments, split and pileup, and operating abroad.</li>
+          <li>Two copy rungs from a proper word list — "Common words" is now the top 500 of a frequency-ranked list built from public-domain texts, and a new "Wider vocabulary" rung steps up to ranks 1001–5000.</li>
+          <li>Your QSO sending is now graded on the elements you actually convey, in any valid on-air form, rather than on matching one scripted wording.</li>
+          <li>Compact option menus and a reworked practice layout that keeps the on-screen key reachable without scrolling — better on small and touch screens.</li>
+          <li>The support ("Coffee?") link now points to Buy Me a Coffee.</li>
+          <li>An arm64 build is now produced on every release; it is available on the edge channel for testers, pending validation on real ARM hardware.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.3.0" date="2026-06-28" type="stable">
       <description>
         <p>Smoother QSO practice:</p>
