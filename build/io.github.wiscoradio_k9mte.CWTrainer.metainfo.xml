@@ -80,12 +80,12 @@
         <p>International and DX operating, plus fairer sending grades:</p>
         <ul>
           <li>Work the world — a bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer, with two new QSO activities (Work DX and Contest) and a DX walkthrough in the on-air guide.</li>
-          <li>Five new sending drills at the hard end of the ladder: DX callsigns, DX exchanges, contest fragments, split and pileup, and operating abroad.</li>
+          <li>Five new sending drills at the hard end of the ladder: DX callsigns, DX exchanges, contest fragments, split and pileup, and abroad callsigns.</li>
           <li>Two copy rungs from a proper word list — "Common words" is now the top 500 of a frequency-ranked list built from public-domain texts, and a new "Wider vocabulary" rung steps up to ranks 1001–5000.</li>
           <li>Your QSO sending is now graded on the elements you actually convey, in any valid on-air form, rather than on matching one scripted wording.</li>
           <li>Compact option menus and a reworked practice layout that keeps the on-screen key reachable without scrolling — better on small and touch screens.</li>
           <li>The support ("Coffee?") link now points to Buy Me a Coffee.</li>
-          <li>An arm64 build is now produced on every release; it is available on the edge channel for testers, pending validation on real ARM hardware.</li>
+          <li>An arm64 build is now produced and tested natively on every release. It is not yet published to stable, pending validation on real ARM hardware; ARM users can install it from the .snap asset on the GitHub release page.</li>
         </ul>
       </description>
     </release>

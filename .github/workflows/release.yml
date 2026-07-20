@@ -39,11 +39,15 @@
 # attached to the GitHub Release. See docs/design-arm64-builds.md for the
 # researched rationale and sources.
 #
-# PUBLISHING, however, is amd64-only on `stable` (see Job 3). arm64 publishes
-# to `edge` only (release-edge.yml) until Travis validates it on real ARM
-# hardware — arm64 `stable` is intentionally empty. Both arches DO ship under
-# one version string when arm64 is eventually enabled; the Snap Store's
-# channel map is tracked per (channel, architecture), so that is collision-free.
+# PUBLISHING, however, is amd64-only (see Job 3). This tag path publishes to
+# `stable` and NEVER touches `edge` — edge is populated only by a manual
+# workflow_dispatch of release-edge.yml, which additionally rejects bare X.Y.Z
+# versions, so a plain `2.4.0` can never land on edge. Consequence: on arm64
+# this release is reachable ONLY as a GitHub Release asset installed with
+# `--dangerous`; it is not on any channel. That holds until Travis validates
+# arm64 on real ARM hardware — arm64 `stable` is intentionally empty. Both
+# arches DO ship under one version string when arm64 is eventually enabled; the
+# Snap Store's channel map is per (channel, architecture), so that's collision-free.
 #
 # SECRETS REQUIRED (see RELEASING.md for how to obtain and set each):
 #   SNAPCRAFT_STORE_CREDENTIALS  — snapcraft export-login output (base64 macaroon)
@@ -246,25 +250,24 @@ jobs:
             ---
             **Install from the Snap Store (amd64 / x86-64):**
             ```
-            snap install wr-cw-trainer
+            sudo snap install wr-cw-trainer
             ```
 
-            **ARM64 (aarch64):** this release is **not** published to the `stable`
-            channel for arm64 — arm64 stable is intentionally empty, because the
-            arm64 build has not yet been validated on real ARM hardware. The arm64
-            build IS available on the edge channel:
-            ```
-            snap install wr-cw-trainer --edge
-            ```
-            It is built and tested natively in CI on every release; tester reports
-            from real ARM hardware are very welcome via the issue tracker.
+            **ARM64 (aarch64):** this release is **not** published to the `stable` channel for
+            arm64 — arm64 stable is intentionally empty, because the build has not yet been
+            validated on real ARM hardware. `snap install wr-cw-trainer` will not install on arm64.
 
-            Or download the matching `.snap` file below for your architecture and
-            install it manually:
+            To run ${{ steps.get-version.outputs.version }} on arm64, download
+            `wr-cw-trainer_${{ steps.get-version.outputs.version }}_arm64.snap` from the assets below:
             ```
-            sudo snap install --dangerous wr-cw-trainer_*_amd64.snap
-            sudo snap install --dangerous wr-cw-trainer_*_arm64.snap
+            sudo snap install --dangerous wr-cw-trainer_${{ steps.get-version.outputs.version }}_arm64.snap
             ```
+            A `--dangerous` install isn't tracked by a channel, so it won't auto-update — you'll
+            need to repeat this each release.
+
+            The arm64 build is built and tested natively in CI on every release, but is not
+            automatically published to any channel. Reports from real ARM hardware are very
+            welcome via the issue tracker — that's what will get arm64 onto stable.
           files: ./dist-snap/*.snap
           draft: false
           prerelease: false
@@ -279,11 +282,13 @@ jobs:
   # AMD64-ONLY ON STABLE (2026-07-20, Travis's standing constraint):
   # arm64 is deliberately EXCLUDED from this matrix. The arm64 leg is still
   # built, fully tested natively in CI, and attached to the GitHub Release
-  # above — and it continues to publish to the `edge` channel via
-  # release-edge.yml. What it does NOT do is reach `stable`, because the arm64
-  # build has never been validated on real ARM hardware (Travis has no ARM
-  # box); arm64 `stable` is intentionally empty. Lifting this is TRAVIS'S CALL
-  # ONLY — do not add arm64 back to this matrix without his explicit go.
+  # above — but it is published to NO channel by this workflow. (It does not go
+  # to edge either: edge comes only from a manual release-edge.yml dispatch,
+  # which rejects bare X.Y.Z versions.) So on arm64 a tagged release is
+  # installable only from the GitHub Release asset via `--dangerous`. That's
+  # because the arm64 build has never been validated on real ARM hardware
+  # (Travis has no ARM box); arm64 `stable` is intentionally empty. Lifting this
+  # is TRAVIS'S CALL ONLY — do not add arm64 back to this matrix without his go.
   # When he does lift it, restore `arch: [amd64, arm64]` here; nothing else
   # needs to change (the Store's channel map already tracks revisions per
   # (channel, architecture), so the two coexist collision-free).

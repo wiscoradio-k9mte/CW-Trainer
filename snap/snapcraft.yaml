@@ -26,7 +26,7 @@ description: |
 
   What's new in 2.4.0 — from K9MTE:
 
-  • International and DX operating. A bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer: two new QSO activities (Work DX and Contest), five new sending drills at the hard end of the ladder (DX callsigns, DX exchanges, contest fragments, split & pileup, and operating abroad), and a DX walkthrough in the on-air guide.
+  • International and DX operating. A bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer: two new QSO activities (Work DX and Contest), five new sending drills at the hard end of the ladder (DX callsigns, DX exchanges, contest fragments, split & pileup, and abroad callsigns), and a DX walkthrough in the on-air guide.
 
   • Two new copy rungs from a proper word list. Copy practice now draws on a frequency-ranked English word list built from public-domain texts — "Common words" is the top 500, and a new "Wider vocabulary" rung steps up to ranks 1001–5000.
 
@@ -36,7 +36,7 @@ description: |
 
   • Plus the usual round of fixes and polish.
 
-  Also building for arm64: an aarch64 build is available on the edge channel for testers. It is built and tested natively on every release but has not yet been validated on real ARM hardware, so it is not on stable yet — reports from ARM users are very welcome.
+  Also building for arm64: an aarch64 build is produced and tested natively on every release, but it is not yet published to stable, pending validation on real ARM hardware. ARM users can install it from the .snap asset on the GitHub release page (github.com/wiscoradio-k9mte/CW-Trainer/releases) — reports from real ARM hardware are very welcome, and are what will get arm64 onto stable.
 
   This is actively developed — I'm a ham building the trainer I always wanted, and there's more on the way. 73, K9MTE.
 

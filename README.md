@@ -30,7 +30,7 @@ all the way from recognizing your first two characters to running a complete on-
   paddle through a VBand-style USB adapter.
 - 📻 **Real operating, simulated** — work ragchew, POTA, SOTA, IOTA, DX, and contest contacts as either side of the QSO.
 - 🌍 **Work the world** — a bundled DXCC dataset drives realistic foreign prefixes, callsigns, and DX/contest exchanges.
-- 📈 **See your progress** — lessons, sending, copy, and QSO contacts tracked across sessions, with simple trends and dates.
+- 📈 **See your progress** — lessons, sending, copy, and QSO accuracy scored across sessions, with simple trends and dates.
 - 🔌 **Offline forever** — it never asks for the network.
 
 ---
@@ -69,7 +69,7 @@ your fist sends — not what you meant. Choose from **fourteen drill categories*
 ladder as you improve — common words, a wider vocabulary, Q-codes &amp; abbreviations, prosigns,
 numbers (including cut numbers), RST &amp; exchanges, calling CQ, full QSO lines, callsigns, and
 then the DX end of the ladder: DX callsigns, DX exchanges, contest fragments, split &amp; pileup,
-and operating abroad. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
+and abroad callsigns. Key it **on screen**, with the **keyboard** (Space = straight key; Z / X or the arrows =
 paddle — with selectable iambic **Mode A or B**), or with **your own key or paddle** through a USB adapter (the `[` / `]` brackets a
 VBand-style adapter sends; flip the dit/dah swap if your levers come out reversed). Afterward you
 get **fist feedback** — your estimated speed and how tight your letter/word spacing reads. Finish
@@ -114,11 +114,19 @@ reach-the-key layout, and the improved QSO transmission grading.
 first. Install it with `sudo snap install wr-cw-trainer --edge` (or
 `snap refresh --edge`) if you'd like to try new features early and report issues.
 
-**arm64 (aarch64):** the arm64 build is available **on the edge channel only**
-(`snap install wr-cw-trainer --edge`) — it is **not** on stable yet. It's built and
-tested natively in CI on every release, but has not been validated on real ARM
-hardware, so it stays on edge until it has. Tester reports from ARM users are very
-welcome via the issue tracker.
+**arm64 (aarch64):** an arm64 build is produced and tested natively in CI on every
+release, but it is **not published to stable** (or to any channel), pending validation
+on real ARM hardware — so `sudo snap install wr-cw-trainer` will not install on arm64.
+To run it, download `wr-cw-trainer_<version>_arm64.snap` from the
+[releases page](https://github.com/wiscoradio-k9mte/CW-Trainer/releases):
+
+```bash
+sudo snap install --dangerous wr-cw-trainer_<version>_arm64.snap
+```
+
+A `--dangerous` install isn't tracked by a channel, so it won't auto-update — you'll
+need to repeat this each release. Reports from real ARM hardware are very welcome via
+the issue tracker; that's what will get arm64 onto stable.
 
 **From source** — requires **Node.js 18+** and npm:
 
