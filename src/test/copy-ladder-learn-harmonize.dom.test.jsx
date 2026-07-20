@@ -238,7 +238,13 @@ describe("LEARN lesson stepper — harmonized chrome, unchanged behavior", () =>
     expect(await answerOne()).toMatch(/of 1 correctly/);
   });
 
-  it("keeps the ←/→ stepper, its end-clamping, and the history reset", async () => {
+  it("keeps the ←/→ stepper and its end-clamping", async () => {
+    // NOT asserted here, deliberately: the arrows' `setHistory([])`. It is
+    // unreachable-as-observable for exactly the reason documented on the jump
+    // test above — `startDrill` already clears history, and the setup panel that
+    // holds these arrows only renders when no drill is active. Stripping it from
+    // both arrows leaves the suite green, so no title or comment in this file
+    // should imply the reset is covered.
     const { user } = await renderApp();
     const jump = screen.getByRole("spinbutton", { name: "Jump to lesson" });
     const prev = screen.getByRole("button", { name: "Previous lesson" });

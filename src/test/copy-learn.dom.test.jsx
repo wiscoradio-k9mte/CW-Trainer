@@ -11,7 +11,7 @@
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { fireEvent, act } from "@testing-library/react";
-import { renderApp, gotoTab, chooseOption, screen } from "./helpers.jsx";
+import { renderApp, gotoTab, chooseOption, screen, within } from "./helpers.jsx";
 import { WIDE_WORD_POOL, COMMON_WORDS } from "../cw-core.js";
 
 describe("COPY tab — setup and interaction", () => {
@@ -78,8 +78,16 @@ describe("LEARN tab — CHARS setup and drill", () => {
     // KEY's fused row). Asserting its VALUE is stronger than the old
     // getByText(/Lesson 1 of/) caption check — that only proved a string rendered,
     // this proves the control reports the lesson the app is actually on.
-    expect(screen.getByRole("spinbutton", { name: "Jump to lesson" })).toHaveValue(1);
+    const jump = screen.getByRole("spinbutton", { name: "Jump to lesson" });
+    expect(jump).toHaveValue(1);
     expect(screen.getByText("Lesson")).toBeInTheDocument();
+    // The old caption ALSO carried the visible total ("Lesson 1 of 40"), and the
+    // value assertion above does not cover it — so guard the "of N" suffix here,
+    // scoped to the stepper row. The design doc gives that suffix a deliberate
+    // job: it is the sighted counterpart to the input's aria-hidden min/max, so
+    // deleting it silently loses "how many lessons are there?" for sighted users.
+    // Asserting it against the input's own `max` also pins it to the RIGHT total.
+    expect(within(jump.parentElement).getByText(`of ${jump.getAttribute("max")}`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /START DRILL/ })).toBeInTheDocument();
     expect(screen.getByText("Characters in play")).toBeInTheDocument();
   });
