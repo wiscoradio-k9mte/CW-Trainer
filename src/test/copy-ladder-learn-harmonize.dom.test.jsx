@@ -205,13 +205,18 @@ describe("LEARN lesson stepper — harmonized chrome, unchanged behavior", () =>
     expect(jump).toHaveValue(1);
   });
 
-  it("clears the answer history when the lesson is jumped", async () => {
+  it("a jump between drills does not let answer history accumulate", async () => {
     // The ephemeral session summary is derived from history[] at BACK time, so it
-    // is the observable readout of history's length. Answer once per drill: if the
-    // jump did NOT clear history, the second summary would read "of 2".
+    // is the observable readout of history's length: two one-answer drills either
+    // side of a lesson jump must each report "of 1", never "of 2".
     //
-    // MUTATION-PROVEN: deleting `setHistory([])` from the jump input's onChange
-    // makes the second summary read "1 of 2" and turns this red.
+    // HONEST LIMIT ON BITE: removing `setHistory([])` from the jump handler does
+    // NOT turn this red, because `startDrill` already clears history and the setup
+    // panel (where the jump lives) only renders when no drill is active — so the
+    // jump's own reset is unreachable-as-observable, a pre-existing redundancy
+    // this package deliberately preserved rather than changed (T5 says behavior
+    // is unchanged). This is a genuine regression guard on the user-visible
+    // invariant; it is not evidence for that particular line.
     const { user } = await renderApp();
 
     const answerOne = async () => {
