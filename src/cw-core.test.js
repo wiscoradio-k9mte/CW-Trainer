@@ -28,6 +28,8 @@ import {
   drillDxCallsigns, drillDxExchange, drillContestFragments,
   drillSplitPileup, drillReciprocalCalls,
 } from "./cw-core.js";
+import { CALL_AREA_DIGITS, withCallArea } from "./data/dxcc-generation.js";
+import { resolveEntity } from "./data/dxcc-resolve.js";
 
 // ---------------------------------------------------------------------------
 // MORSE round-trip
@@ -2711,6 +2713,142 @@ describe("randDxStation()", () => {
       expect(s.cqZone).toBe(29);
       expect(s.call.startsWith("VK6")).toBe(true);
     }
+  });
+});
+
+// ---- Call-area digit: real callsigns always carry a separating numeral ----
+// Regression guard for the 2.4.0 blocker: entity-level prefixes (F, DL, JA…)
+// used to generate digit-less, impossible calls (FTT, JAR, ONMK). Every
+// generated DX call must now carry a call-area numeral, and that numeral must
+// keep the call inside its own DXCC entity.
+describe("call-area digit (real-callsign format)", () => {
+  it("EVERY generated DX call carries a digit (5000 draws, 0 digit-less)", () => {
+    // The core invariant. A digit-less call is an impossible callsign.
+    let noDigit = 0;
+    for (let i = 0; i < 5000; i++) {
+      if (!/\d/.test(randDxStation().call)) noDigit++;
+    }
+    expect(noDigit).toBe(0);
+  });
+
+  it("EVERY generated field-station call carries a digit (5000 draws)", () => {
+    let noDigit = 0;
+    for (let i = 0; i < 5000; i++) {
+      if (!/\d/.test(randDxFieldStation().call)) noDigit++;
+    }
+    expect(noDigit).toBe(0);
+  });
+
+  it("the call is a plausible shape: prefix, digit, then 1-3 suffix letters", () => {
+    // Entity prefix (letters) + one call-area digit + letter suffix, OR a
+    // call-area prefix (VK2) whose own digit is followed by letters.
+    const SHAPE = /^[A-Z]{1,2}[0-9][A-Z]{1,3}$/;
+    for (let i = 0; i < 500; i++) {
+      const c = randDxStation().call;
+      expect(SHAPE.test(c)).toBe(true);
+    }
+  });
+
+  it("the inserted numeral is drawn only from the entity's valid set", () => {
+    // For every entity-level prefix (not VK/VE), the digit that follows the
+    // prefix must be one of CALL_AREA_DIGITS for that entity.
+    for (let i = 0; i < 4000; i++) {
+      const s = randDxStation();
+      if (/\d$/.test(s.prefix)) continue;          // VK2/VE3 — own digit, skip
+      const digits = CALL_AREA_DIGITS[s.entityCode];
+      expect(digits).toBeDefined();
+      const inserted = Number(s.call.slice(s.prefix.length, s.prefix.length + 1));
+      expect(digits).toContain(inserted);
+    }
+  });
+
+  it("never generates a call whose prefix names a SEPARATE DXCC entity", () => {
+    // EA6/EA8/EA9 = Balearic/Canary/Ceuta&Melilla; OH0 = Åland;
+    // ZL7/8/9 = Chatham/Kermadec/Subantarctic; ZS7/ZS8 = Antarctica/Marion;
+    // PY0 = Brazilian oceanic islands. Generating any of these would teach a
+    // callsign whose numeral contradicts its own entity/zone.
+    const SEPARATE_ENTITY = /^(EA[689]|OH0|ZL[789]|ZS[78]|PY0)/;
+    for (let i = 0; i < 5000; i++) {
+      expect(SEPARATE_ENTITY.test(randDxStation().call)).toBe(false);
+      expect(SEPARATE_ENTITY.test(randDxFieldStation().call)).toBe(false);
+    }
+  });
+
+  it("VK/VE call-area rows are unchanged — no extra digit inserted", () => {
+    // A VK2 call must read VK2 + letters (VK2ABC), NOT VK2 + digit (VK23AB).
+    const pool = DX_GENERATION_POOL.filter((r) => /\d$/.test(r.prefix));
+    for (let i = 0; i < 1000; i++) {
+      const s = randDxStation(pool);
+      // char right after the call-area prefix is a letter, not another digit
+      expect(s.call[s.prefix.length]).toMatch(/[A-Z]/);
+      expect(s.call.startsWith(s.prefix)).toBe(true);
+    }
+  });
+
+  it("entity / zone mapping is untouched by the inserted digit", () => {
+    // Inserting a numeral changes only the call string; the record's entity and
+    // zone come straight from the pool row and must be unchanged.
+    for (let i = 0; i < 300; i++) {
+      const s = randDxStation();
+      const row = DX_GENERATION_POOL.find((r) => r.prefix === s.prefix);
+      expect(s.entity).toBe(row.entity);
+      expect(s.cqZone).toBe(row.cqZone);
+      expect(s.entityCode).toBe(row.entityCode);
+    }
+  });
+
+  it("digit-bearing calls resolve to the right entity (real examples)", () => {
+    // Proves the format is a REAL call and the prefix+digit is entity-coherent.
+    // NB: resolveEntity() is prefix-substring lenient (a Phase-2 placeholder), so
+    // this uses collision-free suffixes rather than round-tripping random draws —
+    // see the resolver note in the fix report.
+    const cases = [
+      ["F5KT", 227], ["DL2ABC", 230], ["JA1XT", 339], ["ON4KST", 209],
+      ["G3XT", 223], ["EA3KT", 281], ["SM3KT", 284], ["OH2KT", 224],
+      ["XE1KT", 50], ["ZL1KT", 170], ["ZS1KT", 462], ["PY2KT", 108],
+    ];
+    for (const [call, code] of cases) {
+      const r = resolveEntity(call);
+      expect(r).not.toBeNull();
+      expect(r.entityCode).toBe(code);
+    }
+  });
+
+  it("specific real prefixes read like real calls", () => {
+    // Draw until we see a France and a Germany call; assert the shape a human
+    // would recognise (F + digit + letters, DL + digit + letters).
+    let sawF = false, sawDL = false;
+    for (let i = 0; i < 3000 && !(sawF && sawDL); i++) {
+      const c = randDxStation().call;
+      if (c.startsWith("F") && !c.startsWith("F0")) { expect(c).toMatch(/^F[1-8][A-Z]{1,3}$/); sawF = true; }
+      if (c.startsWith("DL")) { expect(c).toMatch(/^DL[1-9][A-Z]{1,3}$/); sawDL = true; }
+    }
+    expect(sawF && sawDL).toBe(true);
+  });
+});
+
+describe("withCallArea()", () => {
+  it("inserts a digit from the set between a digit-less prefix and suffix", () => {
+    for (let i = 0; i < 200; i++) {
+      const c = withCallArea("DL", [1, 2, 3], "ABC");
+      expect(c).toMatch(/^DL[123]ABC$/);
+    }
+  });
+
+  it("leaves a call-area prefix (ends in a digit) untouched", () => {
+    // VK2 already carries its numeral; no second digit is added.
+    expect(withCallArea("VK2", null, "ABC")).toBe("VK2ABC");
+    expect(withCallArea("VE3", [1, 2], "XY")).toBe("VE3XY");
+  });
+
+  it("only ever draws from the supplied set (never an excluded digit)", () => {
+    // Spain omits 6/8/9; over many draws none must appear.
+    const seen = new Set();
+    for (let i = 0; i < 2000; i++) {
+      const c = withCallArea("EA", [1, 2, 3, 4, 5, 7], "KT");
+      seen.add(c[2]);
+    }
+    expect([...seen].sort().join("")).toBe("123457");
   });
 });
 
