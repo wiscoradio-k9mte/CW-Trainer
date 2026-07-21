@@ -3091,7 +3091,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     // grade we didn't earn the right to give must not move the average, and a
     // flat 0% would be an unreachable zero. TRANSMIT still advances the contact.
     if (score === null) {
-      setResultLive("Send not scored — this step has no required elements. Add your callsign in Settings to have it graded.");
+      // The notice names the CAUSE (an unset callsign) rather than our internal
+      // vocabulary ("no required elements" is mustContain leaking out): to an
+      // operator that reads as a claim about the QSO step, which is wrong and
+      // teaches nothing. It also states the on-air fact this step exists to drill.
+      setResultLive("Send not scored — we can't grade this over until your callsign is set. Add it in Settings — answering a CQ means sending your call.");
       // Still call armAutoAdvance: a null score never arms (its 100%-only gate),
       // but the call also cancels any advance left pending from a prior CHECK.
       armAutoAdvance(score, () => advance({ who: settings.myCall, text: keyer.decoded || "(sent)" }));
@@ -3564,7 +3568,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                   announces it, same as <Score> does for a real grade.) */}
               {sendResult.score === null ? (
                 <p aria-hidden="true" style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", margin: "10px 0 0", lineHeight: 1.55 }}>
-                  NOT SCORED — this step has no required elements. Add your callsign in Settings to have it graded.
+                  NOT SCORED — we can't grade this over until your callsign is set. Add it in Settings — answering a CQ means sending your call.
                 </p>
               ) : (
                 <Score pct={sendResult.score} />

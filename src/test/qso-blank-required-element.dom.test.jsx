@@ -135,9 +135,20 @@ describe("F5 — cleared Settings field never becomes a credited required elemen
     await startRagchewAnswer(user);
     await user.click(screen.getByRole("button", { name: /CHECK TRANSMISSION/ }));
 
+    // Pinned as the FULL leaf string, so it stays scoped to the one rendered
+    // notice rather than to any ancestor that merely contains the words.
     expect(
-      screen.getByText(/NOT SCORED — this step has no required elements/)
+      screen.getByText(
+        "NOT SCORED — we can't grade this over until your callsign is set. " +
+        "Add it in Settings — answering a CQ means sending your call."
+      )
     ).toBeInTheDocument();
+    // The wording is part of the contract, not incidental. The old string —
+    // "this step has no required elements" — was our internal vocabulary
+    // (mustContain / requiredElements) leaking into the UI: to an operator it
+    // reads as a claim about the QSO step when the real cause is their own
+    // profile, and it teaches nothing about CW. Pinned negative so it can't return.
+    expect(screen.queryByText(/no required elements/)).not.toBeInTheDocument();
     expect(screen.queryByText("SOLID COPY")).not.toBeInTheDocument();
     expect(screen.queryByText("100%")).not.toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
