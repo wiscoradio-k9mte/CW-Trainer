@@ -379,9 +379,15 @@ describe("M4 — Tag verdict chips include verdict text", () => {
     // The invariant under test: Tag renders {children}, and children is
     // "letters: good" / "words: loose" etc.  A regression that strips the
     // verdict word (e.g. rendering only a color dot) would make getByText fail.
+    //
+    // CONTRACT CHANGE (fix/unmeasured-spacing-verdicts): the seed is now
+    // schemaVersion 2.  A v1 record's "good" is ambiguous — v1 wrote "good" both
+    // for measured-good and for never-measured — so migrateProgress demotes it
+    // to null and no chip renders.  A v2 "good" is a real measurement, which is
+    // both what this test needs and the case that must keep reading as praise.
     window.localStorage.clear();
     window.localStorage.setItem("wrcw:progress", JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       learn: [],
       copy:  [],
       key: [{
@@ -411,7 +417,7 @@ describe("M4 — Tag verdict chips include verdict text", () => {
     // If the verdict WORD were dropped and only color remained, these would fail.
     expect(screen.getByText(/letters:\s*good/i)).toBeInTheDocument();
     expect(screen.getByText(/words:\s*loose/i)).toBeInTheDocument();
-    // weightingVerdict "tight" is only shown when !== "good" — it is "tight" here.
+    // weightingVerdict is shown whenever it was measured; it is "tight" here.
     expect(screen.getByText(/weighting:\s*tight/i)).toBeInTheDocument();
   });
 });
