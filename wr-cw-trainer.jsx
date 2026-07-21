@@ -2539,11 +2539,16 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim */}
+                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim.
+                    The bug variant's "graded above" sentence points at the Dah length row, so
+                    it is only true when that row is actually there — on an all-dit send there
+                    are no dahs to grade and the row is absent. Claiming a grade the operator
+                    can't see is the same defect this change exists to remove. */}
                 {(settings.keyType === "paddle" || settings.keyType === "bug") && (
                   <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
                     {settings.keyType === "bug"
-                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only. Your dah length is graded above."
+                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only."
+                        + (analysis.weighting.verdict !== null ? " Your dah length is graded above." : "")
                       : "Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only."}
                   </div>
                 )}

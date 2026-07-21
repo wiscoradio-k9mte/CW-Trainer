@@ -1151,12 +1151,18 @@ describe("analyzeFist()", () => {
   // means "not measured" — null ratio, null verdict.
   it("paddle mode → element spacing is not measured (ratio and verdict null)", () => {
     const unitMs = 60;
-    // Even with terrible intra-element spacing it must be suppressed for paddle
+    // Gaps must be < 2u to land in the ELEMENT bucket at all. This test used to
+    // feed 5u gaps, which bucket as WORD gaps — so elemRatio was null whatever
+    // the suppression did, and the assertion could not fail. 1.6u is a real
+    // element gap and a bad one (60% off the 1u ideal), so the straight-key
+    // control below proves there is something here to suppress.
     const events = [
       { type: "dit", durMs: unitMs, gapBeforeMs: 0 },
-      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 5 * unitMs }, // terrible element gap
-      { type: "dit", durMs: unitMs, gapBeforeMs: 5 * unitMs },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 1.6 * unitMs },
+      { type: "dit", durMs: unitMs, gapBeforeMs: 1.6 * unitMs },
     ];
+    expect(analyzeFist(events, 20, "straight").spacing.element.verdict).toBe("loose");
+
     const r = analyzeFist(events, 20, "paddle");
     expect(r.spacing.element.verdict).toBeNull();
     expect(r.spacing.element.ratio).toBeNull();

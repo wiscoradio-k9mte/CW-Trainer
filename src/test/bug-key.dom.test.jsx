@@ -528,3 +528,68 @@ describe.skip("B — Bug dit keep-alive (keyboard) [DORMANT: BUG_KEY_ENABLED=fal
     vi.advanceTimersByTime(500);
   });
 });
+
+// ---------------------------------------------------------------------------
+// F6: the machine-timed footnote must not promise a dah grade that isn't shown.
+//
+// The BUG footnote reads "Dit spacing is machine-timed — spacing feedback covers
+// letter and word gaps only." plus, ONLY when the Dah length row is actually
+// rendered, "Your dah length is graded above." Since the fist analyzer stopped
+// fabricating verdicts (fix/unmeasured-spacing-verdicts), an all-dit send has no
+// dahs to weigh and that row is absent — so the unconditional sentence was a
+// positive claim about a row that isn't there.
+//
+// DORMANT because it needs BUG selected. The conditional itself is a one-line
+// guard in the fist panel; the reachable half of the same rule (the paddle
+// footnote, which must never carry the sentence at all) IS pinned and biting in
+// fist-panel-unmeasured.dom.test.jsx.
+//
+// Keying technique when this is re-enabled: on a bug the dit lever is the bracket
+// key (auto dits) and the dah is Space. An all-dit send is bracket-only; a send
+// with dahs needs at least one Space press held past 2u.
+// ---------------------------------------------------------------------------
+describe.skip("F6 — bug footnote tracks the Dah length row [DORMANT: BUG_KEY_ENABLED=false]", () => {
+  const GRADED = "Your dah length is graded above.";
+
+  it("an all-dit bug send omits the 'graded above' sentence", async () => {
+    const { user } = await renderBugWide();
+    await user.click(screen.getByRole("button", { name: /NEW TEXT/ }));
+    vi.useFakeTimers();
+    // Three bracket-key dits, no Space — nothing to weigh.
+    for (let i = 0; i < 3; i++) {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { code: "BracketLeft", bubbles: true, cancelable: true }));
+      });
+      act(() => { vi.advanceTimersByTime(180); });
+    }
+    act(() => { vi.advanceTimersByTime(600); });
+    vi.useRealTimers();
+    await user.click(screen.getByRole("button", { name: /^CHECK$/ }));
+
+    expect(screen.queryByText("Dah length")).toBeNull();
+    expect(screen.getByText(/Dit spacing is machine-timed/).textContent)
+      .toBe("Dit spacing is machine-timed — spacing feedback covers letter and word gaps only.");
+  });
+
+  it("a bug send containing hand-timed dahs keeps the 'graded above' sentence", async () => {
+    const { user } = await renderBugWide();
+    await user.click(screen.getByRole("button", { name: /NEW TEXT/ }));
+    vi.useFakeTimers();
+    for (let i = 0; i < 3; i++) {
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true, cancelable: true }));
+      });
+      act(() => { vi.advanceTimersByTime(180); }); // > 2u — a dah
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keyup", { code: "Space", bubbles: true, cancelable: true }));
+      });
+      act(() => { vi.advanceTimersByTime(180); });
+    }
+    act(() => { vi.advanceTimersByTime(600); });
+    vi.useRealTimers();
+    await user.click(screen.getByRole("button", { name: /^CHECK$/ }));
+
+    expect(screen.getByText("Dah length")).toBeInTheDocument();
+    expect(screen.getByText(/Dit spacing is machine-timed/).textContent).toContain(GRADED);
+  });
+});
