@@ -52,11 +52,12 @@ describe("v2.0 item 7 — Settings inputs carry autoCapitalize", () => {
     const { user } = await renderApp();
     await openSettings(user);
 
-    // The three profile inputs default to W1AW / PAT / NEWINGTON CT — find each by
-    // its display value (the labels are sibling divs, not associated <label>s).
-    const call = screen.getByDisplayValue("W1AW");
-    const name = screen.getByDisplayValue("PAT");
-    const qth = screen.getByDisplayValue("NEWINGTON CT");
+    // Found by accessible name, not by display value: the captions are real
+    // <label htmlFor> associations now, so these lookups survive a change of
+    // default profile values (they used to be getByDisplayValue("PAT") etc).
+    const call = screen.getByLabelText("Your callsign");
+    const name = screen.getByLabelText("Your name");
+    const qth = screen.getByLabelText("Your QTH");
 
     // getAttribute (lowercase DOM reflection of the React autoCapitalize prop).
     expect(call.getAttribute("autocapitalize")).toBe("characters");

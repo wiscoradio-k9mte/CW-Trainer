@@ -4564,6 +4564,14 @@ function ProgressView({ progress }) {
 // tap the gear again — that's still discoverable because the gear is right there).
 function Settings({ settings, setSettings, onClose }) {
   const set = (k) => (v) => setSettings((s) => ({ ...s, [k]: v, ...(k === "charWpm" && s.effWpm > v ? { effWpm: v } : {}) }));
+  // Ids for the "Your station" text inputs, so their visible captions can be real
+  // <label htmlFor> associations. useId rather than hard-coded strings so uniqueness
+  // doesn't depend on the current mount-exclusivity invariant (the two render sites
+  // gate on `showSettings && !isWide` and `isWide && showSettings`, so only one is
+  // ever live). A future refactor that mounts Settings twice would otherwise emit
+  // duplicate ids and silently point both labels at the first panel's inputs.
+  const uid = useId();
+  const callId = `${uid}-mycall`, nameId = `${uid}-myname`, qthId = `${uid}-myqth`;
   return (
     <div style={S.panel}>
       {/* Close control — only shown on wide where Settings is in the right rail.
@@ -4615,25 +4623,29 @@ function Settings({ settings, setSettings, onClose }) {
         These start as an example (W1AW is a well-known example callsign). Set them to your own call, name, and location — they personalize your practice contacts and are saved automatically.
       </div>
       <div>
-        <div style={{ ...S.label, marginBottom: 4 }}>Your callsign</div>
+        {/* display:"block" preserves the geometry the caption had as a <div>. A
+            <label> defaults to display:inline, whose vertical margins don't apply —
+            so without this the caption loses its bottom margin and the field
+            reflows. Same for the two captions below. */}
+        <label htmlFor={callId} style={{ ...S.label, display: "block", marginBottom: 4 }}>Your callsign</label>
         {/* autoCapitalize="characters": on mobile soft keyboards, capitalise every letter.
             Harmless on desktop. Callsign always uppercases via textTransform anyway,
             but autoCapitalize keeps the mobile keyboard in CAPS mode — one fewer tap. */}
         {/* M1: 0.9375rem → S.type.body (0.875rem) — Settings inputs match other buttons */}
-        <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myCall}
+        <input id={callId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myCall}
           autoCapitalize="characters" autoCorrect="off" spellCheck={false}
           onChange={(e) => setSettings((s) => ({ ...s, myCall: e.target.value.toUpperCase() }))} />
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ ...S.label, marginBottom: 4 }}>Your name</div>
-          <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myName}
+          <label htmlFor={nameId} style={{ ...S.label, display: "block", marginBottom: 4 }}>Your name</label>
+          <input id={nameId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myName}
             autoCapitalize="words" autoCorrect="off" spellCheck={false}
             onChange={(e) => setSettings((s) => ({ ...s, myName: e.target.value.toUpperCase() }))} />
         </div>
         <div style={{ flex: 1.4 }}>
-          <div style={{ ...S.label, marginBottom: 4 }}>Your QTH</div>
-          <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myQth}
+          <label htmlFor={qthId} style={{ ...S.label, display: "block", marginBottom: 4 }}>Your QTH</label>
+          <input id={qthId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myQth}
             autoCapitalize="words" autoCorrect="off" spellCheck={false}
             onChange={(e) => setSettings((s) => ({ ...s, myQth: e.target.value.toUpperCase() }))} />
         </div>
