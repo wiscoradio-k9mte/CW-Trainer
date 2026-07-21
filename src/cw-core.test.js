@@ -2364,6 +2364,20 @@ describe("migrateProgress() — the standing migration bar", () => {
     qso:   [{ t: 4, activity: "pota", role: "hunter", copyPct: 90, sendPct: 80 }],
   });
 
+  // MERGE TRIPWIRE. Every other test in this block reads PROGRESS_SCHEMA_VERSION
+  // rather than a literal — deliberately, so the next bump inherits the whole bar.
+  // The cost of that is that the constant itself is pinned by nothing: this branch
+  // and fix/unmeasured-spacing-verdicts CONFLICT in this file (both rewrite the
+  // version line and the PROGRESS_MIGRATIONS block), and a resolution that leaves
+  // the version at 2 keeps the entire suite green while silently skipping the
+  // v2 -> v3 step. This literal is the one assertion that catches that.
+  //
+  // If you are here because this failed after a deliberate bump: raise the number,
+  // add the ladder slot, and say in the commit which migration the bump carries.
+  it("BAR: PROGRESS_SCHEMA_VERSION is 3 (pinned literal — see the merge note above)", () => {
+    expect(PROGRESS_SCHEMA_VERSION).toBe(3);
+  });
+
   it("BAR: record counts are preserved across every category", () => {
     const p = migrateProgress(v1Blob());
     expect(p.learn.length).toBe(1);
@@ -2388,10 +2402,13 @@ describe("migrateProgress() — the standing migration bar", () => {
   });
 
   it("BAR: idempotent — migrating a migrated blob changes nothing", () => {
-    // HONEST LIMIT: no non-contrived mutation of the v3 code makes this red,
-    // because v2 -> v3 has no transform to run twice. It is kept as the standing
-    // guard for whoever adds the NEXT transform: it goes red the moment a lossy
-    // migration is reachable from an already-migrated blob.
+    // WHAT THIS ACTUALLY GUARDS TODAY: the version STAMP reaching a fixed point.
+    // Mutating the ladder's `while` to an `if` turns it red (a v1 blob then lands
+    // on 2, and a second pass moves it again to 3) — verified, not assumed.
+    //
+    // What it does NOT yet guard is transform PURITY, because v2 -> v3 has no
+    // transform to run twice. It becomes that guard the moment a lossy migration
+    // is reachable from an already-migrated blob, which is why it stays.
     const once = migrateProgress(v1Blob());
     const twice = migrateProgress(once);
     const thrice = migrateProgress(twice);
@@ -2589,9 +2606,11 @@ describe("copyConditionsLabel()", () => {
     expect(copyConditionsLabel(undefined)).not.toBe("normal");
   });
 
-  it("COPY_CONDITIONS covers exactly the three selector values", () => {
-    // Pins the closed enum: a fourth condition added to the UI without a label
-    // here would silently fall through to "conditions not recorded".
+  it("COPY_CONDITIONS holds exactly the three stored values", () => {
+    // This pins the MAP's own keys and nothing else — on its own it would NOT
+    // notice a fourth option appearing in the Conditions selector. The test that
+    // ties the map to the real UI lives in copy-conditions.dom.test.jsx
+    // ("the Conditions selector and COPY_CONDITIONS cannot drift apart").
     expect(Object.keys(COPY_CONDITIONS).sort()).toEqual(["easy", "normal", "real"]);
   });
 });

@@ -1707,6 +1707,13 @@ export function appendProgress(progress, category, record) {
 // Each function transforms a blob from `fromVersion` to `fromVersion + 1`.
 // Functions must be pure and must not throw (errors are caught by migrateProgress).
 // A missing entry means that step needs no transform; the walk just increments.
+//
+// COVERAGE LIMIT, stated because "the walk runs the slot it finds" is this
+// change's central claim: with this map EMPTY, the invocation in migrateProgress
+// is dead code here. Deleting it leaves the whole suite green — verified. Only
+// the sibling branch's slot-1 entry exercises it, so that path is covered ONLY
+// once fix/unmeasured-spacing-verdicts is merged. Do not read this branch's
+// green suite as proof the ladder invokes anything.
 const PROGRESS_MIGRATIONS = {
   // 1 (v1 → v2): demote unmeasured KEY verdicts. Owned by the sibling branch
   //     fix/unmeasured-spacing-verdicts — this slot is reserved for it, NOT free.

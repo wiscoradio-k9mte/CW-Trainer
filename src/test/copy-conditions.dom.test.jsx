@@ -22,7 +22,7 @@ import { render, screen, cleanup, act, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
 import { gotoTab, chooseOption } from "./helpers.jsx";
-import { PROGRESS_SCHEMA_VERSION } from "../cw-core.js";
+import { PROGRESS_SCHEMA_VERSION, COPY_CONDITIONS } from "../cw-core.js";
 
 afterEach(() => {
   window.localStorage.clear();
@@ -84,6 +84,34 @@ function storedProgress() {
   expect(raw).not.toBeNull();
   return JSON.parse(raw);
 }
+
+describe("COPY conditions — the selector and the label map stay in step", () => {
+  it("the Conditions selector and COPY_CONDITIONS cannot drift apart", async () => {
+    // Without this, adding a fourth option to the Conditions selector reds
+    // NOTHING: its records would store an unrecognised value and silently pool
+    // into "conditions not recorded" — a new instance of the very defect this
+    // change exists to kill.
+    //
+    // The selector's visible labels are the uppercase of the plain-English ones,
+    // so the correspondence is directly assertable. Matched on the ACCESSIBLE
+    // NAME, not textContent: CompactSelect renders an aria-hidden "✓" inside the
+    // selected option, so its textContent is "NORMAL✓".
+    //
+    // Two assertions, because either alone has a hole: the count catches an option
+    // added without a map entry, and the per-label lookup catches a map entry with
+    // no option (or a renamed one). Together they are set equality.
+    const { user } = await freshApp();
+    await gotoTab(user, "COPY");
+    await user.click(screen.getByRole("combobox", { name: "Conditions" }));
+
+    expect(screen.getAllByRole("option").length).toBe(Object.keys(COPY_CONDITIONS).length);
+    for (const label of Object.values(COPY_CONDITIONS)) {
+      expect(
+        screen.getByRole("option", { name: new RegExp(`^${label}$`, "i") })
+      ).toBeInTheDocument();
+    }
+  });
+});
 
 describe("COPY conditions — what gets STORED", () => {
   it("[T1] a REAL LIFE attempt stores conditions:'real' at schema v3", async () => {
