@@ -2875,10 +2875,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
 
   const start = () => {
     const builder = ACTIVITY_BUILDERS[activity];
-    // myCqZone: contest exchange needs the operator's CQ zone, computed from
-    // their configured QTH state.  Defaults to 5 (W1/W2 eastern US) when the
-    // QTH state isn't resolved — an honest fallback that won't crash the builder.
-    const myCqZone = resolveUSState(stateOf(settings.myQth))?.cq ?? 5;
+    // myCqZone: the CQ-zone contest exchange needs the operator's zone, derived
+    // from their configured QTH state. `null` when the QTH doesn't resolve to a
+    // US state — buildContest then DROPS the zone from the exchange instead of
+    // defaulting it. The old `?? 5` sent eastern-US zone 5 on behalf of an
+    // operator who never said where they were; see buildContest's header.
+    const myCqZone = resolveUSState(stateOf(settings.myQth))?.cq ?? null;
     const profile = {
       myCall:   settings.myCall,
       myName:   settings.myName,
