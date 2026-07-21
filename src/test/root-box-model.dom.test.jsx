@@ -1,16 +1,24 @@
 // @vitest-environment jsdom
 //
-// Regression tripwire for the app root's box model.
+// Regression tripwire for the app root's box model AND its viewport unit.
 //
-// THE DEFECT THIS GUARDS (measured 2026-07-21, see the mobile no-scroll baseline):
-// the app root declares `minHeight: 100vh` AND `padding: 16px 12px 60px`. This app
-// has no global `box-sizing` reset, so under the browser default `content-box` the
-// 76px of vertical padding is ADDED to the full-viewport minimum — every screen in
-// the app, including a completely empty PROGRESS tab, was at least 76px taller than
-// the viewport. Live measurement over CDP: empty PROGRESS overflowed by exactly
-// +76px at five of six viewports, and flipping this ONE element to border-box took
-// it to 0 at all five (the sixth, 360x640, is genuinely content-bound and correctly
-// reclaimed nothing).
+// DEFECT 1 — THE BOX MODEL (measured 2026-07-21, see the mobile no-scroll baseline):
+// the app root declares a full-viewport `minHeight` AND `padding: 16px 12px 60px`.
+// This app has no global `box-sizing` reset, so under the browser default
+// `content-box` the 76px of vertical padding is ADDED to that minimum: the page
+// height is `max(100svh, content) + 76` where it should be `max(100svh, content+76)`.
+// Those two are EQUAL once content already exceeds the viewport, so the 76px is a
+// FLOOR under the page height, not a tax on every screen — a within-cell control
+// moved 3 of 16 no-scroll-contract cells and none of the eight phone-portrait ones.
+// Its value is measurement-baseline integrity: every layout budget taken against
+// this root was previously measured against a 76px artifact.
+//
+// DEFECT 2 — THE UNIT: `vh` is defined by CSS Values 4 as `lvh`, the LARGE viewport
+// (dynamically-retracting UA chrome assumed retracted). In a mobile browser — the
+// phone-preview path — that is taller than the visible area, a second overflow
+// source independent of defect 1. `svh` is the small viewport and can never exceed
+// what is visible. Electron/Capacitor have no dynamic chrome, so it is a no-op
+// there (confirmed by headed measurement: desktop rects unchanged to the pixel).
 //
 // WHAT THIS TEST PROVES — and what it does not.
 // jsdom performs NO layout: it cannot compute a height, so it cannot observe the
@@ -23,11 +31,13 @@ import { describe, it, expect } from "vitest";
 import { renderApp, screen } from "./helpers.jsx";
 
 // The shell is identified the same way the measurement harness identifies it: the
-// element declaring a full-viewport minimum height. Keyed on behaviour, not on DOM
-// position, so it survives re-parenting.
+// element declaring a full-viewport minimum height, in ANY of the viewport units.
+// Keyed on behaviour, not on DOM position or one unit, so it survives re-parenting
+// and so the unit assertion below is what reports a unit regression — not a
+// confusing "found 0 shells".
 function findShell() {
   return Array.from(document.querySelectorAll("div"))
-    .filter((el) => el.style && el.style.minHeight === "100vh");
+    .filter((el) => el.style && /^100(v|sv|lv|dv)h$/.test(el.style.minHeight));
 }
 
 describe("app root box model", () => {
@@ -39,13 +49,24 @@ describe("app root box model", () => {
     expect(findShell()).toHaveLength(1);
   });
 
-  it("does not add its own padding to its 100vh minimum", async () => {
+  it("sizes to the SMALL viewport, so retracting browser chrome cannot overflow it", async () => {
+    await renderApp();
+    const [shell] = findShell();
+    expect(shell).toBeTruthy();
+    // `vh` == `lvh` per CSS Values 4, which assumes browser chrome retracted and is
+    // therefore taller than the visible area in a mobile browser. Only `svh` (or an
+    // equal-or-smaller `dvh`) is safe here. Pinned exactly, because "100vh" would
+    // otherwise silently pass any looser check.
+    expect(shell.style.minHeight).toBe("100svh");
+  });
+
+  it("does not add its own padding to its full-viewport minimum", async () => {
     await renderApp();
     const [shell] = findShell();
     expect(shell).toBeTruthy();
 
     // The invariant, stated as the geometry actually requires it: vertical padding
-    // on a 100vh minimum is only safe under border-box. Written as a conditional so
+    // on a full-viewport minimum is only safe under border-box. Written as a conditional so
     // that removing the padding would ALSO be an honest fix — but it can never pass
     // by accident, because the padding assertion below pins that padding still exists.
     const padTop = parseFloat(shell.style.paddingTop || "0");
