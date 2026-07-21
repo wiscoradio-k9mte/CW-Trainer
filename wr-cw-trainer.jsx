@@ -4925,8 +4925,16 @@ export default function CWTrainer() {
     );
   }
 
+  // boxSizing: "border-box" on the app root is load-bearing, not decoration.  This
+  // app has no global box-sizing reset, so under the default content-box model the
+  // 16px top + 60px bottom padding is ADDED to `minHeight: 100vh` — giving EVERY
+  // screen a hard 76px overflow floor even when it is completely empty.  That is a
+  // pure tax against the mobile no-scroll contract (KEY/COPY/QSO must not scroll
+  // once started).  Measured 2026-07-21: with content-box, an empty PROGRESS screen
+  // overflowed by exactly 76px at five of six viewports; border-box takes it to 0.
+  // Guarded by src/test/root-box-model.dom.test.jsx.
   return (
-    <div style={{ minHeight: "100vh", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
+    <div style={{ minHeight: "100vh", boxSizing: "border-box", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
       {/*
         The <style> block is the only injected CSS in the app — established
         precedent for keyframes and focus rings. We extend it with two layout
