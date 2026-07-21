@@ -7,7 +7,7 @@ import {
   isWellFormedRst, isRstReport, courtesyForms, numericForms,
   COURTESY_EQUIVALENTS,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
-  cutNum, isReadyToAdvance,
+  cutNum, isReadyToAdvance, required, isBlankElement,
   PROSIGNS, PROSIGN_CODES, QCODES_ABBREV, DRILL_CATEGORIES,
   drillCallsign, drillCallingCq, drillRstExchange, drillNumbers,
   drillProsigns, drillQCodes, drillCommonWords, drillWiderWords, drillQsoLine,
@@ -3899,5 +3899,158 @@ describe("drillCommonWords() and drillWiderWords() — generator shape", () => {
       if (sawHam) break;
     }
     expect(sawHam).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — a blank required element must never be credited
+// ---------------------------------------------------------------------------
+// The reported defect: Settings is deliberately free-form, so an operator can
+// clear the Name field. `mustContain: [myRst, myName]` then became ["599", ""],
+// and gradeSend credited the empty token unconditionally — `"".includes("")` is
+// true in JS, and numericForms("")/courtesyForms("") both pass "" straight
+// through. Result: a blank always-ticked ✓ row and 100% for sending half the
+// exchange. Same family as the cut-number regression: a wrong answer scoring 100.
+//
+// The fix is two layers, and each layer has its own tests below:
+//   1. `required(...)` filters blanks where mustContain is ASSEMBLED, so the bad
+//      element never exists (this is what makes the ✓ checklist right too);
+//   2. an `isBlankElement` guard in gradeSend, so the contract is explicit for
+//      any future caller that assembles a list some other way.
+describe("F5 — blank required elements (grade inflation)", () => {
+  const BUILDERS = {
+    ragchew: buildRagchew, pota: buildPota, sota: buildSota,
+    iota: buildIota, dx: buildDx, contest: buildContest,
+  };
+  const FULL = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON WI", cut: false, myCqZone: 4 };
+  // Walk the REAL activity/role registry (ROLE_TERMS) rather than a hand-picked
+  // sample, so a new activity or role is covered the day it is added.
+  const eachCombo = (fn) => {
+    for (const [act, build] of Object.entries(BUILDERS)) {
+      for (const [role] of ROLE_TERMS[act]) fn(act, role, build);
+    }
+  };
+  const youSteps = (q) => q.steps.filter((s) => s.who === "you");
+
+  // --- Layer 2: the grader itself -----------------------------------------
+  it("KEYSTONE: gradeSend(['599',''], '599') is NOT 100 — the exact reported case", () => {
+    // MUTATION: delete the `if (isBlankElement(el)) return false;` guard in
+    // gradeSend's isConveyed → this returns 100 → red.
+    const r = gradeSend(["599", ""], "599");
+    expect(r.score).toBe(50);
+    expect(r.hits).toEqual(["599"]);
+    expect(r.missing).toEqual([""]);
+  });
+
+  it("whitespace-only and nullish required elements are never credited either", () => {
+    expect(gradeSend(["599", "   "], "599 599 UR RST").score).toBe(50);
+    expect(gradeSend(["599", "\t"], "599").missing).toEqual(["\t"]);
+    expect(gradeSend([undefined], "K9MTE ANYTHING").score).toBe(0);
+    expect(gradeSend([null], "K9MTE ANYTHING").score).toBe(0);
+    // A blank is not creditable even when the send is itself blank.
+    expect(gradeSend([""], "").score).toBe(0);
+  });
+
+  it("the blank guard does not disturb any real element (populated list unchanged)", () => {
+    // Guards against an over-broad fix: real tokens must grade exactly as before.
+    expect(gradeSend(["599", "TRAVIS"], "UR RST 599 599 NAME TRAVIS").score).toBe(100);
+    expect(gradeSend(["599", "TRAVIS"], "UR RST 599 599").score).toBe(50);
+    expect(gradeSend(["TU"], "TNX 73").score).toBe(100);
+    expect(gradeSend(["599"], "5NN").score).toBe(100);
+  });
+
+  // --- Layer 1: assembly ---------------------------------------------------
+  it("required() drops blank tokens and trims the survivors", () => {
+    expect(required("599", "")).toEqual(["599"]);
+    expect(required("599", "   ")).toEqual(["599"]);
+    expect(required("599", undefined, null)).toEqual(["599"]);
+    expect(required()).toEqual([]);
+    expect(required("", "  ")).toEqual([]);
+    // Trimming is part of the same normalisation: a required " PAT " could never
+    // match, because gradeSend compares against the space-stripped send.
+    expect(required(" PAT ")).toEqual(["PAT"]);
+    expect(gradeSend(required(" PAT "), "NAME PAT PAT").score).toBe(100);
+  });
+
+  it("T1: with Name and QTH cleared, no shipped step carries a blank required element", () => {
+    // MUTATION: unwrap any `mustContain: required(...)` back to an array literal
+    // → that builder's blank name lands in the list → red.
+    const cleared = { ...FULL, myName: "", myQth: "" };
+    let checked = 0;
+    eachCombo((act, role, build) => {
+      for (const s of youSteps(build(cleared, role, {}))) {
+        for (const el of s.mustContain) {
+          expect(String(el).trim(), `${act}/${role}: blank required element`).not.toBe("");
+          checked++;
+        }
+      }
+    });
+    expect(checked).toBeGreaterThan(0);   // the sweep really ran
+  });
+
+  it("T2: with the Name cleared, sending what IS asked scores 100 and sending less scores less", () => {
+    // The ragchew exchange step is the reported instance: [myRst, myName] with a
+    // cleared name reduces to [myRst], so a correct 599 is a genuine 100 — and
+    // the operator can still fall short by not sending it.
+    const cleared = { ...FULL, myName: "" };
+    const step = youSteps(buildRagchew(cleared, "answer"))[1];
+    expect(step.mustContain).toEqual(["599"]);
+    expect(gradeSend(step.mustContain, "R R UR RST 599 599 = QTH MADISON WI = HW? KN").score).toBe(100);
+    expect(gradeSend(step.mustContain, "R R TNX FER RPT = HW? KN").score).toBe(0);
+  });
+
+  it("T3: no false negatives — every you-step of every activity/role still grades 100 on its own script", () => {
+    // Populated profile: the fix must be invisible. Driving each step's own
+    // `suggested` through the real grader is the honest end-to-end check.
+    let steps = 0;
+    eachCombo((act, role, build) => {
+      for (const [i, s] of youSteps(build(FULL, role, {})).entries()) {
+        expect(gradeSend(s.mustContain, s.suggested).score, `${act}/${role} you-step ${i}`).toBe(100);
+        steps++;
+      }
+    });
+    expect(steps).toBe(30);   // 12 activity/role combos, pinned so a lost step shows up
+  });
+
+  it("T3: no false negatives — the total required-element count is unchanged at 47", () => {
+    // The count pin is what catches an OVER-BROAD filter: dropping a real token
+    // would still score 100 (fewer requirements), but the total would fall.
+    // MUTATION: make required() also drop a real token (e.g. filter out "TU")
+    // → 47 becomes 43 → red.
+    let total = 0;
+    eachCombo((act, role, build) => {
+      for (const s of youSteps(build(FULL, role, {}))) total += s.mustContain.length;
+    });
+    expect(total).toBe(47);
+  });
+
+  // --- T4: an empty required list ------------------------------------------
+  it("T4: an empty required list scores null (a stated non-scored state), never a flat 0", () => {
+    // This case IS reachable: the six ANSWER steps require only [myCall], and the
+    // callsign field is clearable too. A flat 0% would be an unreachable zero —
+    // a perfect over graded as total failure. null is the UI's cue to say
+    // "NOT SCORED" instead of showing a grade nobody could have earned.
+    // MUTATION: change gradeSend's empty-list branch back to `: 0` → red.
+    const r = gradeSend([], "CQ CQ DE K9MTE K");
+    expect(r.score).toBeNull();
+    expect(r.hits).toEqual([]);
+    expect(r.missing).toEqual([]);
+  });
+
+  it("T4: a cleared callsign empties exactly the six ANSWER steps, and each grades null", () => {
+    const noCall = { ...FULL, myCall: "" };
+    const empties = [];
+    eachCombo((act, role, build) => {
+      for (const s of youSteps(build(noCall, role, {}))) {
+        if (s.mustContain.length === 0) {
+          empties.push(`${act}/${role}`);
+          expect(gradeSend(s.mustContain, "ANYTHING AT ALL").score).toBeNull();
+        }
+      }
+    });
+    expect(empties).toEqual([
+      "ragchew/answer", "pota/hunter", "sota/chaser",
+      "iota/chaser", "dx/hunt", "contest/sp",
+    ]);
   });
 });

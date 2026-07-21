@@ -328,10 +328,43 @@ export function isRstReport(token) {
 // exact cut-form matching). Data-driven so Travis can adjust before the edge push.
 export const RST_ACCEPT_ANY_WELLFORMED = true;
 
+// isBlankElement(el) → true for a required element that carries no content:
+// undefined, null, "", or whitespace only. The operator's Settings fields are
+// deliberately free-form (they can be cleared), so any PROFILE-DERIVED element
+// — callsign, name, QTH-derived state, zone — can in principle arrive blank.
+export function isBlankElement(el) {
+  return String(el ?? "").trim() === "";
+}
+
+// required(...tokens) → a step's `mustContain` list with blank tokens dropped
+// and the survivors trimmed.
+//
+// THIS IS THE REAL FIX for the blank-element grade inflation (F5). An operator
+// who clears the Settings Name field turned a step's required list into
+// [myRst, ""], and the substring matcher credited the empty token
+// unconditionally (`"".includes("")`
+// is true in JS) — so half an exchange scored 100% beside a blank, always-ticked
+// ✓ row. Filtering at ASSEMBLY means the bad element never exists: nothing to
+// render, nothing to grade, and the score denominator counts only real
+// requirements, so what IS asked for still reaches 100%. gradeSend carries a
+// matching guard (below) to make the contract explicit for future callers.
+//
+// Settings stays free-form on purpose — the defect is ours, not the operator's,
+// so the remedy lives here and not in an input validator.
+export function required(...tokens) {
+  return tokens.filter((t) => !isBlankElement(t)).map((t) => String(t).trim());
+}
+
 // gradeSend(requiredElements, sent, opts) → { score, hits, missing }
 // score = round(hits / required × 100), coarse by design (fork 5): with one
 // required element it is 0 or 100; with two, 0 / 50 / 100. `hits`/`missing`
 // preserve the original required tokens (original case) for the ✓/✗ render.
+//
+// score is `null` — NOT 0 — when there is nothing to require. A step reduced to
+// an empty list (the `[myCall]` ANSWER steps when the operator has cleared their
+// callsign) is unscoreable, and a flat 0% would be an unreachable zero: the
+// operator could send a perfect over and still be told they failed. `null` is the
+// caller's cue to render a stated non-scored state instead of a grade.
 export function gradeSend(requiredElements, sent, opts = {}) {
   const acceptAnyRst = opts.acceptAnyRst ?? RST_ACCEPT_ANY_WELLFORMED;
   const norm = String(sent).trim().toUpperCase().replace(/\s+/g, " ");
@@ -340,6 +373,14 @@ export function gradeSend(requiredElements, sent, opts = {}) {
   const sentHasRst = tokens.some(isWellFormedRst);
 
   const isConveyed = (el) => {
+    // 0. A blank element can never be conveyed. Guard first, because every branch
+    //    below would credit it: `flat.includes("")` is unconditionally true, and
+    //    `numericForms("")`/`courtesyForms("")` both pass "" straight through.
+    //    Shipped scripts can't reach here (`required()` filters at assembly), so a
+    //    blank arriving means a caller built its list wrong — count it MISSING and
+    //    let the resulting sub-100 score make that loud, rather than silently
+    //    forgiving a malformed list and re-inflating the grade.
+    if (isBlankElement(el)) return false;
     const E = String(el).toUpperCase();
     // 1. RST slot (the canonical 599 report): any well-formed report counts.
     if (acceptAnyRst && isRstReport(E)) return sentHasRst;
@@ -360,7 +401,7 @@ export function gradeSend(requiredElements, sent, opts = {}) {
   for (const el of requiredElements) (isConveyed(el) ? hits : missing).push(el);
   const score = requiredElements.length
     ? Math.round((hits.length / requiredElements.length) * 100)
-    : 0;
+    : null;
   return { score, hits, missing };
 }
 
@@ -907,7 +948,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
           who: "you",
           suggested: `${dx} DE ${myCall} ${myCall} K`,
           prompt: "Answer the CQ — their call once, DE, your call twice, K.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -918,7 +959,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
           who: "you",
           suggested: `R R ${dx} DE ${myCall} = GM ${name} TNX FER RPT = UR RST ${myRst} ${myRst} = NAME ${myName} ${myName} = QTH ${myQth} = HW? ${dx} DE ${myCall} KN`,
           prompt: "Roger it, then send your exchange back — report, name, QTH, with = between thoughts.",
-          mustContain: [myRst, myName],
+          mustContain: required(myRst, myName),
         },
         {
           who: "dx",
@@ -943,7 +984,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         // CALL-CQ archetype: calling CQ requires "CQ" AND your callsign. A bare
         // callsign is how you ANSWER a CQ, not how you call one — so this differs
         // intentionally from the answer steps below, which require [myCall] only.
-        mustContain: ["CQ", myCall],
+        mustContain: required("CQ", myCall),
       },
       {
         who: "dx",
@@ -954,7 +995,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         who: "you",
         suggested: `${dx} DE ${myCall} = GM TNX FER CALL = UR RST ${myRst} ${myRst} = NAME ${myName} ${myName} = QTH ${myQth} = HW? ${dx} DE ${myCall} KN`,
         prompt: "Open the exchange — GM, their report, your name, QTH. KN to hold the frequency.",
-        mustContain: [myRst, myName],
+        mustContain: required(myRst, myName),
       },
       {
         who: "dx",
@@ -969,7 +1010,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         who: "you",
         suggested: `R FB ${name} = TU FER FB QSO = 73 ES HPE CUAGN ${dx} DE ${myCall} SK EE`,
         prompt: "Close it — FB, TU for the QSO, 73, SK and dit-dit. Their first name as the handle.",
-        mustContain: ["TU", "73"],
+        mustContain: required("TU", "73"),
       },
     ],
   };
@@ -1005,7 +1046,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `${myCall}`,
             prompt: "P2P — your callsign once, same as any POTA pileup.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1016,7 +1057,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `BK GM UR ${myRst} ${myRst} ${myPark} ${myPark} BK`,
             prompt: "BK, greeting, their report, your park ref twice. P2P exchanges park refs, not states.",
-            mustContain: [myRst, myPark],
+            mustContain: required(myRst, myPark),
           },
           {
             who: "dx",
@@ -1047,7 +1088,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `${myCall}`,
             prompt: "Your callsign once — pileup protocol is the same regardless of where they're activating.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1058,7 +1099,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
             prompt: "BK, their report, your state twice, BK. Exchange grammar is identical to domestic.",
-            mustContain: [myRst, myState],
+            mustContain: required(myRst, myState),
           },
           {
             who: "dx",
@@ -1084,7 +1125,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
           who: "you",
           suggested: `${myCall}`,
           prompt: "POTA protocol: send your callsign ONCE. No DE, no K — you're one voice in a pileup.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1095,7 +1136,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
           who: "you",
           suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
           prompt: "BK back, greeting, their report, your state twice, BK. That's the whole exchange.",
-          mustContain: [myRst, myState],
+          mustContain: required(myRst, myState),
         },
         {
           who: "dx",
@@ -1119,7 +1160,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: cqCall("pota", myCall),
         prompt: `Call CQ POTA. The park reference (${park}) goes in your log, not on the air.`,
-        mustContain: ["CQ", "POTA", myCall],
+        mustContain: required("CQ", "POTA", myCall),
       },
       {
         who: "dx",
@@ -1130,7 +1171,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: `${dx} GM UR ${myRst} ${myRst} BK`,
         prompt: "Acknowledge the hunter — their call, GM, their report twice, BK.",
-        mustContain: [myRst],
+        mustContain: required(myRst),
       },
       {
         who: "dx",
@@ -1141,7 +1182,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: `BK TU ${dxState} 73 DE ${myCall} EE`,
         prompt: "Close with BK TU, their state, 73, your call, dit-dit. On to the next one.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1177,7 +1218,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `${myCall}/P`,
             prompt: "S2S: send your call signing /P — you're also activating. Callsign once.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1188,7 +1229,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `BK R R UR ${myRst} ${myRst} ${mySummit} TU`,
             prompt: "Roger, their report, your summit ref, TU. S2S: both refs get logged.",
-            mustContain: [myRst, mySummit],
+            mustContain: required(myRst, mySummit),
           },
           {
             who: "dx",
@@ -1219,7 +1260,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `${myCall}`,
             prompt: "Chase it — your callsign once. SOTA pileup protocol is the same everywhere.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1230,7 +1271,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `BK R R UR ${myRst} ${myRst} TU`,
             prompt: "Roger, their report, TU. Short is right — they're on battery.",
-            mustContain: [myRst],
+            mustContain: required(myRst),
           },
           {
             who: "dx",
@@ -1258,7 +1299,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
           who: "you",
           suggested: `${myCall}`,
           prompt: "Chase it — your callsign once, like a POTA pileup.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1269,7 +1310,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
           who: "you",
           suggested: `BK R R UR ${myRst} ${myRst} TU`,
           prompt: "Roger, send their report, TU. Summit ops are on battery — keep it tight.",
-          mustContain: [myRst],
+          mustContain: required(myRst),
         },
         {
           who: "dx",
@@ -1292,7 +1333,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: cqCall("sota", `${myCall}/P`, summit),
         prompt: `Call CQ SOTA signing portable. Summit ref ${summit} goes in the CQ — chasers expect it there.`,
-        mustContain: ["CQ", "SOTA", myCall],
+        mustContain: required("CQ", "SOTA", myCall),
       },
       {
         who: "dx",
@@ -1303,7 +1344,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: `${dx} GM UR ${myRst} ${myRst} BK`,
         prompt: "Work the chaser — their call, GM, their report twice, BK.",
-        mustContain: [myRst],
+        mustContain: required(myRst),
       },
       {
         who: "dx",
@@ -1314,7 +1355,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: `BK TU ES 73 DE ${myCall}/P EE`,
         prompt: "Close with BK TU, 73, your portable call, dit-dit. Battery doesn't wait.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1342,7 +1383,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
           who: "you",
           suggested: `${myCall}`,
           prompt: "DX-style pileup — your callsign once, then listen hard.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1353,7 +1394,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
           who: "you",
           suggested: `R ${rpt} ${rpt} TU`,
           prompt: "Confirm and report — fast and clean. The pileup is waiting.",
-          mustContain: [rpt],
+          mustContain: required(rpt),
         },
         {
           who: "dx",
@@ -1376,7 +1417,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: cqCall("iota", myCall, ref),
         prompt: `Call CQ IOTA with your island ref ${ref}. Contest pace.`,
-        mustContain: ["CQ", "IOTA", myCall],
+        mustContain: required("CQ", "IOTA", myCall),
       },
       {
         who: "dx",
@@ -1387,7 +1428,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: `${chaser} ${myRpt} ${myRpt} ${ref} ${ref} TU`,
         prompt: "Give them report and island ref twice, TU. That's the whole IOTA exchange.",
-        mustContain: [myRpt],
+        mustContain: required(myRpt),
       },
       {
         who: "dx",
@@ -1398,7 +1439,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: `TU 73 QRZ IOTA DE ${myCall} K`,
         prompt: "TU, straight to QRZ, back to calling. Island stations keep the rate up.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1438,7 +1479,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
           who: "you",
           suggested: `${myCall}`,
           prompt: step2Prompt,
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1449,7 +1490,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
           who: "you",
           suggested: `${rpt} TU`,
           prompt: "Their report back, TU. That's the full DX exchange.",
-          mustContain: [rpt, "TU"],
+          mustContain: required(rpt, "TU"),
         },
         {
           who: "dx",
@@ -1470,7 +1511,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: cqCall("dx", myCall),
         prompt: "Call CQ DX — CQ DX, DE, your call. Keep calling until someone answers.",
-        mustContain: ["CQ", "DX", myCall],
+        mustContain: required("CQ", "DX", myCall),
       },
       {
         who: "dx",
@@ -1481,7 +1522,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: `${dxCall} ${rpt} ${rpt}`,
         prompt: "Work them — their call, then report twice. Short and clean.",
-        mustContain: [rpt],
+        mustContain: required(rpt),
       },
       {
         who: "dx",
@@ -1492,7 +1533,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: `TU QRZ DX DE ${myCall}`,
         prompt: "TU, then back to calling — QRZ DX, DE, your call.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1542,7 +1583,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
           // and "DE" are routinely dropped ("TEST K9MTE" is a valid call), so
           // TEST + call are required and CQ is credited-if-present, never required.
           // CONTEST satisfies TEST via COURTESY_EQUIVALENTS.
-          mustContain: ["TEST", myCall],
+          mustContain: required("TEST", myCall),
         },
         {
           who: "dx",
@@ -1553,7 +1594,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
           who: "you",
           suggested: `${dxCall} ${rpt} ${myExch}`,
           prompt: `Work them — their call, report, your ${opts.contestType === "zone" ? "zone" : "serial"}.`,
-          mustContain: [rpt, myExch],
+          mustContain: required(rpt, myExch),
         },
         {
           who: "dx",
@@ -1564,7 +1605,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
           who: "you",
           suggested: `TU ${myCall} TEST`,
           prompt: "Close with TU, your call, TEST. Back to calling immediately.",
-          mustContain: ["TU"],
+          mustContain: required("TU"),
         },
       ],
     };
@@ -1584,7 +1625,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
         who: "you",
         suggested: `${myCall}`,
         prompt: "Pounce — your call once. Don't repeat, don't say DE.",
-        mustContain: [myCall],
+        mustContain: required(myCall),
       },
       {
         who: "dx",
@@ -1595,7 +1636,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
         who: "you",
         suggested: `${rpt} ${myExch} TU`,
         prompt: `Report + your ${opts.contestType === "zone" ? "zone" : "serial"} + TU. Fast and clean.`,
-        mustContain: [rpt, myExch],
+        mustContain: required(rpt, myExch),
       },
       {
         who: "dx",

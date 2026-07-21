@@ -3085,6 +3085,18 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     // SHOW-SUGGESTED reference), never the grading target.
     const { score, hits, missing } = gradeSend(cur.mustContain, sent);
     setSendResult({ score, hits, need: cur.mustContain });
+    // score === null → this step has no required elements to check (the ANSWER
+    // steps require only [myCall], so an operator who has cleared their callsign
+    // in Settings lands here). Say so plainly and keep it OUT of the trend: a
+    // grade we didn't earn the right to give must not move the average, and a
+    // flat 0% would be an unreachable zero. TRANSMIT still advances the contact.
+    if (score === null) {
+      setResultLive("Send not scored — this step has no required elements. Add your callsign in Settings to have it graded.");
+      // Still call armAutoAdvance: a null score never arms (its 100%-only gate),
+      // but the call also cancels any advance left pending from a prior CHECK.
+      armAutoAdvance(score, () => advance({ who: settings.myCall, text: keyer.decoded || "(sent)" }));
+      return;
+    }
     // Accumulate for per-conversation aggregate (B4). Same 0–100 range as before,
     // no schema change — the send-trend now measures required-elements accuracy
     // instead of script fidelity (a semantics improvement, not a format change).
@@ -3546,7 +3558,17 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           </div>
           {sendResult && (
             <div style={{ marginTop: 12 }}>
-              <Score pct={sendResult.score} />
+              {/* A null score means there was nothing to require on this step —
+                  render the stated non-scored notice, never a "0%" the operator
+                  could not have avoided. (aria-hidden: the resultLive region
+                  announces it, same as <Score> does for a real grade.) */}
+              {sendResult.score === null ? (
+                <p aria-hidden="true" style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", margin: "10px 0 0", lineHeight: 1.55 }}>
+                  NOT SCORED — this step has no required elements. Add your callsign in Settings to have it graded.
+                </p>
+              ) : (
+                <Score pct={sendResult.score} />
+              )}
               <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem", marginTop: 6 }}>
                 {sendResult.need.map((m) => (
                   <span key={m} style={{ marginRight: 12, color: sendResult.hits.includes(m) ? "#8FCB9B" : "#E07A5F" }}>
