@@ -1885,8 +1885,11 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
     // Guard: an empty answer box yields a meaningless 0% — skip it so junk
     // records don't pollute the trend.  Mirrors the QSO copy-input guard
     // (disabled={!copyAttempt.trim()}) and the KEY fist.elements > 0 guard.
+    // `conditions` (schema v3) records what the attempt was made UNDER, so PROGRESS
+    // can keep a REAL LIFE run (noise + QSB) apart from an EASY one instead of
+    // pooling them and showing the harder setting as accuracy falling.
     if (record && attempt.trim()) {
-      record("copy", { t: Date.now(), source, pct });
+      record("copy", { t: Date.now(), source, conditions: difficulty, pct });
     }
     // Update the always-mounted sr-only region. Because the region is already in the
     // DOM (empty), the AT sees a text change and announces it — the fix for the
@@ -4466,18 +4469,28 @@ function ProgressView({ progress }) {
 
       {/* ---- COPY section ---- */}
       <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 10 }}>COPY — Accuracy by rung</div>
+        <div style={{ ...S.label, marginBottom: 10 }}>COPY — Accuracy by rung and conditions</div>
         {copyGroups.length === 0 ? (
           <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
             No COPY sessions yet — pick a level and CHECK a target to start tracking your accuracy.
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* One row per (rung, conditions) pair — see copyTrend(). The conditions
+                are spelled out beside the rung so a REAL LIFE run reads as a harder
+                task, not as the operator getting worse. */}
             {copyGroups.map((g) => (
-              <div key={g.source} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
+              <div key={`${g.source}/${g.conditions}`} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>{g.source}</span>
-                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
+                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>
+                    {g.source}
+                    <span style={{ color: S.text.dim, fontSize: "0.75rem" }}> · {g.conditionsLabel}</span>
+                  </span>
+                  {/* nowrap: at 360px the longest header ("wordswide · conditions
+                      not recorded") squeezes this column until "last" breaks onto
+                      its own line. Measured: the header wraps instead, and the row
+                      still fits with no overlap and no horizontal overflow. */}
+                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C", whiteSpace: "nowrap" }}>
                     last {g.lastPct}%
                     {fmtDate(g.lastT) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(g.lastT)}</span>}
                   </span>
@@ -4485,7 +4498,7 @@ function ProgressView({ progress }) {
                 <BarTrend
                   variant="accuracy"
                   values={g.recent}
-                  ariaLabel={accuracyAriaLabel(`${g.source} copy accuracy`, g.recent)}
+                  ariaLabel={accuracyAriaLabel(`${g.source} copy accuracy, ${g.conditionsLabel}`, g.recent)}
                 />
               </div>
             ))}
