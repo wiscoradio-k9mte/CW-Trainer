@@ -3607,11 +3607,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               the one element that matters is real operating practice and good teaching.
               Rendered as a div rather than a <p> so its bottom margin is explicit —
               that reclaimed margin pays for most of the label line.
-              GATED ON !armed: this is the COPY-mode focus aid, so it swaps out with
-              the copy field it serves. BREAK-IN mode shows the transmission
-              transport and the key, nothing that belongs to typing — and every row
-              left above the key pushes the key further from the operator's thumb
-              (measured 68px for this block). It is one Esc away. */}
+              GATED ON !armed. THE RULE, STATED ONCE HERE AND REFERRED TO BELOW:
+              break-in mode shows the key and what you need while keying — your
+              decode, the fill tokens, the station's answer. Everything that gets the
+              over back for you WITHOUT asking — this hint, the noise trim, the
+              REPLAY/SLOWER transport, the copy field — steps aside, one Esc away.
+              Every row left above the key also pushes the key further from the
+              operator's thumb; this block measures 68px. */}
           {difficulty !== "real" && !armed && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...S.label, marginBottom: 2 }}>Listen for</div>
@@ -3639,11 +3641,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             </div>
           )}
 
-          {/* Same !armed rule as the "Listen for" hint above, and for the same
-              reason: band noise is a COPY aid — it sets how hard the copying is —
-              so it steps aside in BREAK-IN mode along with everything else that
-              serves typing. The noise itself is unaffected (it is player state, not
-              this control's), and the slider is one Esc away. Worth 68px measured
+          {/* Same !armed rule as the "Listen for" hint above: band noise sets how
+              hard the copying is, so it steps aside with the copying. The noise
+              itself is unaffected (it is player state, not this control's), and the
+              slider is one Esc away. Worth 68px measured
               (armed key surface on `real`: 773 -> 705), which is what pays for the
               disclosure trigger on the one difficulty that has no "Listen for" hint
               to give up. Same 68px as the hint block, by coincidence. */}
@@ -3654,11 +3655,27 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-            <button style={S.btn} onClick={() => playDx(cur.text)}>↻ REPLAY</button>
-            <button style={S.btn} onClick={() => playDx(cur.text, { eff: Math.max(5, settings.effWpm - 3) })}>🐢 SLOWER</button>
-            <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
-          </div>
+          {/* Same !armed rule again, and this is the one with a real operating
+              argument behind it rather than only a geometric one: REPLAY and SLOWER
+              are the OFFLINE equivalents of the two fill tokens the legend under the
+              key teaches — ? / AGN ("repeat it all") and QRS ("slower please"). On
+              the air you cannot press replay; you ask with your key. Offering the
+              free version of the thing the mode exists to teach, at the exact moment
+              it is teaching it, is the same two-controls-one-action ambiguity the
+              disclosure removed for the key itself.
+              STOP goes with them: a lone STOP on an otherwise empty row reads as a
+              leftover. DISCLOSED FRICTION — after a fill the station replays while
+              you are still armed, and cutting that replay short now needs Esc first.
+              Judged acceptable: listening to the repeat you just asked for is the
+              expected behaviour, and Esc is the same key that returns you to the copy
+              field anyway. Worth 52px measured, on the app's tightest surface. */}
+          {!armed && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              <button style={S.btn} onClick={() => playDx(cur.text)}>↻ REPLAY</button>
+              <button style={S.btn} onClick={() => playDx(cur.text, { eff: Math.max(5, settings.effWpm - 3) })}>🐢 SLOWER</button>
+              <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+            </div>
+          )}
 
           {/* Required path FIRST, repair tool second — the reading order now matches
               the doing order: hear it → type it → check it → continue. In BREAK-IN

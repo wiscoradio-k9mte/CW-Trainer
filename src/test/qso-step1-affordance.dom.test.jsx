@@ -263,34 +263,44 @@ describe("M1 — break-in collapses behind one disclosure", () => {
 //
 // The table below is a RECORD OF A MEASUREMENT, not an invariant anything checks.
 // Headed Chromium, document-relative (rect.bottom + scrollY after scrollTo(0,0)),
-// realistic installed state, QSO PRNG seed 20260722. Armed key-surface bottom:
+// realistic installed state, QSO PRNG seed 20260722. Armed key-surface bottom,
+// "rework" = the geometry pass, "+M4" = that plus the transport-row suppression:
 //
-//   NARROW — identical at 375x667 / 360x780 / 390x844:
-//                       main    branch tip    after rework
-//   normal (default)     730         916            705
-//   real life            749         916            705
-//   easy                 849         999            824   (seed-DEPENDENT, below)
+//   NARROW, 375x667 and 390x844 (identical to each other):
+//                       main    branch tip    rework    +M4
+//   normal (default)     730         916        705     609   (fits 667)
+//   real life            749         916        705     609   (fits 667)
+//   easy                 849         999        824     728
+//   NARROW, 360x780 — easy ONLY differs here, +15px, see WIDTH note below:
+//   easy                  —           —         839     743
 //
-//   WIDE 1133x744 (isWide) — the branch is WORSE here, disclosed not fixed:
-//   normal               582         n/m            603   (+21 vs main)
-//   easy                 701         n/m            722   (+21 vs main)
-//   At isWide the "Listen for" hint and the noise slider live in the RAIL, so the
-//   !armed savings below do not apply and the disclosure row is pure added height.
-//   The pressable zones still clear the 744 fold by 22px on easy and 141px on
-//   normal, so it is not a failure — but on easy the key block's trailing keyboard
-//   hint line ends at 747, 3px under (main: 726). Flagged by the delta re-gate
-//   2026-07-22 and re-measured here on separately built bundles. My own first claim
-//   table wrote main as "—" at this cell, i.e. it reported an `after` with no
-//   `before` — the same shape as the difficulty gap, one axis over. Breakpoint is a
-//   state axis too.
+//   WIDE 1133x744 (isWide):
+//   normal               582         n/m         603     553   (-29 vs main)
+//   easy                 701         n/m         722     672   (-29 vs main)
+//   The rework was +21px WORSE than main here, because at isWide the "Listen for"
+//   hint and the noise slider live in the RAIL so their !armed savings do not
+//   apply. The transport row does NOT live in the rail, so M4 lands at this
+//   breakpoint too (-50px, one line rather than the two it wraps to on narrow) and
+//   the wide regression is closed. That regression was found by the delta re-gate
+//   because my first claim table wrote main as "—" here: an `after` with no
+//   `before`. Breakpoint is a state axis.
 //
-// SEED SENSITIVITY: normal and real are seed-invariant. `easy` is NOT: the delta
-// re-gate measured 824 on five of its seeds and 839 on a sixth, where the
-// "<DX> is sending — <flavor> — step N of M" header wraps one extra line for a
-// longer flavor/callsign draw. I could not reproduce the 839 — twelve seeds here
-// (1, 2, 3, 5, 7, 11, 13, 20260722, 31337, 99991, 424242, 8675309) all gave 824 —
-// so the wrap is rare rather than absent, and the honest reading is that easy's
-// 390x844 margin is 5-20px, not 20px. Quote the seed with any easy-mode figure.
+//   WORST-CASE CONTENT (every readout stuffed far past what the app can produce):
+//   normal / real  +M4: 645 at all narrow cells, 785 wide — still fits 667.
+//   easy           +M4: 1236 / 1260 / 1299 narrow, 1136 wide. PRE-EXISTING and not
+//   this branch's: easy renders the live "Sending" text in an UNCAPPED Display, so
+//   its height follows the over. The compact decode readout is capped (maxHeight
+//   76 + scroll) and does not move. Flagged, out of scope here.
+//
+// WIDTH, NOT SEED — a correction to what this header said before. The delta re-gate
+// saw easy at 839 on one seed and attributed it to the draw. It reproduces
+// deterministically at 360x780 on seed 20260722: the narrower viewport wraps the
+// "<DX> is sending — <flavor> — step N of M" header one line further. Twelve seeds
+// at 390x844 (1, 2, 3, 5, 7, 11, 13, 20260722, 31337, 99991, 424242, 8675309) all
+// gave the same number, so seed sensitivity is unproven and width sensitivity is
+// measured. An earlier version of this comment said easy was "identical at all
+// three" narrow viewports — it had never been measured at 360x780. Quote the
+// viewport AND the seed with any easy-mode figure.
 //
 // The pre-rework branch read 844 at 390x844 and looked like a pass ONLY because
 // arming focuses the key surface and the browser auto-scrolled 72px first.
@@ -330,6 +340,30 @@ describe("REACH — what may sit above the key while break-in is armed", () => {
 
     await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
     expect(screen.getByText("Listen for")).toBeInTheDocument();
+  });
+
+  it("the REPLAY / SLOWER / STOP transport steps aside while armed, deferring to the fill tokens", async () => {
+    const { user } = await startDxStep();
+
+    expect(screen.getByRole("button", { name: /REPLAY/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /SLOWER/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /STOP/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
+
+    // REPLAY and SLOWER are the offline equivalents of ? / AGN and QRS. While the
+    // panel is teaching you to ask with the key, the free version of the same two
+    // actions is not on screen beside it.
+    expect(screen.queryByRole("button", { name: /REPLAY/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /SLOWER/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /STOP/ })).not.toBeInTheDocument();
+    // ...and what it defers TO is present, below the key.
+    expect(screen.getByText(/repeat the whole transmission/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
+    expect(screen.getByRole("button", { name: /REPLAY/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /SLOWER/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /STOP/ })).toBeInTheDocument();
   });
 
   it("on 'real', the Band noise slider steps aside too — same rule, and it is what pays for the trigger row", async () => {
