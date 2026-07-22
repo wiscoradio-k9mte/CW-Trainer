@@ -1010,7 +1010,9 @@ function useCountdown() {
 
   // cancel() stops a running countdown without firing its callback.
   // Called on QSO advance() and ABANDON so a DX countdown started mid-step
-  // doesn't fire playDx() into a later step after the user moves on.
+  // doesn't fire playDx() into a later step after the user moves on — and on
+  // both ■ STOP buttons (COPY and the QSO DX step), where the user is asking
+  // for the pending transmission not to happen at all.
   const cancel = useCallback(() => {
     clearInterval(intervalRef.current);
     intervalRef.current = null;
@@ -1802,7 +1804,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // (The live region is already in the DOM before check() fires — that's the fix.)
   const [scoreLive, setScoreLive] = useState("");
   const noiseGain = (v) => (v / 100) * 0.5;
-  const { countdown, start: startCountdown } = useCountdown();
+  const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
   // Auto-focus the copy input when a new target arrives so the user can type
   // immediately without clicking. Guard against null (input not yet in the DOM
   // on the first render before the target exists).
@@ -1867,6 +1869,16 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
       qsb: difficulty === "real",
       onChar: difficulty === "easy" ? (idx) => setLiveText(text.slice(0, idx + 1)) : undefined,
     });
+  };
+
+  // STOP means "nothing more is coming". It has to cancel a pending pre-play
+  // countdown as well as any audio in flight: during the "Get ready" beat nothing
+  // is playing yet, so a stop-the-audio-only handler was a visible no-op and the
+  // transmission still fired when the countdown ran out. Cancelling before the
+  // interval expires also means newTarget() never runs — no target is generated.
+  const stopAll = () => {
+    cancelCountdown();
+    player.stop();
   };
 
   const check = () => {
@@ -1977,7 +1989,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
         <button style={S.btnAmber} onClick={() => startCountdown(() => { const t = newTarget(); playTarget(t); })}>▶ NEW</button>
         <button style={S.btn} onClick={() => playTarget()} disabled={!target}>↻ REPLAY</button>
         <button style={S.btn} onClick={() => playTarget(null, { eff: Math.max(4, settings.effWpm - 3) })} disabled={!target}>🐢 SLOWER</button>
-        <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+        <button style={S.btn} onClick={stopAll}>■ STOP</button>
         <button style={S.btn} onClick={() => setRevealed(true)} disabled={!target}>👁 REVEAL</button>
       </div>
 
@@ -2852,6 +2864,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     });
   };
 
+  // STOP means "nothing more is coming" — same contract as COPY's STOP. The
+  // pre-transmission countdown has to be cancelled too: during "Get ready"
+  // nothing is playing yet, so stopping only the audio left the operator
+  // watching a dead button while the DX transmission fired anyway.
+  // The step stays put; REPLAY is how the user hears it when they are ready.
+  const stopAll = () => {
+    cancelCountdown();
+    player.stop();
+  };
+
   // Band noise lives with real-life mode while a contact is underway
   useEffect(() => {
     if (qso && step < qso.steps.length && difficulty === "real") {
@@ -3455,7 +3477,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             <button style={S.btn} onClick={() => playDx(cur.text)}>↻ REPLAY</button>
             <button style={S.btn} onClick={() => playDx(cur.text, { eff: Math.max(5, settings.effWpm - 3) })}>🐢 SLOWER</button>
-            <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+            <button style={S.btn} onClick={stopAll}>■ STOP</button>
           </div>
 
           <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
