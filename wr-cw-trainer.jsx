@@ -3945,8 +3945,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               50px at isWide — on the app's tightest surface.
 
               MERGE NOTE (fix/key-above-fold-375 composed in): that branch packed
-              these three onto ONE row on narrow as equal thirds — worth a measured
-              46px at 375 when the row still sat above the key. The `!armed` gate
+              these three onto ONE row on narrow as equal thirds (the pattern KEY's
+              narrowActionButtons already ships) — worth a measured 46px at 375,
+              where the default padding wrapped them onto TWO rows, back when the
+              row still sat above the key. It is a WIDTH change, not a height one:
+              each button lands ~103px at 375 and ~96px at 360, well above any
+              touch minimum, and the row stays >=40px tall. Wide is unchanged.
+              The `!armed` gate
               above spends that particular saving (the row and the key are never on
               screen together now), but the packing still governs the UNARMED state,
               which is the state src/test/narrow.dom.test.jsx "packs the transport
