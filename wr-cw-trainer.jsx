@@ -1746,6 +1746,65 @@ function Tag({ verdict, children }) {
   );
 }
 
+/* ================= INTRO PANEL (tab orientation) ================= */
+//
+// Every practice tab opens with a block of orientation prose. It is teaching
+// content, so it is never destroyed — but the tab components unmount on every
+// tab switch, so a returning operator was re-taught the tab on every entry and
+// every app launch. Measured at 390x844 in the realistic installed state, that
+// pushed the start control's bottom to 1317px on COPY, 985px on KEY and 706px
+// on QSO — all of it scrolled past to reach the thing they came to do.
+//
+// So each tab's intro is a disclosure: the collapsed state persists under that
+// tab's own store key, and the tab collapses it once the operator has actually
+// started a session there. First run stays expanded — hiding the teaching from
+// someone who has not yet practised would be solving geometry the wrong way.
+//
+// storeKey is one per tab, so collapsing COPY's orientation never touches KEY's
+// or QSO's.
+function useIntroCollapse(storeKey) {
+  const [collapsed, setCollapsed] = useState(() => store.load(storeKey, false));
+  const write = (next) => {
+    setCollapsed(next);
+    store.save(storeKey, next);
+  };
+  return {
+    collapsed,
+    // The disclosure control. Re-opening persists too, so an operator who wants
+    // the orientation back gets it back on the next entry as well.
+    toggle: () => write(!collapsed),
+    // Called when the operator starts a session on this tab: having practised
+    // once, they have demonstrably read (or chosen to skip) the orientation.
+    // Idempotent, so calling it on every start is safe.
+    onSessionStart: () => write(true),
+  };
+}
+
+// IntroPanel — the header row + disclosure control shared by COPY, KEY and QSO,
+// so all three carry the same wording, the same keyboard behaviour (it is a
+// plain <button>) and the same accessible name/state. The collapsed flag is
+// owned by the caller's useIntroCollapse, not by this component.
+//
+// aria-expanded (not aria-controls) is the state carrier here: the body follows
+// the button directly in DOM order, and there is no body element to point at
+// while collapsed.
+function IntroPanel({ title, collapsed, onToggle, children }) {
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: collapsed ? 0 : 10 }}>
+        <div style={S.label}>{title}</div>
+        <button
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Show intro" : "Hide intro"}
+          style={{ ...S.btn, fontSize: "0.6875rem", padding: "4px 10px", color: S.text.dim }}
+          onClick={onToggle}
+        >{collapsed ? "▸ show intro" : "▾ hide intro"}</button>
+      </div>
+      {!collapsed && children}
+    </>
+  );
+}
+
 /* ================= COMPACT SELECT (the standard compact-selector) ================= */
 //
 // One reusable single-select disclosure used by every content/setup menu in the
@@ -2065,6 +2124,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // set in check() so the screen reader sees a *change* and announces it.
   // (The live region is already in the DOM before check() fires — that's the fix.)
   const [scoreLive, setScoreLive] = useState("");
+  const intro = useIntroCollapse("introCopyCollapsed");
   const noiseGain = (v) => (v / 100) * 0.5;
   const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
   // Auto-focus the copy input when a new target arrives so the user can type
@@ -2118,6 +2178,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
     setResult(null);
     setRevealed(false);
     setLiveText("");
+    intro.onSessionStart();
     return t;
   };
 
@@ -2177,8 +2238,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // Goes in main in both modes (per design §5: the intro wants the wide column,
   // and it's transient — once a target is set it disappears).
   const introJSX = !target && (
-    <>
-      <div style={{ ...S.label, marginBottom: 10 }}>Copy practice</div>
+    <IntroPanel title="Copy practice" collapsed={intro.collapsed} onToggle={intro.toggle}>
       <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
         This is where the receiving ear gets built. Start at the top of the ladder — a single character — and climb as each rung gets comfortable: pairs, short groups, real words, callsigns, full phrases. Characters always play at full speed; the Farnsworth spacing gives you thinking room between them. Most ops can send faster than they can copy. This tab closes that gap.
       </p>
@@ -2188,7 +2248,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
           The goal is instant character recognition — hearing each letter as a single sound and knowing it on the spot, without counting dits and dahs or pausing to decode. To build that reflex, keep a pencil and paper handy: listen to the full transmission, write each character by hand the instant you recognize it, then type your answer once playback ends. Writing as you hear trains the immediate sound-to-letter response that fluent copy depends on, and it keeps you from splitting your focus between listening and typing. It's also how copy is done on the air.
         </p>
       </div>
-    </>
+    </IntroPanel>
   );
 
   // optionsJSX — level ladder + Conditions selector + noise slider.
@@ -2366,11 +2426,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // analysis: the fist-timing result from analyzeFist, shown after CHECK
   const [analysis, setAnalysis] = useState(null);
   const [errFlash, setErrFlash] = useState(false);
-  // E5: intro panel collapsed state — persisted via store so returning users skip it.
-  // Default: expanded (false) on first run; once dismissed, stays collapsed.
-  const [introCollapsed, setIntroCollapsed] = useState(
-    () => store.load("introKeyCollapsed", false)
-  );
+  // E5: intro panel collapsed state — persisted under the key this tab has always
+  // used, so an operator's existing choice survives.
+  const intro = useIntroCollapse("introKeyCollapsed");
   // Live-region text for score + fist summary (C1, design §0). Empty when idle;
   // set in check() so the AT sees a change and speaks it.
   const [scoreLive, setScoreLive] = useState("");
@@ -2468,6 +2526,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     setResult(null);
     setAnalysis(null);
     keyer.clear();
+    intro.onSessionStart();
   };
 
   const check = () => {
@@ -2609,31 +2668,17 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // Always goes in main (wants the wider column; teaching content). Same in both modes.
   const introJSX = !target && (
     <div style={S.panel}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introCollapsed ? 0 : 10 }}>
-        <div style={S.label}>Sending practice</div>
-        <button
-          aria-label={introCollapsed ? "Show intro" : "Hide intro"}
-          style={{ ...S.btn, fontSize: "0.6875rem", padding: "4px 10px", color: "#8A929C" }}
-          onClick={() => {
-            const next = !introCollapsed;
-            setIntroCollapsed(next);
-            store.save("introKeyCollapsed", next);
-          }}
-        >{introCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
-      </div>
-      {!introCollapsed && (
-        <>
-          <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-            Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
+      <IntroPanel title="Sending practice" collapsed={intro.collapsed} onToggle={intro.toggle}>
+        <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+          Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
+        </p>
+        <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+          <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
+          <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+            Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle (near the key-type selector) if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
           </p>
-          <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
-            <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
-            <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle (near the key-type selector) if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
-            </p>
-          </div>
-        </>
-      )}
+        </div>
+      </IntroPanel>
     </div>
   );
 
@@ -3067,11 +3112,9 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const fillTimer = useRef(null);
   const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
 
-  // E5: intro paragraph collapsed state — persisted via store so returning users skip it.
-  // Default: expanded (false) on first run; once dismissed, stays collapsed.
-  const [introQsoCollapsed, setIntroQsoCollapsed] = useState(
-    () => store.load("introQsoCollapsed", false)
-  );
+  // E5: intro paragraph collapsed state — persisted under the key this tab has
+  // always used, so an operator's existing choice survives.
+  const intro = useIntroCollapse("introQsoCollapsed");
 
   // stepLive: text for the always-mounted step-transition live region (polite).
   // Set in advance() when a new DX or "your turn" step begins.
@@ -3269,6 +3312,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     qsoAdvanceTimer.current = null;
     // Reset per-conversation score arrays (B4)
     setCopyScores([]); setSendScores([]);
+    intro.onSessionStart();
     if (difficulty === "real") player.startNoise(noiseGain(noise), settings.freq, settings.rxFilter);
 
     // First step: if it's a dx step, count down then play.
@@ -3553,27 +3597,20 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // introJSX — collapsible orientation paragraph. Goes in main in both modes.
   // On wide it gets its own panel; on narrow it's folded into the setup panel
   // below (matching today's single-box appearance on mobile).
+  // The trailing gap is QSO's alone: on narrow this block shares a panel with the
+  // setup selectors below it, so without it the orientation (collapsed OR expanded)
+  // butts straight up against the ACTIVITY label. COPY and KEY each own their panel
+  // and need no such separator.
   const introJSX = !qso && (
-    <>
-      {/* E5: collapsible intro — same pattern as KeyTrainer. Toggle persists via store. */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introQsoCollapsed ? 10 : 0 }}>
-        <div style={S.label}>Simulated contact</div>
-        <button
-          aria-label={introQsoCollapsed ? "Show intro" : "Hide intro"}
-          style={{ ...S.btn, fontSize: "0.6875rem", padding: "4px 10px", color: "#8A929C" }}
-          onClick={() => {
-            const next = !introQsoCollapsed;
-            setIntroQsoCollapsed(next);
-            store.save("introQsoCollapsed", next);
-          }}
-        >{introQsoCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
-      </div>
-      {!introQsoCollapsed && (
-        <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", marginTop: 8, marginBottom: 0 }}>
+    <div style={{ marginBottom: 10 }}>
+      <IntroPanel title="Simulated contact" collapsed={intro.collapsed} onToggle={intro.toggle}>
+        {/* margin 0: the gap under the header row is IntroPanel's, shared with the
+            other two tabs, so all three read the same. */}
+        <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
           Pick your activity and role, then work the full exchange — CQ, RST, name, QTH — through to the sign-off. On each over you can check your copy before continuing, or just answer the way you would on the air.
         </p>
-      )}
-    </>
+      </IntroPanel>
+    </div>
   );
 
   // optionsJSX — Activity / Role / Conditions selectors + noise slider + start

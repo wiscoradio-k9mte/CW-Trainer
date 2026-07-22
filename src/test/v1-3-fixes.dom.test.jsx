@@ -230,7 +230,9 @@ describe("Fix 7 — ephemeral session summary on BACK from LEARN drill", () => {
     // v2.0 (cross-session history) — it is a legitimate new key, not a leak.
     const keys = Object.keys(window.localStorage);
     for (const key of keys) {
-      expect(key).toMatch(/^wrcw:(kochLesson|settings|introKeyCollapsed|seenCallNudge|progress)$/);
+      // introCopyCollapsed / introQsoCollapsed are the COPY and QSO siblings of
+      // introKeyCollapsed — one intro-disclosure flag per practice tab.
+      expect(key).toMatch(/^wrcw:(kochLesson|settings|intro(Copy|Key|Qso)Collapsed|seenCallNudge|progress)$/);
     }
   });
 });
