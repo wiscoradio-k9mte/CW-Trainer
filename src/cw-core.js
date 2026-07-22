@@ -1775,7 +1775,7 @@ export function isReadyToAdvance(history) {
 // RETENTION: keep the last 50 records per category (generous, bounded).
 // 50 × 3 categories × ~200 bytes ≈ 30 KB — trivial for localStorage (5 MB+).
 //
-// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 2.
+// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 3.
 // migrateProgress() walks PROGRESS_MIGRATIONS from the stored version up to
 // current and carries the data forward; it never wipes on a version mismatch.
 //
@@ -1784,7 +1784,13 @@ export function isReadyToAdvance(history) {
 // QSO records; an older build reading back must NOT strip them. Document and test.
 
 export const PROGRESS_RETENTION = 50;
-export const PROGRESS_SCHEMA_VERSION = 2;
+// v1 — original shape.
+// v2 — KEY verdict fields: a stored "good" is demoted to null (an unmeasured
+//      reading used to be recorded as "good"). From fix/unmeasured-spacing-verdicts.
+// v3 — COPY records carry `conditions` ("easy" | "normal" | "real"). Purely
+//      additive: records written before v3 have no `conditions` and are grouped
+//      and labelled as unknown rather than being assumed to be any one setting.
+export const PROGRESS_SCHEMA_VERSION = 3;
 
 // Known categories in this schema version.
 const KNOWN_PROGRESS_CATEGORIES = ["learn", "key", "copy", "qso"];
@@ -1846,17 +1852,35 @@ function dropUnprovenV1Verdicts(rec) {
 // Shape: { [fromVersion: number]: (obj: object) => object }
 // Each function transforms a blob from `fromVersion` to `fromVersion + 1`.
 // Functions must be pure and must not throw (errors are caught by migrateProgress).
+// A missing entry means that step needs no transform; the walk just increments.
+//
+// MERGE HAZARD, READ BEFORE EDITING THIS MAP. Slot 1 and the slot-2 note below
+// arrived on two independent branches (fix/unmeasured-spacing-verdicts and
+// fix/copy-condition-pooling) that both rewrote this block. Resolving that
+// conflict by taking either side WHOLE deletes the other's decision, and the
+// suite stays green either way: drop slot 1 and every stored v1 "good" verdict
+// is silently promoted back into PROGRESS; drop the slot-2 note and the next
+// person adds a backfill this schema deliberately does not have. The round-trip
+// test "a v1 blob migrates all the way to v3" in cw-core.test.js is the guard
+// that does bite — keep it.
 const PROGRESS_MIGRATIONS = {
-  // v1 → v2: spacing/weighting verdicts gained a "null = never measured" state.
-  // A v1 record's "good" cannot be trusted (see V1_AMBIGUOUS_VERDICT_FIELDS), so
-  // it is demoted to null and PROGRESS simply shows no chip for it. The cost is
-  // disclosed and accepted: a genuinely-measured-good historical verdict is lost.
-  // The alternative — rendering it — would retro-label never-measured sessions as
-  // measured, which is the exact defect this schema change exists to remove.
+  // 1 (v1 → v2): spacing/weighting verdicts gained a "null = never measured"
+  //     state. A v1 record's "good" cannot be trusted (see
+  //     V1_AMBIGUOUS_VERDICT_FIELDS), so it is demoted to null and PROGRESS
+  //     simply shows no chip for it. The cost is disclosed and accepted: a
+  //     genuinely-measured-good historical verdict is lost. The alternative —
+  //     rendering it — would retro-label never-measured sessions as measured,
+  //     which is the exact defect this schema change exists to remove.
   1: (obj) => ({
     ...obj,
     key: Array.isArray(obj.key) ? obj.key.map(dropUnprovenV1Verdicts) : obj.key,
   }),
+
+  // 2 (v2 → v3): deliberately absent. Adding COPY `conditions` is additive-only:
+  //     there is no honest value to backfill onto a pre-v3 record, because the
+  //     app never knew what the operator had the Conditions selector set to.
+  //     Leaving the field absent is the migration — copyTrend() reads absent as
+  //     "unknown" and groups those records separately (see copyConditionsLabel).
 };
 
 // migrateProgress(raw) → a valid progress object.
@@ -1899,7 +1923,12 @@ export function migrateProgress(raw) {
     // missing fields get correct defaults. Stamp schemaVersion last so a migration
     // function can't accidentally leave a stale version number.
     const merged = { ...emptyProgress(), ...obj };
-    merged.schemaVersion = PROGRESS_SCHEMA_VERSION; // always authoritative
+    // Stamp the version the data has actually reached. `fromVersion` is where the
+    // ladder walk ended: PROGRESS_SCHEMA_VERSION for anything we migrated, and the
+    // blob's own (higher) version for a blob written by a NEWER build. Never write
+    // a lower number back than we read — that would tell the newer build its own
+    // data still needs its migration, and it would run it a second time.
+    merged.schemaVersion = fromVersion;
 
     // Per-category default: a bad/missing category array must NOT wipe the others.
     for (const cat of KNOWN_PROGRESS_CATEGORIES) {
@@ -1957,20 +1986,56 @@ export function keyTrend(progress) {
   };
 }
 
-// copyTrend(progress) → last TREND_WINDOW CopyRecords grouped by source rung.
+// COPY_CONDITIONS — the conditions a COPY attempt can be made under, mapped to
+// the plain English used wherever a score is shown. The keys are the values the
+// CopyTrainer's Conditions selector stores on each record; the values are what a
+// learner reads. Never render the raw key.
+export const COPY_CONDITIONS = {
+  easy:   "easy",
+  normal: "normal",
+  real:   "real life",
+};
+
+// Label for a record whose conditions we do not know: written before schema v3,
+// or carrying a value this build doesn't recognise. It is NOT "normal" — saying
+// so would invent a fact about how the operator was practising.
+export const COPY_CONDITIONS_UNKNOWN_LABEL = "conditions not recorded";
+
+// copyConditionsLabel(conditions) → plain-English label, never the raw enum.
+export function copyConditionsLabel(conditions) {
+  return COPY_CONDITIONS[conditions] || COPY_CONDITIONS_UNKNOWN_LABEL;
+}
+
+// copyTrend(progress) → last TREND_WINDOW CopyRecords grouped by rung AND conditions.
+//
+// WHY BOTH: copying through noise and QSB is a harder task than copying a clean
+// signal at the same rung, so the two produce different scores. Pooling them made
+// switching to REAL LIFE look like the operator's accuracy falling — the app
+// telling them they got worse when they had actually raised the difficulty.
+// Each (rung, conditions) pair is its own trend line.
+//
+// Groups appear in first-seen order and only exist when they have records, so a
+// condition never practised on a rung simply isn't shown (rather than a 0% row).
 export function copyTrend(progress) {
   const records = (progress.copy || []).slice(-TREND_WINDOW);
-  const bySource = {};
+  // Keyed by the (rung, conditions) tuple, JSON-encoded so the two parts stay
+  // unambiguous whatever a corrupt blob puts in them.
+  const groups = new Map(); // key -> { source, conditions, recs }
   for (const r of records) {
     // Records written before the `source` field existed have r.source === undefined.
     // Default to "—" so they group under a named rung rather than an `undefined` key
     // (which would render as a garbled "undefined" rung in ProgressView).
-    const key = r.source || "—";
-    if (!bySource[key]) bySource[key] = [];
-    bySource[key].push(r);
+    const source = r.source || "—";
+    // Absent or unrecognised conditions → null, its own honestly-labelled group.
+    const conditions = Object.hasOwn(COPY_CONDITIONS, r.conditions) ? r.conditions : null;
+    const key = JSON.stringify([source, conditions]);
+    if (!groups.has(key)) groups.set(key, { source, conditions, recs: [] });
+    groups.get(key).recs.push(r);
   }
-  return Object.entries(bySource).map(([source, recs]) => ({
+  return [...groups.values()].map(({ source, conditions, recs }) => ({
     source,
+    conditions,
+    conditionsLabel: copyConditionsLabel(conditions),
     recent: recs.map((r) => r.pct),
     lastPct: recs[recs.length - 1].pct,
     // lastT: epoch ms of the most recent record for this rung; used for date

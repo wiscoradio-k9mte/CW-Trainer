@@ -20,6 +20,7 @@ import {
   PROGRESS_RETENTION, PROGRESS_SCHEMA_VERSION,
   emptyProgress, appendProgress, migrateProgress,
   learnTrend, keyTrend, copyTrend,
+  COPY_CONDITIONS, copyConditionsLabel,
   toneFor, qsoTrend,
   splashSignature,
   US_PREFIXES,
@@ -2516,6 +2517,188 @@ describe("migrateProgress()", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// MIGRATION BAR (v3) — the properties every future schema bump must keep.
+//
+// These are deliberately independent of WHICH version is current: they read
+// PROGRESS_SCHEMA_VERSION rather than hardcoding a number, so the next bump
+// inherits the whole bar instead of quietly dropping it.
+// ---------------------------------------------------------------------------
+describe("migrateProgress() — the standing migration bar", () => {
+  // A blob written by the oldest shipped build (v1), one record per category.
+  const v1Blob = () => ({
+    schemaVersion: 1,
+    learn: [{ t: 1, lesson: 1, attempts: 5, correct: 5, pct: 100 }],
+    key:   [{ t: 2, category: "words", keyType: "straight", estWpm: 14, copyPct: 80 }],
+    copy:  [{ t: 3, source: "single", pct: 70 }],
+    qso:   [{ t: 4, activity: "pota", role: "hunter", copyPct: 90, sendPct: 80 }],
+  });
+
+  // MERGE TRIPWIRE. Every other test in this block reads PROGRESS_SCHEMA_VERSION
+  // rather than a literal — deliberately, so the next bump inherits the whole bar.
+  // The cost of that is that the constant itself is pinned by nothing: this branch
+  // and fix/unmeasured-spacing-verdicts CONFLICT in this file (both rewrite the
+  // version line and the PROGRESS_MIGRATIONS block), and a resolution that leaves
+  // the version at 2 keeps the entire suite green while silently skipping the
+  // v2 -> v3 step. This literal is the one assertion that catches that.
+  //
+  // If you are here because this failed after a deliberate bump: raise the number,
+  // add the ladder slot, and say in the commit which migration the bump carries.
+  it("BAR: PROGRESS_SCHEMA_VERSION is 3 (pinned literal — see the merge note above)", () => {
+    expect(PROGRESS_SCHEMA_VERSION).toBe(3);
+  });
+
+  // THE MERGE ROUND-TRIP. The tripwire above catches a version left at 2; this
+  // catches the other half of the same conflict — a resolution that takes the
+  // version bump but drops the slot-1 transform (or takes the transform and
+  // leaves the version at 2). One v1 blob, walked the whole ladder, asserting
+  // BOTH ends: the stamp reaches 3 AND the ambiguous v1 verdict is demoted.
+  //
+  // Why it needs its own test rather than leaning on the v1 -> v2 block above:
+  // those tests are ALSO satisfied by a two-step ladder that stops at 2. Only a
+  // test that pins the end stamp and the transform's effect in the same
+  // assertion set fails on either half being lost. The v1Blob fixture used by
+  // the rest of this bar carries no verdict fields at all, so it cannot see it.
+  //
+  // MUTATIONS RUN (all by assertion, none by crash), 2026-07-22:
+  //   M1  delete slot 1, keep version 3 ("take fix/copy-condition-pooling whole")
+  //       -> this test reds on `expected 'good' to be null` (+2 siblings).
+  //   M2  keep slot 1, set the version back to 2 ("take the sibling whole")
+  //       -> this test reds on `expected 2 to be 3` (+ the tripwire above).
+  //   M3  delete `PROGRESS_MIGRATIONS[fromVersion](obj)` from the walk
+  //       -> reds on `expected 'good' to be null`. (fix/copy-condition-pooling's
+  //       header used to say that invocation was dead code whose deletion left
+  //       the suite green. True while the map was EMPTY; false now that slot 1
+  //       is in it, which is why that comment is gone.)
+  // M1 and M2 red on DIFFERENT assertions of this test, so both layers are earned.
+  it("BAR: a v1 blob walks the FULL ladder to v3 — verdict demoted, qso seam intact", () => {
+    const v1WithVerdicts = {
+      ...v1Blob(),
+      key: [{
+        t: 2, category: "callsigns", keyType: "straight", estWpm: 18, copyPct: 85,
+        elementVerdict: "good",     // v1 ambiguity: measured-good or never-measured?
+        letterVerdict: "good",
+        wordVerdict: "tight",       // only ever produced from a real ratio
+        weightingVerdict: "good",
+      }],
+    };
+    const p = migrateProgress(v1WithVerdicts);
+
+    expect(p.schemaVersion).toBe(3);            // the whole ladder ran
+    expect(p.key[0].elementVerdict).toBeNull(); // slot 1 ran
+    expect(p.key[0].letterVerdict).toBeNull();
+    expect(p.key[0].weightingVerdict).toBeNull();
+    expect(p.key[0].wordVerdict).toBe("tight"); // and ran precisely, not as a wipe
+    expect(p.key[0].copyPct).toBe(85);          // nothing else touched
+    expect(p.qso).toEqual(v1Blob().qso);        // the unknown-key seam survives
+    expect(p.copy[0].conditions).toBeUndefined(); // v2 -> v3 backfills nothing
+  });
+
+  it("BAR: record counts are preserved across every category", () => {
+    const p = migrateProgress(v1Blob());
+    expect(p.learn.length).toBe(1);
+    expect(p.key.length).toBe(1);
+    expect(p.copy.length).toBe(1);
+    expect(p.qso.length).toBe(1);
+    // The COPY record's own fields survive; only `conditions` is newly absent.
+    expect(p.copy[0].source).toBe("single");
+    expect(p.copy[0].pct).toBe(70);
+    expect(p.copy[0].conditions).toBeUndefined();
+  });
+
+  it("BAR: the qso seam is untouched — records pass through byte-for-byte", () => {
+    const p = migrateProgress(v1Blob());
+    expect(p.qso).toEqual(v1Blob().qso);
+  });
+
+  it("BAR: unknown / future top-level fields survive the walk", () => {
+    const p = migrateProgress({ ...v1Blob(), headcopy: [{ t: 9, pct: 42 }], someFlag: true });
+    expect(p.headcopy).toEqual([{ t: 9, pct: 42 }]);
+    expect(p.someFlag).toBe(true);
+  });
+
+  it("BAR: idempotent — migrating a migrated blob changes nothing", () => {
+    // WHAT THIS ACTUALLY GUARDS TODAY: the version STAMP reaching a fixed point.
+    // Mutating the ladder's `while` to an `if` turns it red (a v1 blob then lands
+    // on 2, and a second pass moves it again to 3) — verified, not assumed.
+    //
+    // What it does NOT yet guard is transform PURITY, because v2 -> v3 has no
+    // transform to run twice. It becomes that guard the moment a lossy migration
+    // is reachable from an already-migrated blob, which is why it stays.
+    const once = migrateProgress(v1Blob());
+    const twice = migrateProgress(once);
+    const thrice = migrateProgress(twice);
+    expect(twice).toEqual(once);
+    expect(thrice).toEqual(once);
+  });
+
+  it("BAR: malformed shapes survive without throwing and without shortening arrays", () => {
+    for (const bad of [0, "", [], false, NaN]) {
+      const p = migrateProgress(bad);
+      expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+      expect(p.copy).toEqual([]);
+    }
+    // Partial / junk RECORDS inside a good array are carried, not filtered:
+    // migrateProgress is not a validator, and silently dropping a learner's rows
+    // would be the same data loss this function exists to prevent.
+    const partial = { schemaVersion: 1, learn: [null, {}, { pct: 50 }], key: [], copy: [], qso: [] };
+    const p = migrateProgress(partial);
+    expect(p.learn.length).toBe(3);
+    expect(p.learn[2].pct).toBe(50);
+  });
+
+  it("BAR: a future schemaVersion is NOT downgraded", () => {
+    // MUTATION RUN: restoring `merged.schemaVersion = PROGRESS_SCHEMA_VERSION`
+    // turns this red. Stamping a newer blob back down to ours would make the
+    // newer build re-run a migration it had already applied.
+    const future = { ...v1Blob(), schemaVersion: PROGRESS_SCHEMA_VERSION + 7 };
+    const p = migrateProgress(future);
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION + 7);
+    expect(p.learn.length).toBe(1); // and its data is still readable to us
+  });
+
+  it("BAR: an older blob IS raised to the current version", () => {
+    // The other direction of the same guard — the stamp must not simply echo
+    // whatever was stored.
+    expect(migrateProgress(v1Blob()).schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+    expect(migrateProgress({ learn: [], key: [], copy: [] }).schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  it("BAR: retention keeps the NEWEST entries, not the oldest", () => {
+    const overfull = {
+      schemaVersion: 1,
+      learn: [], key: [], qso: [],
+      copy: Array.from({ length: PROGRESS_RETENTION + 5 }, (_, i) => ({ t: i, source: "single", pct: i })),
+    };
+    const p = migrateProgress(overfull);
+    expect(p.copy.length).toBe(PROGRESS_RETENTION);
+    expect(p.copy[p.copy.length - 1].pct).toBe(PROGRESS_RETENTION + 4); // newest kept
+    expect(p.copy[0].pct).toBe(5);                                       // oldest 5 dropped
+  });
+
+  it("BAR: a frozen input is not mutated", () => {
+    const input = Object.freeze({ ...v1Blob(), copy: Object.freeze([Object.freeze({ t: 3, source: "single", pct: 70 })]) });
+    const before = JSON.stringify(input);
+    const p = migrateProgress(input);
+    expect(JSON.stringify(input)).toBe(before);
+    expect(p).not.toBe(input);
+    expect(p.copy).not.toBe(input.copy);
+  });
+
+  it("BAR: appendProgress on a migrated v1 blob preserves everything else", () => {
+    // The realistic write path: read an old blob, migrate it, append today's record.
+    const p = appendProgress(migrateProgress(v1Blob()), "copy", {
+      t: 5, source: "single", conditions: "real", pct: 55,
+    });
+    expect(p.copy.length).toBe(2);
+    expect(p.copy[0].conditions).toBeUndefined();  // the old one stays unknown
+    expect(p.copy[1].conditions).toBe("real");
+    expect(p.qso.length).toBe(1);
+    // And the two do NOT pool in the trend (T3, end to end through the store shape).
+    expect(copyTrend(p).length).toBe(2);
+  });
+});
+
 describe("learnTrend()", () => {
   it("two sets on lesson 3 → one trend row with correct lastPct/bestPct/sets", () => {
     const p = {
@@ -2612,6 +2795,152 @@ describe("copyTrend()", () => {
     expect(wordsGroup).toBeDefined();
     expect(wordsGroup.lastPct).toBe(90);
   });
+});
+
+// ---------------------------------------------------------------------------
+// COPY CONDITIONS (schema v3) — attempts made under different Conditions are
+// separate trends, so raising the difficulty can't read as accuracy falling.
+//
+// Mutation proofs for this block are in the branch report; each `it` names the
+// mutation actually run.
+// ---------------------------------------------------------------------------
+describe("copyConditionsLabel()", () => {
+  it("maps every stored conditions value to plain English, never the raw enum", () => {
+    // The raw "real" enum in front of a learner is the thing this exists to stop.
+    expect(copyConditionsLabel("real")).toBe("real life");
+    expect(copyConditionsLabel("easy")).toBe("easy");
+    expect(copyConditionsLabel("normal")).toBe("normal");
+  });
+
+  it("labels an absent or unrecognised value as not recorded, NOT as normal", () => {
+    // T3: a pre-v3 record must not be misattributed to a condition it may not
+    // have been made under.
+    expect(copyConditionsLabel(undefined)).toBe("conditions not recorded");
+    expect(copyConditionsLabel(null)).toBe("conditions not recorded");
+    expect(copyConditionsLabel("hard")).toBe("conditions not recorded");
+    // Guard against a plausible-looking wrong default.
+    expect(copyConditionsLabel(undefined)).not.toBe("normal");
+  });
+
+  it("COPY_CONDITIONS holds exactly the three stored values", () => {
+    // This pins the MAP's own keys and nothing else — on its own it would NOT
+    // notice a fourth option appearing in the Conditions selector. The test that
+    // ties the map to the real UI lives in copy-conditions.dom.test.jsx
+    // ("the Conditions selector and COPY_CONDITIONS cannot drift apart").
+    expect(Object.keys(COPY_CONDITIONS).sort()).toEqual(["easy", "normal", "real"]);
+  });
+});
+
+describe("copyTrend() — conditions are not pooled", () => {
+  // The defect: the same rung practised EASY and REAL LIFE produced one series,
+  // so turning noise/QSB on made the learner's trend fall.
+  const sameRungBothConditions = () => ({
+    ...emptyProgress(),
+    copy: [
+      { t: 1, source: "single", conditions: "easy", pct: 100 },
+      { t: 2, source: "single", conditions: "easy", pct: 96 },
+      { t: 3, source: "single", conditions: "real", pct: 55 },
+      { t: 4, source: "single", conditions: "real", pct: 60 },
+    ],
+  });
+
+  it("[T1] splits one rung into one series per condition (no pooled series)", () => {
+    // MUTATION RUN: dropping `conditions` from the group key in copyTrend()
+    // collapses these to a single group → this test goes red on the length and
+    // on both recent[] assertions.
+    const trend = copyTrend(sameRungBothConditions());
+    expect(trend.length).toBe(2);
+
+    const easy = trend.find((g) => g.source === "single" && g.conditions === "easy");
+    const real = trend.find((g) => g.source === "single" && g.conditions === "real");
+
+    expect(easy.recent).toEqual([100, 96]);
+    expect(easy.lastPct).toBe(96);
+    expect(real.recent).toEqual([55, 60]);
+    expect(real.lastPct).toBe(60);
+
+    // The defect, stated as an assertion: no series may mix the two conditions.
+    // A pooled series would be [100, 96, 55, 60] — a cliff the operator never fell off.
+    for (const g of trend) {
+      expect(g.recent).not.toEqual([100, 96, 55, 60]);
+    }
+  });
+
+  it("[T1] the REAL LIFE series trends UP even though it sits below the EASY one", () => {
+    // The whole point: within its own conditions the operator is improving
+    // (55 → 60), which the pooled view hid behind a 96 → 55 drop.
+    const real = copyTrend(sameRungBothConditions())
+      .find((g) => g.conditions === "real");
+    expect(real.recent[real.recent.length - 1]).toBeGreaterThan(real.recent[0]);
+  });
+
+  it("[T2] every group carries a plain-English label alongside the raw value", () => {
+    const trend = copyTrend(sameRungBothConditions());
+    expect(trend.map((g) => g.conditionsLabel)).toEqual(["easy", "real life"]);
+  });
+
+  it("[T1] different rungs under the same condition stay separate too", () => {
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [
+        { t: 1, source: "single", conditions: "real", pct: 40 },
+        { t: 2, source: "calls",  conditions: "real", pct: 20 },
+      ],
+    });
+    expect(trend.length).toBe(2);
+    expect(trend.find((g) => g.source === "single").recent).toEqual([40]);
+    expect(trend.find((g) => g.source === "calls").recent).toEqual([20]);
+  });
+
+  it("[T3] pre-v3 records (no conditions field) form their own labelled group", () => {
+    // MUTATION RUN: defaulting an absent conditions to "normal" instead of null
+    // makes the group count 1 and the label "normal" → red on both.
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [
+        { t: 1, source: "words", pct: 70 },                        // written pre-v3
+        { t: 2, source: "words", pct: 80 },                        // written pre-v3
+        { t: 3, source: "words", conditions: "normal", pct: 90 },  // written post-v3
+      ],
+    });
+    expect(trend.length).toBe(2);
+
+    const unknown = trend.find((g) => g.conditions === null);
+    expect(unknown.conditionsLabel).toBe("conditions not recorded");
+    expect(unknown.recent).toEqual([70, 80]);
+
+    const normal = trend.find((g) => g.conditions === "normal");
+    expect(normal.conditionsLabel).toBe("normal");
+    expect(normal.recent).toEqual([90]);
+  });
+
+  it("[T3] an unrecognised conditions value is treated as unknown, not rendered raw", () => {
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [{ t: 1, source: "words", conditions: "brutal", pct: 10 }],
+    });
+    expect(trend[0].conditions).toBeNull();
+    expect(trend[0].conditionsLabel).toBe("conditions not recorded");
+  });
+
+  it("[T5] a condition with no attempts produces no group at all (never a 0% row)", () => {
+    // MUTATION RUN: seeding every condition key up-front in copyTrend() (so all
+    // three always appear) makes length 3 and adds lastPct/recent of 0 → red.
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [{ t: 1, source: "single", conditions: "easy", pct: 88 }],
+    });
+    expect(trend.length).toBe(1);
+    expect(trend.map((g) => g.conditions)).toEqual(["easy"]);
+    // No fabricated zero anywhere in the output.
+    expect(trend.some((g) => g.lastPct === 0)).toBe(false);
+  });
+
+  it("[T5] no copy records at all → empty array (the empty state, not a 0% group)", () => {
+    expect(copyTrend(emptyProgress())).toEqual([]);
+    expect(copyTrend({})).toEqual([]);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
