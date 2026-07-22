@@ -46,6 +46,31 @@ export default defineConfig({
     // pushed the heaviest contact-drive test past the 5s default. 15s gives these
     // real-timer integration tests headroom; a logic error still fails fast (as a
     // wrong assertion), so this doesn't mask a hang — it only absorbs contention.
-    testTimeout: 15000,
+    //
+    // RAISED 15s -> 30s, 2026-07-22, on MEASURED evidence rather than a hunch.
+    // The problem is not one flaky test, it is a BAND of them crowding the cap.
+    // Measured with --reporter=json across three pool shapes:
+    //
+    //   idle, 8 workers   87s   green   worst: progress-qso "...EASY contact
+    //                                   writes exactly one qso record"  6380ms
+    //   + 8 CPU hogs      267s  2 TIMEOUTS  that same test at 15101ms, and
+    //                                   qso-autoadvance [AL-LAST] at 15251ms
+    //   --maxWorkers=2    479s  green   worst: qso-autoadvance [AO] "reminder
+    //     (CI-shaped)                   appears on second consecutive completed
+    //                                   contact"  13497ms  <- 10% margin
+    //
+    // 14 tests exceed 4s idle; 47 exceed 8s under load; 12 exceed 12s. At
+    // CI-shaped parallelism the worst sits 10% under the cap, which is a
+    // scheduled outage, not bad luck. Four independent observers (two gates,
+    // two implementers) hit spurious reds within one day, each a different
+    // test, each a pure "Test timed out" with NO assertion involved.
+    //
+    // Why this cannot mask a defect: a wrong assertion still fails instantly.
+    // Only a genuine HANG takes longer -- the same argument this file already
+    // makes for the 5s -> 15s bump above.
+    //
+    // This is the CHEAP mitigation, not the fix. The structural fix is fake
+    // timers on the drive-a-whole-contact tests; it is carded, not done.
+    testTimeout: 30000,
   },
 });
