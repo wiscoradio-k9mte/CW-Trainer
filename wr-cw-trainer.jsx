@@ -1010,7 +1010,9 @@ function useCountdown() {
 
   // cancel() stops a running countdown without firing its callback.
   // Called on QSO advance() and ABANDON so a DX countdown started mid-step
-  // doesn't fire playDx() into a later step after the user moves on.
+  // doesn't fire playDx() into a later step after the user moves on — and on
+  // both ■ STOP buttons (COPY and the QSO DX step), where the user is asking
+  // for the pending transmission not to happen at all.
   const cancel = useCallback(() => {
     clearInterval(intervalRef.current);
     intervalRef.current = null;
@@ -2064,7 +2066,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // (The live region is already in the DOM before check() fires — that's the fix.)
   const [scoreLive, setScoreLive] = useState("");
   const noiseGain = (v) => (v / 100) * 0.5;
-  const { countdown, start: startCountdown } = useCountdown();
+  const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
   // Auto-focus the copy input when a new target arrives so the user can type
   // immediately without clicking. Guard against null (input not yet in the DOM
   // on the first render before the target exists).
@@ -2129,6 +2131,16 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
       qsb: difficulty === "real",
       onChar: difficulty === "easy" ? (idx) => setLiveText(text.slice(0, idx + 1)) : undefined,
     });
+  };
+
+  // STOP means "nothing more is coming". It has to cancel a pending pre-play
+  // countdown as well as any audio in flight: during the "Get ready" beat nothing
+  // is playing yet, so a stop-the-audio-only handler was a visible no-op and the
+  // transmission still fired when the countdown ran out. Cancelling before the
+  // interval expires also means newTarget() never runs — no target is generated.
+  const stopAll = () => {
+    cancelCountdown();
+    player.stop();
   };
 
   const check = () => {
@@ -2244,7 +2256,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
         <button style={S.btnAmber} onClick={() => startCountdown(() => { const t = newTarget(); playTarget(t); })}>▶ NEW</button>
         <button style={S.btn} onClick={() => playTarget()} disabled={!target}>↻ REPLAY</button>
         <button style={S.btn} onClick={() => playTarget(null, { eff: Math.max(4, settings.effWpm - 3) })} disabled={!target}>🐢 SLOWER</button>
-        <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+        <button style={S.btn} onClick={stopAll}>■ STOP</button>
         <button style={S.btn} onClick={() => setRevealed(true)} disabled={!target}>👁 REVEAL</button>
       </div>
 
@@ -3163,6 +3175,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     });
   };
 
+  // STOP means "nothing more is coming" — same contract as COPY's STOP. The
+  // pre-transmission countdown has to be cancelled too: during "Get ready"
+  // nothing is playing yet, so stopping only the audio left the operator
+  // watching a dead button while the DX transmission fired anyway.
+  // The step stays put; REPLAY is how the user hears it when they are ready.
+  const stopAll = () => {
+    cancelCountdown();
+    player.stop();
+  };
+
   // Band noise lives with real-life mode while a contact is underway
   useEffect(() => {
     if (qso && step < qso.steps.length && difficulty === "real") {
@@ -3892,14 +3914,27 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               screen together now), but the packing still governs the UNARMED state,
               which is the state src/test/narrow.dom.test.jsx "packs the transport
               row onto ONE row on narrow" drives. Both decisions are kept: the gate
-              from this branch, the thirds layout from that one. */}
+              from this branch, the thirds layout from that one.
+
+              MERGE NOTE (fix/stop-cancels-countdown composed in): STOP calls
+              stopAll — cancel the pending "Get ready" countdown AND stop the
+              audio — not player.stop() alone. The reachability question the
+              `!armed` gate raises is answered above this row, not here: every DX
+              countdown STARTS unarmed, because advance() calls setArmed(false)
+              before startCountdown() and a fresh contact mounts unarmed. So the
+              state the countdown-cancel exists for always has the button in it.
+              A user who arms break-in DURING a countdown loses STOP until they
+              disarm — but that state never had a working STOP either, on this
+              branch or on main, where STOP was a no-op mid-countdown. Nothing
+              regressed; the fix simply does not reach into a state this branch
+              had already emptied. */}
           {!armed && (
             <div style={{ display: "flex", gap: 8, flexWrap: isWide ? "wrap" : "nowrap", marginBottom: 12 }}>
               {/* qrsEffWpm(): the same expression the QRS fill uses — see its
                   definition for why they are one function and not two literals. */}
               {[["↻ REPLAY", () => playDx(cur.text)],
                 ["🐢 SLOWER", () => playDx(cur.text, { eff: qrsEffWpm() })],
-                ["■ STOP", () => player.stop()]].map(([label, onClick]) => (
+                ["■ STOP", stopAll]].map(([label, onClick]) => (
                 <button key={label} style={isWide ? S.btn
                   : { ...S.btn, flex: 1, minWidth: 0, minHeight: 40, padding: "0 6px", fontSize: "0.8125rem", whiteSpace: "nowrap" }}
                   onClick={onClick}>{label}</button>
