@@ -143,7 +143,9 @@ describe("KB — QSO dx step: the keyer can actually hear the keyboard", () => {
     await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /Straight key/ }));
 
-    await user.click(screen.getByRole("button", { name: /BACK TO COPY/ }));
+    // The disclosure trigger IS the way back — there is no second "back to copy"
+    // control, and a click on it must restore the typing mode completely.
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
 
     const input = screen.getByRole("textbox", { name: COPY_INPUT });
     expect(document.activeElement).toBe(input);
@@ -205,7 +207,7 @@ describe("M1 — break-in collapses behind one disclosure", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("expanding swaps rather than stacks: the copy row collapses to a summary", async () => {
+  it("expanding swaps rather than stacks: the whole copy block goes, and the typed copy survives", async () => {
     const { user } = await startDxStep();
 
     const input = screen.getByRole("textbox", { name: COPY_INPUT });
@@ -213,22 +215,133 @@ describe("M1 — break-in collapses behind one disclosure", () => {
 
     await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
 
-    // Copy block replaced by a one-line summary that carries the typed text, so
-    // arming never costs the user their work-in-progress copy.
+    // The copy field and its whole control row go — that is what pays for the key
+    // block, and it is why the key stays inside the fold.
     expect(screen.queryByRole("textbox", { name: COPY_INPUT })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /YOUR COPY · W1AW 599.*BACK TO COPY/ })).toBeInTheDocument();
-    // CHECK COPY / REVEAL / CONTINUE go with it — that is what pays for the key block.
     expect(screen.queryByRole("button", { name: /CHECK COPY/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /CONTINUE/ })).not.toBeInTheDocument();
 
     // ...and the key block is now present.
     expect(screen.getByRole("button", { name: /Straight key/ })).toBeInTheDocument();
     expect(screen.getByText(/repeat the whole transmission/)).toBeInTheDocument();
+
+    // The work in progress is NOT lost by the swap. `copyAttempt` is state, not
+    // DOM, so unmounting the field is safe — this is the invariant the deleted
+    // "YOUR COPY · W1AW 599…" summary row used to demonstrate, asserted directly
+    // on the restored field instead of on a preview of it. (That row was removed
+    // in the 2026-07-22 geometry rework: a second control for "go back to copy"
+    // cost 74px immediately above the key.)
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
+    expect(screen.getByRole("textbox", { name: COPY_INPUT })).toHaveValue("W1AW 599");
   });
 
-  it("an untouched copy summarises as 'not started', never as an empty row", async () => {
+  it("arming adds exactly ONE way back — the trigger itself, not a second row", async () => {
     const { user } = await startDxStep();
     await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
-    expect(screen.getByRole("button", { name: /YOUR COPY · not started/ })).toBeInTheDocument();
+
+    // Two controls doing the same job is what the rework removed; if one is ever
+    // re-added above the key this fails rather than silently costing 74px.
+    expect(screen.queryByRole("button", { name: /BACK TO COPY/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/YOUR COPY ·/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /BREAK.IN/ })).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REACH — the reach-the-key contract, expressed structurally.
+//
+// jsdom has no layout, so none of this can assert pixels. What it CAN pin is the
+// thing the pixels follow from: WHAT is rendered above the key surface while
+// break-in is armed. Every row above it pushes it further down the document.
+//
+// Measured, headed Chromium, document-relative (rect.bottom + scrollY after
+// scrollTo(0,0)), realistic installed state, seeded QSO, 375x667 / 360x780 /
+// 390x844 — identical at all three:
+//                       main    branch tip    after rework
+//   normal (default)     730         916            705
+//   real life            749         916            705
+//   easy                 849         999            824
+// The pre-rework branch read 844 at 390x844 and looked like a pass ONLY because
+// arming focuses the key surface and the browser auto-scrolled 72px first.
+// ---------------------------------------------------------------------------
+describe("REACH — what may sit above the key while break-in is armed", () => {
+  const follows = (a, b) =>
+    !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it("the guidance, the fill status and the legend all render BELOW the key surface", async () => {
+    const { user } = await startDxStep();
+    await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
+
+    const key = screen.getByRole("button", { name: /Straight key/ });
+    const disambiguation = screen.getByText(/It is not your answer — you answer on the next step\./);
+    const legend = screen.getByText(/repeat the whole transmission/);
+    // Scope to the break-in body: QsoSim mounts four sr-only role="status" live
+    // regions of its own ahead of the step panel, so an unscoped query finds one
+    // of those and the ordering assertion becomes meaningless.
+    const status = document.querySelector('#qso-breakin-body [role="status"]');
+
+    expect(status).not.toBeNull();
+    expect(follows(key, disambiguation)).toBe(true);
+    expect(follows(key, legend)).toBe(true);
+    expect(follows(key, status)).toBe(true);
+
+    // The decode readout is the ONE thing that belongs above the key — you read
+    // what you keyed directly above the thing you keyed it with, as on the KEY tab.
+    expect(follows(screen.getByTestId("breakin-decode"), key)).toBe(true);
+  });
+
+  it("the 'Listen for' copy aid steps aside while armed, and comes back on disarm", async () => {
+    const { user } = await startDxStep();
+    expect(screen.getByText("Listen for")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
+    expect(screen.queryByText("Listen for")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
+    expect(screen.getByText("Listen for")).toBeInTheDocument();
+  });
+
+  it("on 'real', the Band noise slider steps aside too — same rule, and it is what pays for the trigger row", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "straight" }));
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await user.click(screen.getByRole("button", { name: "QSO" }));
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    await user.click(within(rail).getByRole("combobox", { name: "Conditions" }));
+    await user.click(within(rail).getByRole("option", { name: /Real life/i }));
+    await user.click(within(rail).getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+
+    // Two sliders exist on 'real' — the setup one in the rail and the in-step one.
+    // Scope to the step panel (main) so this pins the in-step control specifically.
+    const main = screen.getByRole("main");
+    expect(within(main).getByRole("slider", { name: "Band noise" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
+    expect(within(main).queryByRole("slider", { name: "Band noise" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
+    expect(within(main).getByRole("slider", { name: "Band noise" })).toBeInTheDocument();
+  });
+
+  it("on 'easy' the required path swaps out too — no CONTINUE living under an armed key", async () => {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "straight" }));
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await user.click(screen.getByRole("button", { name: "QSO" }));
+    const rail = screen.getByRole("complementary", { name: "Options" });
+    await user.click(within(rail).getByRole("combobox", { name: "Conditions" }));
+    await user.click(within(rail).getByRole("option", { name: /Easy/i }));
+    await user.click(within(rail).getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+
+    expect(screen.getByRole("button", { name: "CONTINUE → YOUR TURN" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
+    expect(screen.queryByRole("button", { name: "CONTINUE → YOUR TURN" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
+    expect(screen.getByRole("button", { name: "CONTINUE → YOUR TURN" })).toBeInTheDocument();
   });
 });
 
@@ -263,7 +376,7 @@ describe("M3 — the mode is announced and non-colour-coded", () => {
     await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
     expect(screen.getByText(/Break-in armed\. Key question mark, or A G N/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /BACK TO COPY/ }));
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
     expect(screen.getByText("Copy field. Type what you heard.")).toBeInTheDocument();
   });
 
@@ -368,8 +481,8 @@ describe("break-in mode never survives a step transition", () => {
     await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
     expect(screen.getByRole("button", { name: ARMED_TRIGGER })).toBeInTheDocument();
 
-    // Back to copy so CONTINUE is reachable, then advance to the you-send step.
-    await user.click(screen.getByRole("button", { name: /BACK TO COPY/ }));
+    // Disarm so CONTINUE is reachable again, then advance to the you-send step.
+    await user.click(screen.getByRole("button", { name: ARMED_TRIGGER }));
     await user.click(screen.getByRole("button", { name: "CONTINUE → YOUR TURN" }));
 
     // Step 2 is a send step — it has no break-in disclosure at all, and the key

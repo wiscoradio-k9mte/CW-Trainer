@@ -1466,20 +1466,29 @@ function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, o
           background: S.ground.panel, border: S.border.panel, borderRadius: S.radius.sm,
           padding: 12, marginTop: 8,
         }}>
-          <p style={{
-            color: S.text.dim, fontSize: S.type.label, fontFamily: "system-ui, sans-serif",
-            margin: "0 0 10px", lineHeight: 1.6,
-          }}>
-            This interrupts them for a repeat. It is not your answer — you answer on the next step.
-          </p>
+          {/* ORDER IS A REACH CONSTRAINT, NOT A PREFERENCE. Everything rendered
+              above the key surface pushes it further down the document, and the key
+              is what the operator is reaching for once break-in is armed. So the
+              only things above it are the decode readout (established elsewhere in
+              this app: you read what you keyed directly above the key) — and the
+              guidance prose, the fill confirmation and the token legend all sit
+              BELOW it. The fill status region alone measures 24px outer; the whole
+              rework (this reorder plus the copy-block swap above) took the armed key
+              surface from 916 to 705 document-relative, against main's 730 — headed
+              Chromium, realistic installed state, identical at 375x667 / 360x780 /
+              390x844. The numbers are in the REACH block of
+              src/test/qso-step1-affordance.dom.test.jsx.
+              data-testid on the decode: a layout-neutral hook so the
+              keyboard-reachability tests read the decode OUTPUT directly instead of
+              walking siblings. */}
           <div style={{ ...S.label, marginBottom: 6 }}>
             Decoded from your key <span style={{ color: S.text.amber }}>{keyer.buffer}</span>
           </div>
-          {/* data-testid: a layout-neutral hook so the keyboard-reachability tests
-              can read the decode OUTPUT directly instead of walking siblings. */}
           <div data-testid="breakin-decode">
             <Display compact={compact}>{keyer.decoded}</Display>
           </div>
+          <KeyInput keyer={keyer} keyType={keyType} onKeyType={onKeyType}
+            swap={swap} onSwap={onSwap} surfaceRef={surfaceRef} />
           {/* Always-mounted status container: a live region only announces when the
               text of an ALREADY-MOUNTED node changes. Mounting the node together
               with its text is an addition, not a change, and AT stays silent —
@@ -1490,10 +1499,11 @@ function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, o
           }}>
             {fillMsg && <><span aria-hidden="true">◉ </span>{fillMsg}</>}
           </div>
-          <KeyInput keyer={keyer} keyType={keyType} onKeyType={onKeyType}
-            swap={swap} onSwap={onSwap} surfaceRef={surfaceRef} />
           <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
-            <span>?</span> or <span>AGN</span> — repeat the whole transmission · partial call + <span>?</span> (NM0?) — they confirm their full call · <span>QRS</span> — slower please
+            <div>This interrupts them for a repeat. It is not your answer — you answer on the next step.</div>
+            <div style={{ marginTop: 6 }}>
+              <span>?</span> or <span>AGN</span> — repeat the whole transmission · partial call + <span>?</span> (NM0?) — they confirm their full call · <span>QRS</span> — slower please
+            </div>
           </div>
         </div>
       )}
@@ -3580,8 +3590,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               The hint wording itself is deliberately untouched: directing attention to
               the one element that matters is real operating practice and good teaching.
               Rendered as a div rather than a <p> so its bottom margin is explicit —
-              that reclaimed margin pays for most of the label line. */}
-          {difficulty !== "real" && (
+              that reclaimed margin pays for most of the label line.
+              GATED ON !armed: this is the COPY-mode focus aid, so it swaps out with
+              the copy field it serves. BREAK-IN mode shows the transmission
+              transport and the key, nothing that belongs to typing — and every row
+              left above the key pushes the key further from the operator's thumb
+              (measured 68px for this block). It is one Esc away. */}
+          {difficulty !== "real" && !armed && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...S.label, marginBottom: 2 }}>Listen for</div>
               <div style={{ color: S.text.dim, fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>
@@ -3608,7 +3623,15 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             </div>
           )}
 
-          {difficulty === "real" && (
+          {/* Same !armed rule as the "Listen for" hint above, and for the same
+              reason: band noise is a COPY aid — it sets how hard the copying is —
+              so it steps aside in BREAK-IN mode along with everything else that
+              serves typing. The noise itself is unaffected (it is player state, not
+              this control's), and the slider is one Esc away. Worth 68px measured
+              (armed key surface on `real`: 773 -> 705), which is what pays for the
+              disclosure trigger on the one difficulty that has no "Listen for" hint
+              to give up. Same 68px as the hint block, by coincidence. */}
+          {difficulty === "real" && !armed && (
             <div style={{ marginBottom: 6 }}>
               <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
                 onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
@@ -3623,27 +3646,20 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
 
           {/* Required path FIRST, repair tool second — the reading order now matches
               the doing order: hear it → type it → check it → continue. In BREAK-IN
-              mode the copy block collapses to a one-line summary so the panel swaps
-              rather than stacks and the key surface stays inside the fold. */}
-          {difficulty === "easy" ? (
+              mode the whole copy block swaps OUT (it does not stack) so the key
+              surface stays as close to the top of the panel as it can.
+              The copy field's contents survive the swap — `copyAttempt` is state,
+              not DOM — so arming never costs the operator work in progress.
+              There is deliberately NO "back to copy" summary row: the disclosure
+              trigger below already toggles the mode, and a second control for the
+              same action cost ~74px directly above the key (attribution from the
+              2026-07-22 re-measurement that pulled this branch from the queue).
+              ONE `!armed` gate covers both difficulties, so easy behaves like
+              normal/real instead of keeping CONTINUE live under an armed key — the
+              rule is "break-in mode swaps the required path out; disarm to
+              continue", and it should not have an exception. */}
+          {!armed && (difficulty === "easy" ? (
             <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE → YOUR TURN</button>
-          ) : armed ? (
-            <button
-              onClick={() => setBreakIn(false)}
-              style={{
-                ...S.btn, display: "flex", alignItems: "center", justifyContent: "space-between",
-                // flexWrap: measured at 390px the two halves did not fit on one
-                // line and the summary ellipsized to "no…" — worse than useless.
-                // Wrapping to two lines costs ~20px and keeps both halves readable.
-                gap: 8, flexWrap: "wrap", width: "100%", minHeight: 44, padding: "10px 14px",
-                textAlign: "left", boxSizing: "border-box", marginBottom: 12,
-              }}
-            >
-              <span style={{ minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: S.text.dim }}>
-                YOUR COPY · {copyAttempt.trim() ? copyAttempt.trim().slice(0, 24) : "not started"}
-              </span>
-              <span style={{ flexShrink: 0 }}><span aria-hidden="true">✎ </span>BACK TO COPY</span>
-            </button>
           ) : (
             <>
               {/* C1: was "(optional — check it or just answer)". "Or just answer" told
@@ -3685,7 +3701,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 </div>
               )}
             </>
-          )}
+          ))}
 
           <BreakInPanel
             keyer={keyer}
