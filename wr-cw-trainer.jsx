@@ -1028,9 +1028,19 @@ function useCountdown() {
 // display 20px→1.25rem, input 18px→1.125rem.
 // Structural values (padding, gap, radius, maxWidth) stay in px — they are
 // layout boundaries, not text, and must not grow with font scaling.
+// Pulled out of S so `head` below can build on it; S's own keys can't reference
+// each other inside the object literal.
+const LABEL = { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" };
 const S = {
   panel: { background: "#191C21", border: "1px solid #2E343C", borderRadius: 10, padding: 16, marginBottom: 14 },
-  label: { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" },
+  label: LABEL,
+  // A section caption that is a real <h1>-<h6> element rather than a styled div, so
+  // screen-reader users can jump between sections. Browsers' UA stylesheets give
+  // headings bold weight, an em-relative size and block margins; LABEL already sets an
+  // absolute font-size, so only the weight and the four margins need neutralising for
+  // the rendered box to match the <div> it replaces. Callers set their own margins
+  // after the spread, exactly as they did on the div.
+  head: { ...LABEL, fontWeight: 400, marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0 },
   btn: { background: "#2A313A", border: "1px solid #3A434E", color: "#E8E2D6", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1 },
   btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
   // M1: "1.25rem" = type.readout; literal kept because S.type is defined later in the same object
@@ -3026,6 +3036,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const [contestType, setContestType] = useState("wpx");
   const [contactType, setContactType] = useState("domestic");
 
+  // Id for the "your copy" text input, so its visible caption can be a real
+  // <label htmlFor>. useId rather than a constant because QsoSim's narrow and
+  // wide layouts are one component but nothing stops a future refactor from
+  // mounting the tab twice; a constant id would then silently point both labels
+  // at the first instance's input.
+  const qsoUid = useId();
+  const copyInputId = `${qsoUid}-copy`;
+
   const [qso, setQso] = useState(null);
   const [step, setStep] = useState(0);
   const [copyAttempt, setCopyAttempt] = useState("");
@@ -3907,11 +3925,25 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE → YOUR TURN</button>
           ) : (
             <>
-              {/* C1: was "(optional — check it or just answer)". "Or just answer" told
-                  the user to do something this step does not support — it is the
-                  sentence that authored the reported error. The optionality is still
-                  visible in the affordance: CONTINUE sits right there, enabled. */}
-              <div style={{ ...S.label, marginBottom: 2 }}>Your copy — what did you hear?</div>
+              {/* TWO branches meet on this caption, and both decisions survive.
+                  C1 (fix/qso-step1-keyboard-and-affordance) reworded it: it used to
+                  read "(optional — check it or just answer)", and "or just answer"
+                  told the operator to do something this step does not support — it
+                  is the sentence that authored the reported error. The optionality
+                  is still visible in the affordance: CONTINUE sits right there.
+                  fix/accessible-names-batch made it a real <label htmlFor> and
+                  removed the parallel aria-label, because an accessible name that
+                  does not contain the visible caption is WCAG 2.5.3 failure F96 —
+                  a speech-input user saying the visible label hit nothing.
+                  Composed, the label carries the REWORDED text, so the accessible
+                  name and the visible text are the same string by construction.
+
+                  display:"block" preserves the geometry the caption had as a <div>
+                  (<label> is display:inline by default, and vertical margins do not
+                  apply to inline boxes). marginBottom stays 2 here, not the 6 that
+                  branch used against main: a scoring sub-line follows this caption
+                  now, and that line owns the gap down to the input. */}
+              <label htmlFor={copyInputId} style={{ ...S.label, display: "block", marginBottom: 2 }}>Your copy — what did you hear?</label>
               {/* States the scoring rule up front so nobody has to infer it from a bad
                   score. Copy is graded on fidelity to the whole transmission, while
                   "Listen for" above names only the element that matters most — without
@@ -3921,13 +3953,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               <div style={{ color: S.text.dim, fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5, marginBottom: 6 }}>
                 Type everything you heard — the whole transmission is graded.
               </div>
-              <input ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
+              <input id={copyInputId} ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") checkCopy();
                   // Esc from the copy field is the reflex reach for the key.
                   else if (e.key === "Escape") setBreakIn(true);
                 }}
-                aria-label="Your copy of what you heard"
                 placeholder="type what you hear..." autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", marginBottom: 12 }}>
                 <button style={S.btn} onClick={checkCopy} disabled={!copyAttempt.trim()}>CHECK COPY</button>
@@ -5093,14 +5124,22 @@ function ProgressView({ progress }) {
 // tap the gear again — that's still discoverable because the gear is right there).
 function Settings({ settings, setSettings, onClose }) {
   const set = (k) => (v) => setSettings((s) => ({ ...s, [k]: v, ...(k === "charWpm" && s.effWpm > v ? { effWpm: v } : {}) }));
-  // Ids for the "Your station" text inputs, so their visible captions can be real
-  // <label htmlFor> associations. useId rather than hard-coded strings so uniqueness
-  // doesn't depend on the current mount-exclusivity invariant (the two render sites
-  // gate on `showSettings && !isWide` and `isWide && showSettings`, so only one is
-  // ever live). A future refactor that mounts Settings twice would otherwise emit
-  // duplicate ids and silently point both labels at the first panel's inputs.
+  // ONE useId() for every generated id in this panel. Two branches each added their
+  // own `const uid = useId()` at this line; keeping both declarations is a
+  // SyntaxError, not a test failure, so this is a build-break the suite cannot warn
+  // about. One call, both id sets.
+  //
+  // useId rather than hard-coded strings so uniqueness doesn't depend on the current
+  // mount-exclusivity invariant (the two render sites gate on `showSettings &&
+  // !isWide` and `isWide && showSettings`, so only one is ever live). A future
+  // refactor that mounts Settings twice would otherwise emit duplicate ids and
+  // silently point every label at the first panel's controls.
   const uid = useId();
+  // "Your station" text inputs — real <label htmlFor> associations.
   const callId = `${uid}-mycall`, nameId = `${uid}-myname`, qthId = `${uid}-myqth`;
+  // Caption/gloss text naming the RX-filter group and the cut-numbers toggle.
+  const rxGroupLabelId = `${uid}-rxfilter`;
+  const cutLabelId = `${uid}-cut`, cutGlossId = `${uid}-cutgloss`, cutBtnId = `${uid}-cutbtn`;
   return (
     <div style={S.panel}>
       {/* Close control — only shown on wide where Settings is in the right rail.
@@ -5120,7 +5159,11 @@ function Settings({ settings, setSettings, onClose }) {
           LISTENING speeds affect how the app plays Morse for you to copy.
           SENDING speed is your target when keying — only relevant in the KEY tab. */}
       {/* M3: normalize to plain S.label — consistency over 1px size drift */}
-      <div style={{ ...S.label, marginBottom: 6 }}>LISTENING SPEED</div>
+      {/* Real headings so a screen-reader user can jump between the three Settings
+          sections instead of arrowing through every control. S.head neutralises the
+          UA heading defaults (bold, 1.5em, block margins) so the rendered box is
+          identical to the <div> these were — see the S.head comment. */}
+      <h2 style={{ ...S.head, marginBottom: 6 }}>LISTENING SPEED</h2>
       <Slider label="Character speed" value={settings.charWpm} min={10} max={40} step={1} suffix=" wpm" onChange={set("charWpm")} />
       <Slider label="Effective speed (Farnsworth)" value={settings.effWpm} min={4} max={settings.charWpm} step={1} suffix=" wpm" onChange={set("effWpm")} />
       {/* C3: Farnsworth gloss at point of use — the deeper paragraph below covers
@@ -5130,12 +5173,19 @@ function Settings({ settings, setSettings, onClose }) {
       </p>
 
       {/* M3: normalize to plain S.label */}
-      <div style={{ ...S.label, marginBottom: 6 }}>SENDING SPEED</div>
+      <h2 style={{ ...S.head, marginBottom: 6 }}>SENDING SPEED</h2>
       <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={40} step={1} suffix=" wpm" onChange={set("keyWpm")} />
       <Slider label="Sidetone" value={settings.freq} min={400} max={900} step={10} suffix=" Hz" onChange={set("freq")} />
       <div style={{ marginBottom: 14 }}>
-        <div style={{ ...S.label, marginBottom: 6 }}>RX filter (band noise voicing)</div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div id={rxGroupLabelId} style={{ ...S.label, marginBottom: 6 }}>RX filter (band noise voicing)</div>
+        {/* role="group" + aria-labelledby ties the three buttons to their caption.
+            Without it AT announces "WIDE, toggle button, not pressed" with no clue
+            what is being filtered. The buttons stay aria-pressed toggles rather than
+            becoming a radiogroup: that would change the keyboard contract (roving
+            tabindex, arrow-key selection) and this app's established pattern for an
+            exclusive set of toggles is aria-pressed. Cost, stated plainly: a group
+            conveys "these belong together", not "exactly one is on". */}
+        <div role="group" aria-labelledby={rxGroupLabelId} style={{ display: "flex", gap: 6 }}>
           {[["wide", "WIDE"], ["cw", "CW 500"], ["apf", "APF"]].map(([v, l]) => (
             <button key={v} aria-pressed={settings.rxFilter === v} onClick={() => setSettings((s) => ({ ...s, rxFilter: v }))}
               style={{ ...S.btn, flex: 1, padding: "7px 4px", fontSize: "0.6875rem", ...(settings.rxFilter === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
@@ -5147,7 +5197,7 @@ function Settings({ settings, setSettings, onClose }) {
           How real-life band noise sounds. WIDE is open SSB-width hiss (2.4 kHz). CW 500 is a 500 Hz passband centered on your sidetone — the standard CW filter on most rigs. APF is a narrow ~60 Hz audio peak, the razor-filter sound dedicated CW ops run when digging signals out of the noise. AGC is always on — noise ducks under signals and swells back in the gaps.
         </div>
       </div>
-      <div style={{ ...S.label, color: "#F2A93B", marginTop: 4, marginBottom: 8 }}>Your station</div>
+      <h2 style={{ ...S.head, color: "#F2A93B", marginTop: 4, marginBottom: 8 }}>Your station</h2>
       <div style={{ fontSize: "0.6875rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginBottom: 10, lineHeight: 1.5 }}>
         These start as an example (W1AW is a well-known example callsign). Set them to your own call, name, and location — they personalize your practice contacts and are saved automatically.
       </div>
@@ -5184,12 +5234,26 @@ function Settings({ settings, setSettings, onClose }) {
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
         <div>
-          <div style={S.label}>Cut numbers (contest style)</div>
-          <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+          <div id={cutLabelId} style={S.label}>Cut numbers (contest style)</div>
+          <div id={cutGlossId} style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
             599 → 5NN, 0 → T in QSO exchanges
           </div>
         </div>
+        {/* The button's own text is its whole accessible name today ("5NN ON" / "599
+            OFF"), so AT hears the state and never the purpose. aria-labelledby names
+            the caption FIRST and then self-references the button, giving
+            "Cut numbers (contest style) 5NN ON".
+            Why the self-reference and not the caption alone: the caption alone would
+            drop "5NN ON" out of the accessible name while it is still the visible text
+            on the control, which is a WCAG 2.5.3 (label-in-name) failure — a speech-input
+            user says what they see. Keeping the visible text in the name means the state
+            is announced twice (name + aria-pressed), which is redundant but harmless;
+            removing that redundancy properly needs state-free visible text, i.e. a
+            visual change, which is out of scope here. */}
         <button
+          id={cutBtnId}
+          aria-labelledby={`${cutLabelId} ${cutBtnId}`}
+          aria-describedby={cutGlossId}
           aria-pressed={settings.cutNumbers}
           onClick={() => setSettings((s) => ({ ...s, cutNumbers: !s.cutNumbers }))}
           style={{ ...S.btn, padding: "8px 14px", ...(settings.cutNumbers ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>

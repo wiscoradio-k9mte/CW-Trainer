@@ -35,7 +35,7 @@ import CWTrainer from "../../wr-cw-trainer.jsx";
 
 const BREAK_IN_TRIGGER = /BREAK IN — ASK FOR A REPEAT/;
 const ARMED_TRIGGER = /BREAK-IN ARMED — KEYING/;
-const COPY_INPUT = /Your copy of what you heard/i;
+const COPY_INPUT = /Your copy — what did you hear\?/i;
 
 // Start a contact sitting on step 1 — a dx (copy) step — at `normal` difficulty,
 // which is the exact quadrant the bug lived in.
