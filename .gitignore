@@ -1,4 +1,6 @@
-node_modules/
+# No trailing slash: also ignore a `node_modules` SYMLINK or file, not only a
+# directory. A `node_modules/` pattern let a stray symlink get committed once.
+node_modules
 dist/
 release/
 
