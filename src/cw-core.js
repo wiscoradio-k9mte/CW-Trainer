@@ -136,19 +136,39 @@ export function decodeChar(code) {
 export const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
 export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P K-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
 
-// Pull a two-letter state from the end of a QTH like "NEWINGTON CT"
+// stateOf(qth) — pull the trailing two-letter state token out of a QTH like
+// "NEWINGTON CT". Returns "" when the QTH carries no such token.
+//
+// The empty return is load-bearing, not a convenience. This used to fall back to
+// "CT", so an operator who typed "MADISON" (or cleared the field) was silently
+// REQUIRED to send Connecticut — we asserted a QTH on their behalf, which is
+// exactly the kind of thing a ham is expected to state truthfully. When we can't
+// resolve one honestly we drop it: `required()` filters the blank out of a step's
+// mustContain, and the script builders below omit it from the text rather than
+// interpolating a gap (toCodes turns every space into a word gap, so a blank
+// substitution would key an audible double pause).
+//
+// The test is deliberately shape-only (any two letters), not a lookup against the
+// 50-state table: it echoes what the operator typed rather than judging it, and a
+// token we can't map to a zone is handled downstream by resolveUSState returning
+// null.
 export const stateOf = (qth) => {
   const tok = (qth || "").trim().split(/\s+/).pop() || "";
-  return /^[A-Za-z]{2}$/.test(tok) ? tok.toUpperCase() : "CT";
+  return /^[A-Za-z]{2}$/.test(tok) ? tok.toUpperCase() : "";
 };
 
-// Personalize practice/teaching text to the configured operator
+// Personalize practice/teaching text to the configured operator.
+// The whitespace collapse is required, not cosmetic: any of these tokens can
+// substitute to "" (Settings is free-form and clearable; {ST} is empty whenever
+// the QTH has no state), and a leftover double space would key an extra word gap.
 export function subTokens(s, settings) {
   return s
     .replaceAll("{ME}", settings.myCall)
     .replaceAll("{NAME}", settings.myName)
     .replaceAll("{QTH}", settings.myQth)
-    .replaceAll("{ST}", stateOf(settings.myQth));
+    .replaceAll("{ST}", stateOf(settings.myQth))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // US domestic pool for randCall() — home station and contest chaser prefixes.
@@ -1017,7 +1037,14 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
 }
 
 export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
+  // myState is "" when the operator's QTH has no state token (see stateOf). The
+  // POTA exchange is the one script that carries it, so the state is dropped from
+  // the send, from the graded elements, and from the activator's reply rather than
+  // substituted — we won't put a state the operator never gave on their air.
   const myState = stateOf(myQth);
+  const stateTwice = myState ? ` ${myState} ${myState}` : "";
+  const stateOnce  = myState ? ` ${myState}` : "";
+  const statePhrase = myState ? ", your state twice" : "";
   const dx = randCall();
   const rst = cutNum(rand(RSTS), cut);
   const myRst = cutNum("599", cut);
@@ -1097,8 +1124,8 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
           },
           {
             who: "you",
-            suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
-            prompt: "BK, their report, your state twice, BK. Exchange grammar is identical to domestic.",
+            suggested: `BK GM UR ${myRst} ${myRst}${stateTwice} BK`,
+            prompt: `BK, their report${statePhrase}, BK. Exchange grammar is identical to domestic.`,
             mustContain: required(myRst, myState),
           },
           {
@@ -1134,14 +1161,16 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         },
         {
           who: "you",
-          suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
-          prompt: "BK back, greeting, their report, your state twice, BK. That's the whole exchange.",
+          suggested: `BK GM UR ${myRst} ${myRst}${stateTwice} BK`,
+          prompt: `BK back, greeting, their report${statePhrase}, BK. That's the whole exchange.`,
           mustContain: required(myRst, myState),
         },
         {
           who: "dx",
-          text: `BK TU ${myState} 73 DE ${dx} EE`,
-          copyHint: "Activators often use your state as your handle — TU, your state, 73, dit-dit, next hunter.",
+          text: `BK TU${stateOnce} 73 DE ${dx} EE`,
+          copyHint: myState
+            ? "Activators often use your state as your handle — TU, your state, 73, dit-dit, next hunter."
+            : "TU, 73, dit-dit, next hunter. (Put a state in your QTH and the activator will use it as your handle.)",
         },
       ],
     };
@@ -1546,14 +1575,37 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
      to increment against; a fake running counter would imply continuity we don't model).
    "zone" — send the CQ zone (CQ World Wide style).
 
-   myCqZone comes from the profile (computed at JSX edge: resolveUSState(stateOf(myQth))?.cq ?? 5).
-   The builder receives it as a pure number and stays free of DOM/dataset access.
+   myCqZone comes from the profile (computed at the JSX edge from the operator's
+   QTH state). The builder receives it as a plain number — or `null` when the QTH
+   doesn't resolve to a US state — and stays free of DOM/dataset access. On null the
+   zone is DROPPED from the exchange rather than defaulted.
+
+   CQ-ZONE ATTRIBUTION — sourced externally, do not "correct" from memory, and do
+   NOT re-cite our own bundled dataset: its US_STATE_ZONES table is hand-coded in
+   scripts/build-dxcc-dataset.mjs (AD1C cty.csv has no per-state zone table), so
+   citing it would be citing the artifact under test. Primary sources, retrieved
+   2026-07-21:
+     zone by state  — CQ's own WAZ zone list, cqww.com/cq_waz_list.htm
+     the exchange   — CQ WW rules §III, www.cqww.com/rules.htm
+   Confirmed there: CQ zone 5 is the eastern seaboard (CT MA ME NH RI VT NJ NY DC DE
+   MD PA FL GA NC SC VA WV) and Wisconsin is zone 4; the CQ WW exchange is RST plus
+   the sender's own CQ zone, zero-padded to two digits, both sides sending their own.
+   THE REPORT IS REQUIRED — a zone sent alone is a fill, not a complete exchange,
+   which is why dropping the zone still leaves the RST as a real requirement.
+
+   Why dropped rather than defaulted: the old `?? 5` put an operator in Wisconsin
+   into Connecticut's zone, and the 5 arrived with the "CT" QTH fallback rather than
+   by design. A CQ zone is derived from where you actually are; asserting one we
+   can't derive is the same falsehood as asserting the state, so this stays
+   consistent with the state fix. The cost is disclosed and real: with no zone the
+   CQ-WW-style exchange is incomplete (report only), which is a thinner lesson — but
+   an incomplete exchange teaches less, while a defaulted one teaches something false.
 
    Both myExch and dxExch are computed once so the token in the step text and
    the token in mustContain are guaranteed to be the same string — the text-parity
    trap that has burned this team before. */
 
-export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts = {}) {
+export function buildContest({ myCall, cut, myCqZone = null }, role = "run", opts = {}) {
   const dxRow = randDxStation();
   const dxCall = dxRow.call;
   const rpt = cutNum("599", cut);
@@ -1565,15 +1617,23 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
 
   // Exchange token per side — computed ONCE and reused in text + mustContain.
   // Zone path: zoneToken() pads to 2 digits and applies cut numbers consistently.
-  const exch = (zone) => opts.contestType === "zone" ? zoneToken(zone, cut) : serial();
+  // An unknown zone yields "" (see the header note); required() then drops it and
+  // the ` ${myExch}` interpolations are guarded so no blank reaches the script.
+  const exch = (zone) =>
+    opts.contestType === "zone" ? (zone == null ? "" : zoneToken(zone, cut)) : serial();
   const myExch = exch(myCqZone);
-  const dxExch = exch(dxRow.cqZone);
+  const dxExch = exch(dxRow.cqZone);   // the DX pool always carries a zone
+  const myExchTail = myExch ? ` ${myExch}` : "";
+  const exchWord = opts.contestType === "zone" ? "zone" : "serial";
+  // Prompts and the summary name your exchange only when you have one to send.
+  const myExchPrompt = myExch ? `, your ${exchWord}` : "";
+  const exchSummary = myExch ? ` Your exchange: ${myExch}.` : "";
 
   // Running role: you call CQ TEST, a DX station pounces.
   if (role === "run") {
     return {
       dx: dxCall, flavor: "CONTEST",
-      summary: `Running — worked ${dxCall}. Your exchange: ${myExch}.`,
+      summary: `Running — worked ${dxCall}.${exchSummary}`,
       steps: [
         {
           who: "you",
@@ -1592,14 +1652,14 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
         },
         {
           who: "you",
-          suggested: `${dxCall} ${rpt} ${myExch}`,
-          prompt: `Work them — their call, report, your ${opts.contestType === "zone" ? "zone" : "serial"}.`,
+          suggested: `${dxCall} ${rpt}${myExchTail}`,
+          prompt: `Work them — their call, report${myExchPrompt}.`,
           mustContain: required(rpt, myExch),
         },
         {
           who: "dx",
           text: `${rpt} ${dxExch} TU`,
-          copyHint: `Their report and ${opts.contestType === "zone" ? "zone" : "serial"} — copy that exchange token.`,
+          copyHint: `Their report and ${exchWord} — copy that exchange token.`,
         },
         {
           who: "you",
@@ -1614,7 +1674,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
   // S&P (search & pounce): DX is running, you find and work them.
   return {
     dx: dxCall, flavor: "CONTEST",
-    summary: `S&P — worked ${dxCall} running. Your exchange: ${myExch}.`,
+    summary: `S&P — worked ${dxCall} running.${exchSummary}`,
     steps: [
       {
         who: "dx",
@@ -1630,12 +1690,12 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
       {
         who: "dx",
         text: `${myCall} ${rpt} ${dxExch}`,
-        copyHint: `Your call confirmed, then their exchange — copy that ${opts.contestType === "zone" ? "zone" : "serial"}.`,
+        copyHint: `Your call confirmed, then their exchange — copy that ${exchWord}.`,
       },
       {
         who: "you",
-        suggested: `${rpt} ${myExch} TU`,
-        prompt: `Report + your ${opts.contestType === "zone" ? "zone" : "serial"} + TU. Fast and clean.`,
+        suggested: `${rpt}${myExchTail} TU`,
+        prompt: `Report${myExch ? ` + your ${exchWord}` : ""} + TU. Fast and clean.`,
         mustContain: required(rpt, myExch),
       },
       {

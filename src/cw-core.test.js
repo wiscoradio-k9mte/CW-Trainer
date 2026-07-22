@@ -27,6 +27,7 @@ import {
   randDxStation, randDxFieldStation, randPark, zoneToken, reciprocalCall,
   drillDxCallsigns, drillDxExchange, drillContestFragments,
   drillSplitPileup, drillReciprocalCalls,
+  stateOf, subTokens, resolveUSState, QSO_PHRASES,
 } from "./cw-core.js";
 import { CALL_AREA_DIGITS, withCallArea } from "./data/dxcc-generation.js";
 import { resolveEntity } from "./data/dxcc-resolve.js";
@@ -4052,5 +4053,271 @@ describe("F5 — blank required elements (grade inflation)", () => {
       "ragchew/answer", "pota/hunter", "sota/chaser",
       "iota/chaser", "dx/hunt", "contest/sp",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// QTH — an unresolvable QTH must not have a state (or a CQ zone) invented for it
+// ---------------------------------------------------------------------------
+// The defect: `stateOf(qth)` fell back to "CT" for ANY input without a trailing
+// two-letter token, so an operator who typed "MADISON" — or cleared the field —
+// was silently REQUIRED to send Connecticut, and `resolveUSState(...)?.cq ?? 5`
+// silently made their contest zone 5 (Connecticut's). A QTH is something a ham is
+// expected to state truthfully; asserting one on their behalf is a domain-integrity
+// fault, not a cosmetic one.
+//
+// The remedy: stateOf returns "" when it genuinely cannot resolve, `required()`
+// (F5) drops the blank from the graded elements, and the script builders omit it
+// from the text. The W1AW placeholder profile is deliberately KEPT — NEWINGTON CT
+// is genuinely Connecticut and resolves as it always did.
+describe("QTH — no invented state, no invented CQ zone", () => {
+  // Mirror the JSX edge (`start()` in wr-cw-trainer.jsx) exactly, so these tests
+  // exercise the same composition the app ships rather than a hand-built profile.
+  const profileFor = (myQth) => ({
+    myCall: "K9MTE", myName: "TRAVIS", myQth, cut: false,
+    myCqZone: resolveUSState(stateOf(myQth))?.cq ?? null,
+  });
+  const BUILDERS = {
+    ragchew: buildRagchew, pota: buildPota, sota: buildSota,
+    iota: buildIota, dx: buildDx, contest: buildContest,
+  };
+  const eachCombo = (fn, opts = {}) => {
+    for (const [act, build] of Object.entries(BUILDERS)) {
+      for (const [role] of ROLE_TERMS[act]) fn(act, role, build, opts);
+    }
+  };
+  const youSteps = (q) => q.steps.filter((s) => s.who === "you");
+
+  // --- stateOf itself ------------------------------------------------------
+  it("KEYSTONE: an unresolvable QTH yields no state at all — never 'CT'", () => {
+    // MUTATION: restore the `: "CT"` fallback in stateOf → every expect below is red.
+    expect(stateOf("MADISON")).toBe("");
+    expect(stateOf("")).toBe("");
+    expect(stateOf("   ")).toBe("");
+    expect(stateOf(undefined)).toBe("");
+    expect(stateOf(null)).toBe("");
+    expect(stateOf("SOMEWHERE IN THE WOODS")).toBe("");   // trailing token too long
+    expect(stateOf("BOX 12")).toBe("");                    // trailing token not letters
+  });
+
+  it("T2: a resolvable QTH still works exactly as before, W1AW's default included", () => {
+    expect(stateOf("MADISON WI")).toBe("WI");
+    expect(stateOf("madison wi")).toBe("WI");            // case-normalised
+    expect(stateOf("CEDAR RAPIDS IA")).toBe("IA");
+    // The shipped DEFAULT_SETTINGS profile. W1AW is genuinely in Newington,
+    // Connecticut — this fix must not disturb the training placeholder.
+    expect(stateOf("NEWINGTON CT")).toBe("CT");
+    expect(resolveUSState(stateOf("NEWINGTON CT")).cq).toBe(5);
+  });
+
+  // --- the reported case, end to end ---------------------------------------
+  it("KEYSTONE: buildPota with a state-less QTH requires 599 only, and its script says no state", () => {
+    // The manager's live repro: buildPota({myQth:""},"hunter") produced
+    // mustContain ["599","CT"] and suggested "BK GM UR 599 599 CT CT BK".
+    // MUTATION: restore stateOf's "CT" fallback → both expects red.
+    const q = buildPota(profileFor(""), "hunter");
+    const exchange = youSteps(q)[1];
+    expect(exchange.mustContain).toEqual(["599"]);
+    expect(exchange.suggested).toBe("BK GM UR 599 599 BK");
+    // The HUMAN-readable instruction is part of the same guard and gets the same
+    // pin: an unguarded `statePhrase` would tell the operator to send their state
+    // twice while the script omits it and the grader doesn't ask for it — three
+    // surfaces contradicting each other. MUTATION: drop the `myState ?` guard on
+    // statePhrase → this line goes red while everything else stays green.
+    expect(exchange.prompt).toBe("BK back, greeting, their report, BK. That's the whole exchange.");
+    // ...and no stray double space anywhere in the contact (a blank interpolation
+    // would key an audible extra word gap through toCodes).
+    for (const s of q.steps) {
+      for (const field of [s.suggested, s.text, s.prompt, s.copyHint]) {
+        if (field) expect(field, `double space in "${field}"`).not.toMatch(/ {2}/);
+      }
+    }
+  });
+
+  it("T2: the same POTA step with a resolvable QTH is byte-for-byte the old behaviour", () => {
+    // MUTATION: drop `${stateTwice}` from the suggested template → red.
+    const wi = youSteps(buildPota(profileFor("MADISON WI"), "hunter"))[1];
+    expect(wi.mustContain).toEqual(["599", "WI"]);
+    expect(wi.suggested).toBe("BK GM UR 599 599 WI WI BK");
+    // The instruction still names the state — the guard must not over-fire either.
+    expect(wi.prompt).toBe("BK back, greeting, their report, your state twice, BK. That's the whole exchange.");
+
+    const ct = youSteps(buildPota(profileFor("NEWINGTON CT"), "hunter"))[1];
+    expect(ct.mustContain).toEqual(["599", "CT"]);
+    expect(ct.suggested).toBe("BK GM UR 599 599 CT CT BK");
+  });
+
+  it("the activator's reply drops the state handle too, and says why", () => {
+    // The DX closes "BK TU <state> 73 DE <call> EE" — with no state to use as a
+    // handle the token goes, and the copy hint stops promising one.
+    const none = buildPota(profileFor("MADISON"), "hunter");
+    const closing = none.steps[none.steps.length - 1];
+    expect(closing.text).toMatch(/^BK TU 73 DE /);
+    expect(closing.copyHint).toMatch(/Put a state in your QTH/);
+
+    const wi = buildPota(profileFor("MADISON WI"), "hunter");
+    const wiClosing = wi.steps[wi.steps.length - 1];
+    expect(wiClosing.text).toMatch(/^BK TU WI 73 DE /);
+  });
+
+  it("the DX-hunt POTA variant carries the same guard, so it gets the same pin", () => {
+    // buildPota's {dx:true} branch has its own copy of the exchange step with its
+    // own sentence. The activity/role sweeps only reach the default opts, so this
+    // branch needs its own assertion or the guard here is ungated.
+    // MUTATION: drop the `myState ?` guard on statePhrase → the first prompt line
+    // goes red. MUTATION: drop `${stateTwice}` → the suggested lines go red.
+    const none = youSteps(buildPota(profileFor("MADISON"), "hunter", { dx: true }))[1];
+    expect(none.mustContain).toEqual(["599"]);
+    expect(none.suggested).toBe("BK GM UR 599 599 BK");
+    expect(none.prompt).toBe("BK, their report, BK. Exchange grammar is identical to domestic.");
+
+    const wi = youSteps(buildPota(profileFor("MADISON WI"), "hunter", { dx: true }))[1];
+    expect(wi.mustContain).toEqual(["599", "WI"]);
+    expect(wi.suggested).toBe("BK GM UR 599 599 WI WI BK");
+    expect(wi.prompt).toBe("BK, their report, your state twice, BK. Exchange grammar is identical to domestic.");
+  });
+
+  // --- T1: nothing substituted, anywhere in the shipped matrix --------------
+  it("T1: with a state-less QTH, 'CT' appears in no required element or script", () => {
+    // Enumerate the real registry, not a hand-picked sample. MUTATION: restore
+    // stateOf's "CT" fallback → the POTA hunter rows go red.
+    let fields = 0;
+    eachCombo((act, role, build) => {
+      const q = build(profileFor("MADISON"), role, {});
+      for (const s of q.steps) {
+        for (const field of [s.suggested, s.text].filter(Boolean)) {
+          expect(field.split(/\s+/), `${act}/${role}: invented state in "${field}"`)
+            .not.toContain("CT");
+          fields++;
+        }
+        for (const el of s.mustContain ?? []) {
+          expect(el, `${act}/${role}: invented state required`).not.toBe("CT");
+        }
+      }
+    });
+    expect(fields).toBeGreaterThan(0);   // the sweep really ran
+  });
+
+  it("T4: no false negatives — every you-step still grades 100 on its own script", () => {
+    // Both QTH shapes: dropping the state must not make a correct send fail, and
+    // keeping it must not either.
+    for (const qth of ["MADISON", "MADISON WI"]) {
+      let steps = 0;
+      eachCombo((act, role, build) => {
+        for (const [i, s] of youSteps(build(profileFor(qth), role, {})).entries()) {
+          expect(gradeSend(s.mustContain, s.suggested).score,
+            `${qth} — ${act}/${role} you-step ${i}`).toBe(100);
+          steps++;
+        }
+      });
+      expect(steps).toBe(30);   // 12 activity/role combos, pinned
+    }
+  });
+
+  it("T4: exactly ONE required element is lost, and only the POTA hunter's state", () => {
+    // A count pin, because a score-only test cannot catch an OVER-BROAD drop:
+    // losing a real token would still grade 100 over fewer requirements.
+    // MUTATION: make required() also drop "TU" → both totals fall by 4 → red.
+    const total = (qth) => {
+      let n = 0;
+      eachCombo((act, role, build) => {
+        for (const s of youSteps(build(profileFor(qth), role, {}))) n += s.mustContain.length;
+      });
+      return n;
+    };
+    expect(total("MADISON WI")).toBe(47);   // the F5 baseline, undisturbed
+    expect(total("MADISON")).toBe(46);      // exactly the POTA hunter state
+  });
+
+  // --- T3: the CQ zone gets the same treatment as the state ----------------
+  it("T3: an unresolvable QTH drops the contest zone rather than sending zone 5", () => {
+    // Zone 5 arrived with the "CT" fallback, not by design: per the bundled DXCC
+    // dataset it is the eastern seaboard, so a Wisconsin operator with a state-less
+    // QTH was graded on a zone they are not in. MUTATION VERIFIED: drop the
+    // `zone == null ? ""` guard from buildContest's exch() → this and the S&P test
+    // go red (zoneToken(null) yields the token "null"). Note that reverting only the
+    // `myCqZone = null` parameter default does NOT bite: `profileFor` passes an
+    // explicit null, and a parameter default only fires for undefined. The runtime
+    // guard is the load-bearing line.
+    const none = buildContest(profileFor("MADISON"), "run", { contestType: "zone" });
+    const exchange = none.steps.filter((s) => s.who === "you")[1];
+    expect(exchange.mustContain).toEqual(["599"]);
+    expect(exchange.suggested).toBe(`${none.dx} 599`);
+    expect(exchange.prompt).toBe("Work them — their call, report.");
+    expect(none.summary).not.toMatch(/Your exchange/);
+
+    // Resolvable: unchanged. Wisconsin is CQ zone 4 (CQ's WAZ zone list,
+    // cqww.com/cq_waz_list.htm, retrieved 2026-07-21 — see buildContest's header for
+    // why our own dataset is NOT the citation here), so the token is "04", not "05".
+    const wi = buildContest(profileFor("MADISON WI"), "run", { contestType: "zone" });
+    const wiExchange = wi.steps.filter((s) => s.who === "you")[1];
+    expect(wiExchange.mustContain).toEqual(["599", "04"]);
+    expect(wiExchange.suggested).toBe(`${wi.dx} 599 04`);
+    expect(wi.summary).toMatch(/Your exchange: 04\./);
+  });
+
+  it("T3: an OMITTED myCqZone fails safe — the parameter default drops the zone too", () => {
+    // Honest note on coverage: today's single call site (start() in
+    // wr-cw-trainer.jsx) always passes an explicit number or null, so the
+    // `myCqZone = null` parameter default is unreachable in production and
+    // reverting it to `= 5` leaves the rest of the suite green. It is pinned
+    // anyway because a future second caller that simply omits the key would
+    // silently revive the exact defect this change exists to kill.
+    // MUTATION: change the default back to `myCqZone = 5` → red (and ONLY red here).
+    const q = buildContest({ myCall: "K9MTE" }, "run", { contestType: "zone" });
+    expect(q.steps.filter((s) => s.who === "you")[1].mustContain).toEqual(["599"]);
+  });
+
+  it("T3: the S&P side drops the zone the same way, with no stray spacing", () => {
+    const none = buildContest(profileFor(""), "sp", { contestType: "zone" });
+    const exchange = none.steps.filter((s) => s.who === "you")[1];
+    expect(exchange.mustContain).toEqual(["599"]);
+    expect(exchange.suggested).toBe("599 TU");
+    expect(exchange.prompt).toBe("Report + TU. Fast and clean.");
+
+    const ct = buildContest(profileFor("NEWINGTON CT"), "sp", { contestType: "zone" });
+    const ctExchange = ct.steps.filter((s) => s.who === "you")[1];
+    expect(ctExchange.mustContain).toEqual(["599", "05"]);
+    expect(ctExchange.suggested).toBe("599 05 TU");
+  });
+
+  it("T3: the DX station always has a zone — dropping ours never blanks theirs", () => {
+    // Only the operator's own zone can be unknown; the DX pool carries one per row.
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(profileFor("MADISON"), "run", { contestType: "zone" });
+      expect(q.steps[3].text).toMatch(/^599 \d{2} TU$/);
+    }
+  });
+
+  it("T3: the serial (WPX) exchange is untouched — it never needed a zone", () => {
+    const q = buildContest(profileFor("MADISON"), "run", { contestType: "wpx" });
+    const exchange = q.steps.filter((s) => s.who === "you")[1];
+    expect(exchange.mustContain).toHaveLength(2);
+    expect(exchange.mustContain[1]).toMatch(/^\d{3}$/);
+    expect(exchange.prompt).toBe("Work them — their call, report, your serial.");
+  });
+
+  // --- the COPY phrase pool ------------------------------------------------
+  it("a blank {ST} leaves a clean phrase, not a double word gap", () => {
+    // QSO_PHRASES personalise to the operator; two of them carry {ST}.
+    // MUTATION: remove the whitespace collapse from subTokens → red.
+    const s = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON" };
+    expect(subTokens("BK GM UR 599 599 {ST} {ST} BK", s)).toBe("BK GM UR 599 599 BK");
+    expect(subTokens("BK TU {ST} 73 EE", s)).toBe("BK TU 73 EE");
+    // No phrase in the shipped pool comes out with a doubled space for ANY of the
+    // clearable fields — toCodes turns each space into a word gap.
+    const cleared = { myCall: "", myName: "", myQth: "" };
+    for (const p of QSO_PHRASES) {
+      expect(subTokens(p, cleared), `"${p}"`).not.toMatch(/ {2}/);
+      expect(toCodes(subTokens(p, cleared)).filter((t, i, a) => t.wordGap && a[i - 1]?.wordGap))
+        .toEqual([]);
+    }
+    // A resolvable QTH is untouched.
+    expect(subTokens("BK TU {ST} 73 EE", { ...s, myQth: "MADISON WI" })).toBe("BK TU WI 73 EE");
+    // The .trim() is a separate half of the collapse and needs its own pin: a
+    // token at the END of a phrase leaves a TRAILING space that the `\s+` → " "
+    // collapse alone does not remove, and toCodes turns that into a word gap of
+    // silence after the last character. MUTATION: delete only `.trim()` → red.
+    expect(subTokens("QTH {QTH}", cleared)).toBe("QTH");
   });
 });
