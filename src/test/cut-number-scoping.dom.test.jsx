@@ -48,8 +48,16 @@ const N8NT_QUEUE = [
 //     through fireEvent, and real timers are restored before the REVEAL click so
 //     every userEvent interaction in the test body runs on a real clock, exactly
 //     as before.
-//   - the countdown interval clears itself when it expires, so nothing faked is
-//     left pending when the real clock comes back.
+//   - the countdown interval self-clears at expiry, but the target's Morse
+//     playback does NOT. play() schedules one end-of-transmission timeout, and
+//     vi.getTimerCount() across this window measures 0 → 1 (the countdown) →
+//     2 at +5000ms (countdown + playback) → 1 at the handback, draining only
+//     after 26s more of fake time. vi.useRealTimers() discards it. Safe here:
+//     that callback only does setPlaying(false), osc.stop() on the no-op Web
+//     Audio mock, and a ref reset — nothing these tests assert. The old
+//     real-clock helper abandoned the SAME timeout and worse, as a live timer
+//     firing into a torn-down tree (its whole test ran 6.9s; the playback needs
+//     ~31s), so the handback is an improvement, not a new liability.
 //
 // COPY also hides the target until it is revealed, so REVEAL is how the test
 // reads back what was actually generated (before CHECK the reveal panel renders
