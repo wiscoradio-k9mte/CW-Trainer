@@ -717,6 +717,14 @@ export const DRILL_CATEGORIES = [
    named FIST_TOLERANCE so real-operator validation can tighten it without a
    code hunt.
 
+   NOT-MEASURED RULE (load-bearing, one rule for every verdict this returns):
+   a verdict is `null` when the thing was never measured — the drill contained
+   no gaps of that class (a callsign has no word gaps), or the key mode
+   machine-times them so the operator never controlled it. `null` is NOT a
+   verdict; every surface must omit the reading rather than render it. Before
+   this rule the unmeasured case returned "good", so PROGRESS praised operators
+   for word spacing they had never sent — fabricated progress.
+
    B2 (v1.1): returns wpmDelta (estWpm - keyWpm), wpmVerdict, and lowSample flag.
    B3 (v1.1): returns weighting { ratio, verdict } — median dah vs 3×unit.
               Straight key only; suppressed for paddle (dahs are machine-timed). */
@@ -741,12 +749,14 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
       wpmDelta: 0,
       wpmVerdict: "on target",
       lowSample: true,
+      // Nothing was keyed, so nothing was measured — no verdicts (see the
+      // NOT-MEASURED RULE above).
       spacing: {
-        element:   { ratio: null, verdict: "good" },
-        character: { ratio: null, verdict: "good" },
-        word:      { ratio: null, verdict: "good" },
+        element:   { ratio: null, verdict: null },
+        character: { ratio: null, verdict: null },
+        word:      { ratio: null, verdict: null },
       },
-      weighting: { ratio: null, verdict: "good" },
+      weighting: { ratio: null, verdict: null },
       notes: [],
     };
   }
@@ -815,7 +825,7 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   };
 
   const verdict = (ratio, ideal) => {
-    if (ratio === null) return "good"; // no data → no verdict
+    if (ratio === null) return null; // never measured → no verdict (see NOT-MEASURED RULE)
     const deviation = Math.abs(ratio - ideal) / ideal;
     if (deviation <= FIST_TOLERANCE) return "good";
     return ratio > ideal ? "loose" : "tight";
@@ -826,9 +836,16 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   const wordRatio  = median(wordGaps);     // ideal 7u
 
   // Paddle and bug keyers machine-time intra-character dit spacing — only the
-  // operator controls when to start the next character or word. So the
-  // element-gap verdict is not meaningful and is suppressed for both modes.
-  const elementVerdict = (keyType === "paddle" || keyType === "bug") ? "good" : verdict(elemRatio, 1);
+  // operator controls when to start the next character or word. Those gaps are
+  // the machine's, not the operator's fist, so neither the ratio nor a verdict
+  // is reported: it is a not-measured reading, the same shape as suppressed
+  // paddle weighting below.
+  const elementMachineTimed = keyType === "paddle" || keyType === "bug";
+  const elementSpacing = elementMachineTimed
+    ? { ratio: null, verdict: null }
+    : { ratio: elemRatio, verdict: verdict(elemRatio, 1) };
+  const charVerdict = verdict(charRatio, 3);
+  const wordVerdict = verdict(wordRatio, 7);
 
   // B3: dah weighting — median dah vs 3×unit.
   // Suppressed for paddle (dahs machine-timed 3u; verdict is meaningless).
@@ -838,10 +855,10 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   let weighting;
   if (keyType === "paddle" || unitMs <= 0) {
     // Suppressed for paddle — paddle timing is machine-controlled, not operator fist.
-    weighting = { ratio: null, verdict: "good" };
+    weighting = { ratio: null, verdict: null };
   } else if (dahs.length === 0) {
     // No dahs sent — can't assess weighting (all-dit sequence).
-    weighting = { ratio: null, verdict: "good" };
+    weighting = { ratio: null, verdict: null };
   } else {
     const sortedDahs = [...dahs].sort((a, b) => a - b);
     const m = Math.floor(sortedDahs.length / 2);
@@ -852,21 +869,24 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
     weighting = { ratio: dahRatio, verdict: verdict(dahRatio, 3) };
   }
 
+  // Notes are problem-only: a null verdict (never measured) and a "good" verdict
+  // both produce nothing to say, so every guard here tests for a real non-good
+  // verdict rather than "!== good" alone.
   const notes = [];
-  // Element-spacing note suppressed for paddle and bug (machine-timed dits in both).
-  if (keyType !== "paddle" && keyType !== "bug" && elemRatio !== null && verdict(elemRatio, 1) !== "good") {
-    notes.push(`element spacing ${verdict(elemRatio, 1)} (measured ${elemRatio.toFixed(1)}u, ideal 1u)`);
+  // Element-spacing note is absent for paddle and bug — the verdict is null there.
+  if (elementSpacing.verdict && elementSpacing.verdict !== "good") {
+    notes.push(`element spacing ${elementSpacing.verdict} (measured ${elementSpacing.ratio.toFixed(1)}u, ideal 1u)`);
   }
-  if (charRatio !== null && verdict(charRatio, 3) !== "good") {
-    const dir = verdict(charRatio, 3) === "loose" ? "too long" : "too short";
+  if (charVerdict && charVerdict !== "good") {
+    const dir = charVerdict === "loose" ? "too long" : "too short";
     notes.push(`you're pausing ${dir} between letters (${charRatio.toFixed(1)}u, ideal 3u)`);
   }
-  if (wordRatio !== null && verdict(wordRatio, 7) !== "good") {
-    const dir = verdict(wordRatio, 7) === "loose" ? "too long" : "too short";
+  if (wordVerdict && wordVerdict !== "good") {
+    const dir = wordVerdict === "loose" ? "too long" : "too short";
     notes.push(`word spacing is ${dir} (${wordRatio.toFixed(1)}u, ideal 7u)`);
   }
   // B3: plain-English weighting note — bug mode keeps this (hand-timed dahs).
-  if (keyType !== "paddle" && weighting.verdict !== "good" && weighting.ratio !== null) {
+  if (weighting.verdict && weighting.verdict !== "good") {
     const dir = weighting.verdict === "loose" ? "running long" : "running short";
     notes.push(`your dahs are ${dir} relative to your dits (${weighting.ratio.toFixed(1)}u, ideal 3u)`);
   }
@@ -879,9 +899,9 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
     wpmVerdict,
     lowSample,
     spacing: {
-      element:   { ratio: elemRatio,  verdict: elementVerdict },
-      character: { ratio: charRatio,  verdict: verdict(charRatio, 3) },
-      word:      { ratio: wordRatio,  verdict: verdict(wordRatio, 7) },
+      element:   elementSpacing,
+      character: { ratio: charRatio,  verdict: charVerdict },
+      word:      { ratio: wordRatio,  verdict: wordVerdict },
     },
     weighting,
     notes,
@@ -1755,15 +1775,16 @@ export function isReadyToAdvance(history) {
 // RETENTION: keep the last 50 records per category (generous, bounded).
 // 50 × 3 categories × ~200 bytes ≈ 30 KB — trivial for localStorage (5 MB+).
 //
-// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 1.
-// On mismatch migrateProgress() resets to empty — no corrupt blob can crash.
+// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 2.
+// migrateProgress() walks PROGRESS_MIGRATIONS from the stored version up to
+// current and carries the data forward; it never wipes on a version mismatch.
 //
 // QSO SEAM INVARIANT (load-bearing): migrateProgress must preserve unknown
 // keys (e.g. `qso`) it finds in a stored blob. A future build may have written
 // QSO records; an older build reading back must NOT strip them. Document and test.
 
 export const PROGRESS_RETENTION = 50;
-export const PROGRESS_SCHEMA_VERSION = 1;
+export const PROGRESS_SCHEMA_VERSION = 2;
 
 // Known categories in this schema version.
 const KNOWN_PROGRESS_CATEGORIES = ["learn", "key", "copy", "qso"];
@@ -1796,17 +1817,46 @@ export function appendProgress(progress, category, record) {
   return { ...progress, [category]: next };
 }
 
+// Verdict fields on a KEY record that a v1 build could write as a fabricated
+// "good". In v1 analyzeFist's verdict() returned "good" for a null ratio, so a
+// stored "good" means EITHER "measured and within tolerance" OR "never measured
+// at all" — the two are indistinguishable after the fact.
+const V1_AMBIGUOUS_VERDICT_FIELDS = [
+  "elementVerdict", "letterVerdict", "wordVerdict", "weightingVerdict",
+];
+
+// v1 → v2 per-record transform: drop the ambiguous "good", keep everything else.
+// "loose" and "tight" were only ever produced from a real measurement, so they
+// carry forward untouched — as do estWpm, wpmVerdict, copyPct and every other
+// field. Only the claim we cannot stand behind is dropped.
+function dropUnprovenV1Verdicts(rec) {
+  if (!rec || typeof rec !== "object") return rec;
+  const out = { ...rec };
+  for (const field of V1_AMBIGUOUS_VERDICT_FIELDS) {
+    if (out[field] === "good") out[field] = null;
+  }
+  return out;
+}
+
 // PROGRESS_MIGRATIONS — ordered map of (fromVersion → transform function).
 //
-// Only v1 exists today so there are no entries. This is the seam: a future
-// schema bump adds ONE entry here instead of touching any wipe logic.
+// This is the seam: a schema bump adds ONE entry here instead of touching any
+// wipe logic.
 //
 // Shape: { [fromVersion: number]: (obj: object) => object }
 // Each function transforms a blob from `fromVersion` to `fromVersion + 1`.
 // Functions must be pure and must not throw (errors are caught by migrateProgress).
 const PROGRESS_MIGRATIONS = {
-  // Example of future entry:
-  //   1: (obj) => ({ ...obj, newField: [] }),   // v1 → v2
+  // v1 → v2: spacing/weighting verdicts gained a "null = never measured" state.
+  // A v1 record's "good" cannot be trusted (see V1_AMBIGUOUS_VERDICT_FIELDS), so
+  // it is demoted to null and PROGRESS simply shows no chip for it. The cost is
+  // disclosed and accepted: a genuinely-measured-good historical verdict is lost.
+  // The alternative — rendering it — would retro-label never-measured sessions as
+  // measured, which is the exact defect this schema change exists to remove.
+  1: (obj) => ({
+    ...obj,
+    key: Array.isArray(obj.key) ? obj.key.map(dropUnprovenV1Verdicts) : obj.key,
+  }),
 };
 
 // migrateProgress(raw) → a valid progress object.

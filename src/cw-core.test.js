@@ -1079,14 +1079,19 @@ function makeFistFromMorse(wpm, morseStr, charGapMultiplier = 1, wordGapMultipli
 }
 
 describe("analyzeFist()", () => {
-  it("empty events → safe zeros, no NaN, no throw", () => {
+  // CONTRACT CHANGE (fix/unmeasured-spacing-verdicts): this test previously
+  // asserted all three verdicts were "good" for an empty event list. That was
+  // the defect — nothing was keyed, so nothing was measured, and "good" was a
+  // fabricated claim. The verdict for a never-measured reading is now null.
+  it("empty events → safe zeros, no NaN, no throw, and NO verdicts (nothing measured)", () => {
     const r = analyzeFist([], 20, "straight");
     expect(r.estWpm).toBe(0);
     expect(r.elements).toBe(0);
     expect(r.unitMs).toBe(0);
-    expect(r.spacing.element.verdict).toBe("good");
-    expect(r.spacing.character.verdict).toBe("good");
-    expect(r.spacing.word.verdict).toBe("good");
+    expect(r.spacing.element.verdict).toBeNull();
+    expect(r.spacing.character.verdict).toBeNull();
+    expect(r.spacing.word.verdict).toBeNull();
+    expect(r.weighting.verdict).toBeNull();
     expect(Array.isArray(r.notes)).toBe(true);
   });
 
@@ -1142,16 +1147,26 @@ describe("analyzeFist()", () => {
     expect(r.spacing.character.verdict).toBe("tight");
   });
 
-  it("paddle mode → element.verdict is always 'good' (suppressed)", () => {
+  // CONTRACT CHANGE: suppression used to be expressed as verdict "good", which
+  // read to the operator as praise for machine-timed spacing. Suppressed now
+  // means "not measured" — null ratio, null verdict.
+  it("paddle mode → element spacing is not measured (ratio and verdict null)", () => {
     const unitMs = 60;
-    // Even with terrible intra-element spacing it must be suppressed for paddle
+    // Gaps must be < 2u to land in the ELEMENT bucket at all. This test used to
+    // feed 5u gaps, which bucket as WORD gaps — so elemRatio was null whatever
+    // the suppression did, and the assertion could not fail. 1.6u is a real
+    // element gap and a bad one (60% off the 1u ideal), so the straight-key
+    // control below proves there is something here to suppress.
     const events = [
       { type: "dit", durMs: unitMs, gapBeforeMs: 0 },
-      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 5 * unitMs }, // terrible element gap
-      { type: "dit", durMs: unitMs, gapBeforeMs: 5 * unitMs },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 1.6 * unitMs },
+      { type: "dit", durMs: unitMs, gapBeforeMs: 1.6 * unitMs },
     ];
+    expect(analyzeFist(events, 20, "straight").spacing.element.verdict).toBe("loose");
+
     const r = analyzeFist(events, 20, "paddle");
-    expect(r.spacing.element.verdict).toBe("good");
+    expect(r.spacing.element.verdict).toBeNull();
+    expect(r.spacing.element.ratio).toBeNull();
   });
 
   it("median-based unitMs: one absurd outlier dah barely moves estWpm", () => {
@@ -1207,8 +1222,9 @@ describe("analyzeFist()", () => {
     ];
     const r = analyzeFist(events, 20, "paddle");
 
-    // Element verdict MUST be suppressed for paddle
-    expect(r.spacing.element.verdict).toBe("good");
+    // Element verdict MUST be suppressed for paddle — CONTRACT CHANGE: suppressed
+    // is now null ("not measured"), not "good".
+    expect(r.spacing.element.verdict).toBeNull();
 
     // Character verdict: 4u gap → ratio 4/3 ≈ 1.33 deviation from ideal 3
     // deviation = |4-3|/3 = 33% > 25% → loose
@@ -1220,6 +1236,87 @@ describe("analyzeFist()", () => {
 
     // estWpm should be in a reasonable range (based on dit durations = 60ms)
     expect(r.estWpm).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// analyzeFist() — the NOT-MEASURED rule (fix/unmeasured-spacing-verdicts)
+// ---------------------------------------------------------------------------
+// The defect: verdict(null, ideal) returned "good", so a drill made of single
+// characters or callsigns — which contain no word gaps at all — still reported
+// "words: good". The app praised a skill it never observed.
+describe("analyzeFist() — a verdict only exists when it was measured", () => {
+  const unitMs = 60; // 20 wpm
+
+  // A callsign is one word: element gaps and letter gaps, never a word gap.
+  // Real content (W1AW-shaped: .-- .---- .- .--) rather than an idealized
+  // synthetic run, so the fixture matches what a KEY drill actually produces.
+  const callsignFist = [
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },              // W: .
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs },     // 1: .   (letter gap)
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs },     // A: .   (letter gap)
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs },     // W: .   (letter gap)
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+  ];
+
+  it("a drill with no word gaps reports NO word verdict (not 'good')", () => {
+    const r = analyzeFist(callsignFist, 20, "straight");
+    // Nothing in the send was a word gap, so there is nothing to judge.
+    expect(r.spacing.word.ratio).toBeNull();
+    expect(r.spacing.word.verdict).toBeNull();
+    // …while the gaps that WERE sent are still judged normally.
+    expect(r.spacing.element.verdict).toBe("good");
+    expect(r.spacing.character.verdict).toBe("good");
+  });
+
+  it("the unmeasured word gap produces no note either", () => {
+    const r = analyzeFist(callsignFist, 20, "straight");
+    expect(r.notes.some((n) => n.includes("word spacing"))).toBe(false);
+  });
+
+  // T2 — the fix must not silence real praise. Same fixture plus genuine 7u
+  // word gaps: the word verdict must come back and must read "good".
+  it("real word gaps near the 7u ideal DO report 'good'", () => {
+    const withWordGaps = [
+      ...callsignFist,
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // word gap
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // word gap
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+    ];
+    const r = analyzeFist(withWordGaps, 20, "straight");
+    expect(r.spacing.word.ratio).toBeCloseTo(7, 1);
+    expect(r.spacing.word.verdict).toBe("good");
+    // and letters/elements are unaffected
+    expect(r.spacing.character.verdict).toBe("good");
+    expect(r.spacing.element.verdict).toBe("good");
+  });
+
+  it("a single character reports neither a letter nor a word verdict", () => {
+    // "A" = .- : one element gap, no letter gap, no word gap.
+    const r = analyzeFist([
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+    ], 20, "straight");
+    expect(r.spacing.element.verdict).toBe("good"); // the one gap that exists
+    expect(r.spacing.character.verdict).toBeNull();
+    expect(r.spacing.word.verdict).toBeNull();
+  });
+
+  it("every suppressed/absent reading uses the same shape: ratio null, verdict null", () => {
+    // One rule, three readings — this is the consistency the fix exists to hold.
+    const paddle = analyzeFist(callsignFist, 20, "paddle");
+    expect(paddle.spacing.element).toEqual({ ratio: null, verdict: null }); // machine-timed
+    expect(paddle.spacing.word).toEqual({ ratio: null, verdict: null });    // no word gaps sent
+    expect(paddle.weighting).toEqual({ ratio: null, verdict: null });       // machine-timed
   });
 });
 
@@ -1961,7 +2058,8 @@ describe("analyzeFist() — B3: weighting (straight key only)", () => {
     expect(r.weighting.verdict).toBe("tight");
   });
 
-  it("paddle mode → weighting suppressed regardless of dah length (ratio null, verdict 'good')", () => {
+  // CONTRACT CHANGE: suppressed weighting reports verdict null, not "good".
+  it("paddle mode → weighting suppressed regardless of dah length (ratio and verdict null)", () => {
     // Even absurdly long dahs (5u) should be suppressed for paddle
     const events = [
       { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },
@@ -1970,17 +2068,19 @@ describe("analyzeFist() — B3: weighting (straight key only)", () => {
       { type: "dah", durMs: 5 * unitMs, gapBeforeMs: unitMs },
     ];
     const r = analyzeFist(events, 20, "paddle");
-    expect(r.weighting.verdict).toBe("good");
+    expect(r.weighting.verdict).toBeNull();
     expect(r.weighting.ratio).toBeNull();
   });
 
-  it("all-dits sequence (no dahs) → weighting.ratio null, verdict 'good' (no throw)", () => {
+  // CONTRACT CHANGE: an all-dit send has no dahs to weigh, so there is no
+  // verdict — it used to report "good" for dah length the operator never sent.
+  it("all-dits sequence (no dahs) → weighting.ratio null, verdict null (no throw)", () => {
     const events = Array.from({ length: 8 }, (_, i) => ({
       type: "dit", durMs: unitMs, gapBeforeMs: i === 0 ? 0 : unitMs,
     }));
     const r = analyzeFist(events, 20, "straight");
     expect(r.weighting.ratio).toBeNull();
-    expect(r.weighting.verdict).toBe("good");
+    expect(r.weighting.verdict).toBeNull();
   });
 
   it("loose weighting produces a note string about dahs running long", () => {
@@ -2079,7 +2179,8 @@ describe("analyzeFist() — bug mode semantics", () => {
   // confirm they produce a non-good verdict in straight mode, and that bug suppresses
   // the same verdict.
   // Bites: if the element-spacing guard stops including "bug".
-  it("A2: keyType='bug' with bad element gaps → element.verdict === 'good' (suppressed)", () => {
+  // CONTRACT CHANGE: suppressed is now null ("not measured"), not "good".
+  it("A2: keyType='bug' with bad element gaps → element.verdict is null (suppressed)", () => {
     // Element gap must be ratio < 2u to land in the element-gap bucket.
     // 1.6u is loose: |1.6 - 1| / 1 = 60% > 25% FIST_TOLERANCE → verdict = "loose".
     const badGap = [
@@ -2095,7 +2196,7 @@ describe("analyzeFist() — bug mode semantics", () => {
     expect(straight.spacing.element.verdict).not.toBe("good"); // "loose"
     // For bug it must be suppressed:
     const bug = analyzeFist(badGap, WPM, "bug");
-    expect(bug.spacing.element.verdict).toBe("good");
+    expect(bug.spacing.element.verdict).toBeNull();
   });
 
   // A3: long dahs on a bug (durMs ≈ 5u) → weighting verdict is "loose".
@@ -2111,7 +2212,7 @@ describe("analyzeFist() — bug mode semantics", () => {
   });
 
   // Sanity: verify "bug" is NOT accidentally treated as "paddle" anywhere.
-  // If it were, weighting would be null and element verdict would be "good" for all inputs.
+  // If it were, weighting would be null for all inputs (paddle suppresses it).
   // A1 catches the weighting half; this pins the element-spacing suppression path directly.
   it("A4: keyType='bug' is NOT the string 'paddle' — paddle guard does not fire", () => {
     const events = bugStream();
@@ -2209,9 +2310,9 @@ describe("migrateProgress()", () => {
 
   it("mismatched schemaVersion → data is carried forward, version stamped current", () => {
     // Old behaviour: wiped. New behaviour: carry forward through the migration
-    // ladder (PROGRESS_MIGRATIONS). With no migrations registered (only v1 exists),
-    // learn/key/copy arrays pass through untouched and the version is stamped current.
-    // schemaVersion:0 simulates a pre-v1 blob (e.g. written before the field existed).
+    // ladder (PROGRESS_MIGRATIONS). schemaVersion:0 simulates a pre-v1 blob (e.g.
+    // written before the field existed); a LEARN record has no verdict fields, so
+    // the v1→v2 transform leaves it byte-identical.
     const oldBlob = {
       schemaVersion: 0,
       learn: [{ t: 1, lesson: 1, attempts: 10, correct: 9, pct: 90 }],
@@ -2224,6 +2325,74 @@ describe("migrateProgress()", () => {
     expect(p.learn[0].pct).toBe(90);
     // Version is stamped to the current schema.
     expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  // -------------------------------------------------------------------------
+  // v1 → v2: unproven "good" verdicts (fix/unmeasured-spacing-verdicts)
+  // -------------------------------------------------------------------------
+  // A v1 build wrote "good" both for measured-good AND for never-measured, so a
+  // stored v1 "good" is a claim we cannot stand behind. The migration drops it —
+  // and drops nothing else.
+  describe("v1 → v2 KEY verdicts", () => {
+    const v1KeyRecord = {
+      t: 1700000000000, category: "callsigns", keyType: "straight",
+      copyPct: 85, estWpm: 18, wpmVerdict: "on target",
+      elementVerdict: "good", letterVerdict: "good",
+      wordVerdict: "good", weightingVerdict: "loose", weightingRatio: 3.9,
+    };
+
+    it("demotes an ambiguous v1 'good' to null so history is not retro-labelled measured", () => {
+      const p = migrateProgress({ schemaVersion: 1, learn: [], key: [v1KeyRecord], copy: [] });
+      const r = p.key[0];
+      expect(r.elementVerdict).toBeNull();
+      expect(r.letterVerdict).toBeNull();
+      expect(r.wordVerdict).toBeNull();
+    });
+
+    it("carries a v1 'loose'/'tight' forward — those were only ever real measurements", () => {
+      const p = migrateProgress({
+        schemaVersion: 1, learn: [], copy: [],
+        key: [v1KeyRecord, { ...v1KeyRecord, letterVerdict: "tight", wordVerdict: "loose" }],
+      });
+      expect(p.key[0].weightingVerdict).toBe("loose");
+      expect(p.key[1].letterVerdict).toBe("tight");
+      expect(p.key[1].wordVerdict).toBe("loose");
+    });
+
+    it("migrates, never wipes: the record and all its other fields survive", () => {
+      const p = migrateProgress({ schemaVersion: 1, learn: [], key: [v1KeyRecord], copy: [] });
+      expect(p.key.length).toBe(1);
+      const r = p.key[0];
+      expect(r.t).toBe(1700000000000);
+      expect(r.category).toBe("callsigns");
+      expect(r.keyType).toBe("straight");
+      expect(r.copyPct).toBe(85);
+      expect(r.estWpm).toBe(18);
+      expect(r.wpmVerdict).toBe("on target");
+      expect(r.weightingRatio).toBe(3.9);
+    });
+
+    it("round-trips: a migrated blob re-read at v2 is unchanged (idempotent)", () => {
+      const once  = migrateProgress({ schemaVersion: 1, learn: [], key: [v1KeyRecord], copy: [] });
+      const twice = migrateProgress(JSON.parse(JSON.stringify(once)));
+      expect(twice).toEqual(once);
+    });
+
+    it("a v2 record's 'good' is a real measurement and is left alone", () => {
+      const p = migrateProgress({
+        schemaVersion: 2, learn: [], copy: [],
+        key: [{ ...v1KeyRecord, wordVerdict: "good" }],
+      });
+      expect(p.key[0].wordVerdict).toBe("good");
+      expect(p.key[0].letterVerdict).toBe("good");
+    });
+
+    it("survives a malformed record in the key array without throwing or wiping", () => {
+      const p = migrateProgress({ schemaVersion: 1, learn: [], copy: [], key: [null, v1KeyRecord] });
+      expect(p.key.length).toBe(2);
+      expect(p.key[0]).toBeNull();
+      expect(p.key[1].wordVerdict).toBeNull();
+    });
   });
 
   it("QSO seam: qso records in a stored blob are preserved through migrateProgress", () => {

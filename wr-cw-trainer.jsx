@@ -1719,6 +1719,9 @@ const VERDICT_COLOR = {
   loose: S.tone.warn,  // #F2A93B
   tight: S.tone.err,   // #E07A5F
 };
+// Uppercase chip text for the KEY fist panel. Keyed on the same three verdicts
+// as VERDICT_COLOR so a null (never-measured) verdict has no label to render.
+const VERDICT_LABEL = { good: "GOOD", loose: "LOOSE", tight: "TIGHT" };
 function Tag({ verdict, children }) {
   const color = VERDICT_COLOR[verdict] ?? S.text.dim;
   return (
@@ -2501,8 +2504,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   };
 
   // Verdict color: good=green, loose=caution-amber, tight=red
-  // verdictLabel: human-readable uppercase chip text for the KEY fist panel
-  const verdictLabel = (v) => v === "good" ? "GOOD" : v === "loose" ? "LOOSE" : "TIGHT";
+  // verdictLabel: human-readable uppercase chip text for the KEY fist panel.
+  // A null verdict (never measured) has no label — its row is not rendered at
+  // all, and an explicit "" here means a leak would show as blank, never as a
+  // wrong verdict word.
+  const verdictLabel = (v) => VERDICT_LABEL[v] ?? "";
 
   // pickCat: centralises the "change category" side-effects so the stepper and
   // direct-pick buttons stay in sync. Shared by both optionsJSX and the inline
@@ -2726,18 +2732,19 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Spacing verdicts — three rows.
-                    Element spacing: straight key only (paddle and bug machine-time dits).
-                    Letter/word gaps: all modes (operator controls inter-character timing). */}
+                {/* Spacing verdicts — up to three rows.
+                    A row appears ONLY when analyzeFist actually measured it (verdict
+                    non-null). That is the single rule for every reading in this panel:
+                    element gaps are null for paddle/bug (machine-timed), and letter or
+                    word gaps are null when the drill contained none of that gap class —
+                    a callsign drill has no word gaps, so it gets no word-gap row rather
+                    than a fabricated "GOOD". */}
                 {[
-                  // Element spacing: meaningful for straight key only; suppressed for paddle + bug
-                  ...(settings.keyType === "straight"
-                    ? [["Element gaps", "between elements (ideal 1u)", analysis.spacing.element]]
-                    : []),
+                  ["Element gaps", "between elements (ideal 1u)", analysis.spacing.element],
                   ["Letter gaps", "between letters (ideal 3u)", analysis.spacing.character],
                   ["Word gaps", "between words (ideal 7u)", analysis.spacing.word],
                 ].map(([label, sub, sp]) => (
-                  sp.ratio !== null && (
+                  sp.verdict !== null && (
                     <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: "0.75rem" }}>
                         {label}
@@ -2756,10 +2763,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   )
                 ))}
 
-                {/* B3: dah weighting — straight key and bug; suppressed for paddle.
-                    Bug dahs are hand-timed (the point of bug practice), so weighting
-                    feedback is shown. The header text adapts for bug mode. */}
-                {(settings.keyType === "straight" || settings.keyType === "bug") && analysis.weighting.ratio !== null && (
+                {/* B3: dah weighting — same rule as the spacing rows above. The verdict
+                    is null for paddle (machine-timed dahs) and for an all-dit send with
+                    no dahs to measure; in both cases the row is absent. Bug dahs are
+                    hand-timed (the point of bug practice) so they do get a verdict. */}
+                {analysis.weighting.verdict !== null && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: "0.75rem" }}>
                       Dah length
@@ -2782,11 +2790,16 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim */}
+                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim.
+                    The bug variant's "graded above" sentence points at the Dah length row, so
+                    it is only true when that row is actually there — on an all-dit send there
+                    are no dahs to grade and the row is absent. Claiming a grade the operator
+                    can't see is the same defect this change exists to remove. */}
                 {(settings.keyType === "paddle" || settings.keyType === "bug") && (
                   <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
                     {settings.keyType === "bug"
-                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only. Your dah length is graded above."
+                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only."
+                        + (analysis.weighting.verdict !== null ? " Your dah length is graded above." : "")
                       : "Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only."}
                   </div>
                 )}
@@ -4942,11 +4955,21 @@ function ProgressView({ progress }) {
                       {fmtDate(r.t) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(r.t)}</span>}
                     </span>
                   </div>
-                  {/* M4: Tag chips — color + text word = non-color cue always present */}
+                  {/* M4: Tag chips — color + text word = non-color cue always present.
+                      A chip appears ONLY when the session actually measured that thing
+                      (verdict non-null). A drill with no word gaps — single characters,
+                      callsigns — must not report "words: good" for spacing it never
+                      sent. Records written before schema v2 have their ambiguous "good"
+                      demoted to null by migrateProgress, so history is not retro-labelled
+                      as measured either. */}
                   <div style={{ display: "flex", gap: 12, marginTop: 3, flexWrap: "wrap" }}>
-                    <Tag verdict={r.letterVerdict}>letters: {r.letterVerdict}</Tag>
-                    <Tag verdict={r.wordVerdict}>words: {r.wordVerdict}</Tag>
-                    {r.weightingVerdict && r.weightingVerdict !== "good" && (
+                    {r.letterVerdict && (
+                      <Tag verdict={r.letterVerdict}>letters: {r.letterVerdict}</Tag>
+                    )}
+                    {r.wordVerdict && (
+                      <Tag verdict={r.wordVerdict}>words: {r.wordVerdict}</Tag>
+                    )}
+                    {r.weightingVerdict && (
                       <Tag verdict={r.weightingVerdict}>weighting: {r.weightingVerdict}</Tag>
                     )}
                   </div>

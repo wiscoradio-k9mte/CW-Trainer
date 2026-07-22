@@ -6,7 +6,7 @@
 // Fake-timer note: vi.useFakeTimers() is called AFTER splash navigation so
 // the splash click resolves before timers are mocked (see feedback_test_patterns).
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
 import { renderApp, gotoTab } from "./helpers.jsx";
@@ -255,5 +255,87 @@ describe("PROGRESS — date display (Fix 2)", () => {
     // an unhandled error the test would already fail.
     await gotoTab(user, "PROGRESS");
     expect(screen.getByText(/Lesson 1/i)).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PROGRESS KEY chips — a verdict is shown only when it was measured
+// ---------------------------------------------------------------------------
+// The defect this locks: a KEY drill of single characters or callsigns contains
+// no word gaps, yet PROGRESS still printed "words: good" — the app praising a
+// skill it never observed. Assertions are scoped to the KEY panel and read the
+// produced chip text, never a document-wide substring.
+describe("PROGRESS KEY — unmeasured spacing shows no verdict chip", () => {
+  // The KEY panel is the S.panel div that owns the "KEY — Fist sessions" label.
+  const keyPanel = () => screen.getByText("KEY — Fist sessions").parentElement;
+
+  // A modern (v2) record from a callsign drill: letters were measured, word
+  // spacing was not (null), dahs were measured and ran long.
+  const callsignSession = {
+    t: Date.now(), category: "callsigns", keyType: "straight",
+    copyPct: 85, estWpm: 18, wpmVerdict: "on target",
+    elementVerdict: "good", letterVerdict: "good",
+    wordVerdict: null, weightingVerdict: "loose", weightingRatio: 3.9,
+  };
+
+  async function seedAndOpen(blob) {
+    window.localStorage.clear();
+    window.localStorage.setItem("wrcw:progress", JSON.stringify(blob));
+    const user = userEvent.setup();
+    render(<CWTrainer />);
+    await user.click(screen.getByText("tap to skip"));
+    await gotoTab(user, "PROGRESS");
+    return user;
+  }
+
+  it("a session with no word gaps shows no 'words:' chip at all", async () => {
+    await seedAndOpen({ schemaVersion: 2, learn: [], copy: [], key: [callsignSession] });
+    const panel = keyPanel();
+    expect(within(panel).queryByText(/^words:/)).toBeNull();
+    // The session itself is on screen — this is an omitted chip, not an empty panel.
+    expect(within(panel).getByText(/callsigns/)).toBeInTheDocument();
+  });
+
+  it("the letter and weighting verdicts it DID measure still read normally", async () => {
+    await seedAndOpen({ schemaVersion: 2, learn: [], copy: [], key: [callsignSession] });
+    const panel = keyPanel();
+    // T5: the chip carries the meaning in its TEXT, not only its colour.
+    expect(within(panel).getByText("letters: good").textContent).toBe("letters: good");
+    expect(within(panel).getByText("weighting: loose").textContent).toBe("weighting: loose");
+  });
+
+  it("a measured-good word verdict DOES read as good (real praise is not silenced)", async () => {
+    await seedAndOpen({
+      schemaVersion: 2, learn: [], copy: [],
+      key: [{ ...callsignSession, category: "phrases", wordVerdict: "good", weightingVerdict: "good" }],
+    });
+    const panel = keyPanel();
+    expect(within(panel).getByText("words: good").textContent).toBe("words: good");
+    // T3 consistency: weighting used to be hidden whenever it was "good", which
+    // is a different rule from letters/words. One rule now — measured is shown.
+    expect(within(panel).getByText("weighting: good").textContent).toBe("weighting: good");
+  });
+
+  it("a v1 record's ambiguous 'good' is not retro-labelled as measured", async () => {
+    // Written by a build that could not tell measured-good from never-measured.
+    await seedAndOpen({
+      schemaVersion: 1, learn: [], copy: [],
+      key: [{ ...callsignSession, letterVerdict: "good", wordVerdict: "good", weightingVerdict: "good" }],
+    });
+    const panel = keyPanel();
+    expect(within(panel).queryByText(/^words:/)).toBeNull();
+    expect(within(panel).queryByText(/^letters:/)).toBeNull();
+    expect(within(panel).queryByText(/^weighting:/)).toBeNull();
+    // …but the session itself, and its measured non-verdict data, survive.
+    expect(within(panel).getByText(/callsigns/)).toBeInTheDocument();
+    expect(within(panel).getByText(/18 wpm · copy 85%/)).toBeInTheDocument();
+  });
+
+  it("a v1 'loose' was provably measured, so it still renders", async () => {
+    await seedAndOpen({
+      schemaVersion: 1, learn: [], copy: [],
+      key: [{ ...callsignSession, wordVerdict: "loose" }],
+    });
+    expect(within(keyPanel()).getByText("words: loose").textContent).toBe("words: loose");
   });
 });
