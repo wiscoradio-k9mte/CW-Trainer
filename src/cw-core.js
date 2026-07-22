@@ -136,19 +136,39 @@ export function decodeChar(code) {
 export const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
 export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P K-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
 
-// Pull a two-letter state from the end of a QTH like "NEWINGTON CT"
+// stateOf(qth) — pull the trailing two-letter state token out of a QTH like
+// "NEWINGTON CT". Returns "" when the QTH carries no such token.
+//
+// The empty return is load-bearing, not a convenience. This used to fall back to
+// "CT", so an operator who typed "MADISON" (or cleared the field) was silently
+// REQUIRED to send Connecticut — we asserted a QTH on their behalf, which is
+// exactly the kind of thing a ham is expected to state truthfully. When we can't
+// resolve one honestly we drop it: `required()` filters the blank out of a step's
+// mustContain, and the script builders below omit it from the text rather than
+// interpolating a gap (toCodes turns every space into a word gap, so a blank
+// substitution would key an audible double pause).
+//
+// The test is deliberately shape-only (any two letters), not a lookup against the
+// 50-state table: it echoes what the operator typed rather than judging it, and a
+// token we can't map to a zone is handled downstream by resolveUSState returning
+// null.
 export const stateOf = (qth) => {
   const tok = (qth || "").trim().split(/\s+/).pop() || "";
-  return /^[A-Za-z]{2}$/.test(tok) ? tok.toUpperCase() : "CT";
+  return /^[A-Za-z]{2}$/.test(tok) ? tok.toUpperCase() : "";
 };
 
-// Personalize practice/teaching text to the configured operator
+// Personalize practice/teaching text to the configured operator.
+// The whitespace collapse is required, not cosmetic: any of these tokens can
+// substitute to "" (Settings is free-form and clearable; {ST} is empty whenever
+// the QTH has no state), and a leftover double space would key an extra word gap.
 export function subTokens(s, settings) {
   return s
     .replaceAll("{ME}", settings.myCall)
     .replaceAll("{NAME}", settings.myName)
     .replaceAll("{QTH}", settings.myQth)
-    .replaceAll("{ST}", stateOf(settings.myQth));
+    .replaceAll("{ST}", stateOf(settings.myQth))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // US domestic pool for randCall() — home station and contest chaser prefixes.
@@ -328,10 +348,43 @@ export function isRstReport(token) {
 // exact cut-form matching). Data-driven so Travis can adjust before the edge push.
 export const RST_ACCEPT_ANY_WELLFORMED = true;
 
+// isBlankElement(el) → true for a required element that carries no content:
+// undefined, null, "", or whitespace only. The operator's Settings fields are
+// deliberately free-form (they can be cleared), so any PROFILE-DERIVED element
+// — callsign, name, QTH-derived state, zone — can in principle arrive blank.
+export function isBlankElement(el) {
+  return String(el ?? "").trim() === "";
+}
+
+// required(...tokens) → a step's `mustContain` list with blank tokens dropped
+// and the survivors trimmed.
+//
+// THIS IS THE REAL FIX for the blank-element grade inflation (F5). An operator
+// who clears the Settings Name field turned a step's required list into
+// [myRst, ""], and the substring matcher credited the empty token
+// unconditionally (`"".includes("")`
+// is true in JS) — so half an exchange scored 100% beside a blank, always-ticked
+// ✓ row. Filtering at ASSEMBLY means the bad element never exists: nothing to
+// render, nothing to grade, and the score denominator counts only real
+// requirements, so what IS asked for still reaches 100%. gradeSend carries a
+// matching guard (below) to make the contract explicit for future callers.
+//
+// Settings stays free-form on purpose — the defect is ours, not the operator's,
+// so the remedy lives here and not in an input validator.
+export function required(...tokens) {
+  return tokens.filter((t) => !isBlankElement(t)).map((t) => String(t).trim());
+}
+
 // gradeSend(requiredElements, sent, opts) → { score, hits, missing }
 // score = round(hits / required × 100), coarse by design (fork 5): with one
 // required element it is 0 or 100; with two, 0 / 50 / 100. `hits`/`missing`
 // preserve the original required tokens (original case) for the ✓/✗ render.
+//
+// score is `null` — NOT 0 — when there is nothing to require. A step reduced to
+// an empty list (the `[myCall]` ANSWER steps when the operator has cleared their
+// callsign) is unscoreable, and a flat 0% would be an unreachable zero: the
+// operator could send a perfect over and still be told they failed. `null` is the
+// caller's cue to render a stated non-scored state instead of a grade.
 export function gradeSend(requiredElements, sent, opts = {}) {
   const acceptAnyRst = opts.acceptAnyRst ?? RST_ACCEPT_ANY_WELLFORMED;
   const norm = String(sent).trim().toUpperCase().replace(/\s+/g, " ");
@@ -340,6 +393,14 @@ export function gradeSend(requiredElements, sent, opts = {}) {
   const sentHasRst = tokens.some(isWellFormedRst);
 
   const isConveyed = (el) => {
+    // 0. A blank element can never be conveyed. Guard first, because every branch
+    //    below would credit it: `flat.includes("")` is unconditionally true, and
+    //    `numericForms("")`/`courtesyForms("")` both pass "" straight through.
+    //    Shipped scripts can't reach here (`required()` filters at assembly), so a
+    //    blank arriving means a caller built its list wrong — count it MISSING and
+    //    let the resulting sub-100 score make that loud, rather than silently
+    //    forgiving a malformed list and re-inflating the grade.
+    if (isBlankElement(el)) return false;
     const E = String(el).toUpperCase();
     // 1. RST slot (the canonical 599 report): any well-formed report counts.
     if (acceptAnyRst && isRstReport(E)) return sentHasRst;
@@ -360,7 +421,7 @@ export function gradeSend(requiredElements, sent, opts = {}) {
   for (const el of requiredElements) (isConveyed(el) ? hits : missing).push(el);
   const score = requiredElements.length
     ? Math.round((hits.length / requiredElements.length) * 100)
-    : 0;
+    : null;
   return { score, hits, missing };
 }
 
@@ -656,6 +717,14 @@ export const DRILL_CATEGORIES = [
    named FIST_TOLERANCE so real-operator validation can tighten it without a
    code hunt.
 
+   NOT-MEASURED RULE (load-bearing, one rule for every verdict this returns):
+   a verdict is `null` when the thing was never measured — the drill contained
+   no gaps of that class (a callsign has no word gaps), or the key mode
+   machine-times them so the operator never controlled it. `null` is NOT a
+   verdict; every surface must omit the reading rather than render it. Before
+   this rule the unmeasured case returned "good", so PROGRESS praised operators
+   for word spacing they had never sent — fabricated progress.
+
    B2 (v1.1): returns wpmDelta (estWpm - keyWpm), wpmVerdict, and lowSample flag.
    B3 (v1.1): returns weighting { ratio, verdict } — median dah vs 3×unit.
               Straight key only; suppressed for paddle (dahs are machine-timed). */
@@ -680,12 +749,14 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
       wpmDelta: 0,
       wpmVerdict: "on target",
       lowSample: true,
+      // Nothing was keyed, so nothing was measured — no verdicts (see the
+      // NOT-MEASURED RULE above).
       spacing: {
-        element:   { ratio: null, verdict: "good" },
-        character: { ratio: null, verdict: "good" },
-        word:      { ratio: null, verdict: "good" },
+        element:   { ratio: null, verdict: null },
+        character: { ratio: null, verdict: null },
+        word:      { ratio: null, verdict: null },
       },
-      weighting: { ratio: null, verdict: "good" },
+      weighting: { ratio: null, verdict: null },
       notes: [],
     };
   }
@@ -754,7 +825,7 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   };
 
   const verdict = (ratio, ideal) => {
-    if (ratio === null) return "good"; // no data → no verdict
+    if (ratio === null) return null; // never measured → no verdict (see NOT-MEASURED RULE)
     const deviation = Math.abs(ratio - ideal) / ideal;
     if (deviation <= FIST_TOLERANCE) return "good";
     return ratio > ideal ? "loose" : "tight";
@@ -765,9 +836,16 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   const wordRatio  = median(wordGaps);     // ideal 7u
 
   // Paddle and bug keyers machine-time intra-character dit spacing — only the
-  // operator controls when to start the next character or word. So the
-  // element-gap verdict is not meaningful and is suppressed for both modes.
-  const elementVerdict = (keyType === "paddle" || keyType === "bug") ? "good" : verdict(elemRatio, 1);
+  // operator controls when to start the next character or word. Those gaps are
+  // the machine's, not the operator's fist, so neither the ratio nor a verdict
+  // is reported: it is a not-measured reading, the same shape as suppressed
+  // paddle weighting below.
+  const elementMachineTimed = keyType === "paddle" || keyType === "bug";
+  const elementSpacing = elementMachineTimed
+    ? { ratio: null, verdict: null }
+    : { ratio: elemRatio, verdict: verdict(elemRatio, 1) };
+  const charVerdict = verdict(charRatio, 3);
+  const wordVerdict = verdict(wordRatio, 7);
 
   // B3: dah weighting — median dah vs 3×unit.
   // Suppressed for paddle (dahs machine-timed 3u; verdict is meaningless).
@@ -777,10 +855,10 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   let weighting;
   if (keyType === "paddle" || unitMs <= 0) {
     // Suppressed for paddle — paddle timing is machine-controlled, not operator fist.
-    weighting = { ratio: null, verdict: "good" };
+    weighting = { ratio: null, verdict: null };
   } else if (dahs.length === 0) {
     // No dahs sent — can't assess weighting (all-dit sequence).
-    weighting = { ratio: null, verdict: "good" };
+    weighting = { ratio: null, verdict: null };
   } else {
     const sortedDahs = [...dahs].sort((a, b) => a - b);
     const m = Math.floor(sortedDahs.length / 2);
@@ -791,21 +869,24 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
     weighting = { ratio: dahRatio, verdict: verdict(dahRatio, 3) };
   }
 
+  // Notes are problem-only: a null verdict (never measured) and a "good" verdict
+  // both produce nothing to say, so every guard here tests for a real non-good
+  // verdict rather than "!== good" alone.
   const notes = [];
-  // Element-spacing note suppressed for paddle and bug (machine-timed dits in both).
-  if (keyType !== "paddle" && keyType !== "bug" && elemRatio !== null && verdict(elemRatio, 1) !== "good") {
-    notes.push(`element spacing ${verdict(elemRatio, 1)} (measured ${elemRatio.toFixed(1)}u, ideal 1u)`);
+  // Element-spacing note is absent for paddle and bug — the verdict is null there.
+  if (elementSpacing.verdict && elementSpacing.verdict !== "good") {
+    notes.push(`element spacing ${elementSpacing.verdict} (measured ${elementSpacing.ratio.toFixed(1)}u, ideal 1u)`);
   }
-  if (charRatio !== null && verdict(charRatio, 3) !== "good") {
-    const dir = verdict(charRatio, 3) === "loose" ? "too long" : "too short";
+  if (charVerdict && charVerdict !== "good") {
+    const dir = charVerdict === "loose" ? "too long" : "too short";
     notes.push(`you're pausing ${dir} between letters (${charRatio.toFixed(1)}u, ideal 3u)`);
   }
-  if (wordRatio !== null && verdict(wordRatio, 7) !== "good") {
-    const dir = verdict(wordRatio, 7) === "loose" ? "too long" : "too short";
+  if (wordVerdict && wordVerdict !== "good") {
+    const dir = wordVerdict === "loose" ? "too long" : "too short";
     notes.push(`word spacing is ${dir} (${wordRatio.toFixed(1)}u, ideal 7u)`);
   }
   // B3: plain-English weighting note — bug mode keeps this (hand-timed dahs).
-  if (keyType !== "paddle" && weighting.verdict !== "good" && weighting.ratio !== null) {
+  if (weighting.verdict && weighting.verdict !== "good") {
     const dir = weighting.verdict === "loose" ? "running long" : "running short";
     notes.push(`your dahs are ${dir} relative to your dits (${weighting.ratio.toFixed(1)}u, ideal 3u)`);
   }
@@ -818,9 +899,9 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
     wpmVerdict,
     lowSample,
     spacing: {
-      element:   { ratio: elemRatio,  verdict: elementVerdict },
-      character: { ratio: charRatio,  verdict: verdict(charRatio, 3) },
-      word:      { ratio: wordRatio,  verdict: verdict(wordRatio, 7) },
+      element:   elementSpacing,
+      character: { ratio: charRatio,  verdict: charVerdict },
+      word:      { ratio: wordRatio,  verdict: wordVerdict },
     },
     weighting,
     notes,
@@ -907,7 +988,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
           who: "you",
           suggested: `${dx} DE ${myCall} ${myCall} K`,
           prompt: "Answer the CQ — their call once, DE, your call twice, K.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -918,7 +999,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
           who: "you",
           suggested: `R R ${dx} DE ${myCall} = GM ${name} TNX FER RPT = UR RST ${myRst} ${myRst} = NAME ${myName} ${myName} = QTH ${myQth} = HW? ${dx} DE ${myCall} KN`,
           prompt: "Roger it, then send your exchange back — report, name, QTH, with = between thoughts.",
-          mustContain: [myRst, myName],
+          mustContain: required(myRst, myName),
         },
         {
           who: "dx",
@@ -943,7 +1024,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         // CALL-CQ archetype: calling CQ requires "CQ" AND your callsign. A bare
         // callsign is how you ANSWER a CQ, not how you call one — so this differs
         // intentionally from the answer steps below, which require [myCall] only.
-        mustContain: ["CQ", myCall],
+        mustContain: required("CQ", myCall),
       },
       {
         who: "dx",
@@ -954,7 +1035,7 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         who: "you",
         suggested: `${dx} DE ${myCall} = GM TNX FER CALL = UR RST ${myRst} ${myRst} = NAME ${myName} ${myName} = QTH ${myQth} = HW? ${dx} DE ${myCall} KN`,
         prompt: "Open the exchange — GM, their report, your name, QTH. KN to hold the frequency.",
-        mustContain: [myRst, myName],
+        mustContain: required(myRst, myName),
       },
       {
         who: "dx",
@@ -969,14 +1050,21 @@ export function buildRagchew({ myCall, myName, myQth, cut }, role = "answer") {
         who: "you",
         suggested: `R FB ${name} = TU FER FB QSO = 73 ES HPE CUAGN ${dx} DE ${myCall} SK EE`,
         prompt: "Close it — FB, TU for the QSO, 73, SK and dit-dit. Their first name as the handle.",
-        mustContain: ["TU", "73"],
+        mustContain: required("TU", "73"),
       },
     ],
   };
 }
 
 export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
+  // myState is "" when the operator's QTH has no state token (see stateOf). The
+  // POTA exchange is the one script that carries it, so the state is dropped from
+  // the send, from the graded elements, and from the activator's reply rather than
+  // substituted — we won't put a state the operator never gave on their air.
   const myState = stateOf(myQth);
+  const stateTwice = myState ? ` ${myState} ${myState}` : "";
+  const stateOnce  = myState ? ` ${myState}` : "";
+  const statePhrase = myState ? ", your state twice" : "";
   const dx = randCall();
   const rst = cutNum(rand(RSTS), cut);
   const myRst = cutNum("599", cut);
@@ -1005,7 +1093,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `${myCall}`,
             prompt: "P2P — your callsign once, same as any POTA pileup.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1016,7 +1104,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `BK GM UR ${myRst} ${myRst} ${myPark} ${myPark} BK`,
             prompt: "BK, greeting, their report, your park ref twice. P2P exchanges park refs, not states.",
-            mustContain: [myRst, myPark],
+            mustContain: required(myRst, myPark),
           },
           {
             who: "dx",
@@ -1047,7 +1135,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
             who: "you",
             suggested: `${myCall}`,
             prompt: "Your callsign once — pileup protocol is the same regardless of where they're activating.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1056,9 +1144,9 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
           },
           {
             who: "you",
-            suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
-            prompt: "BK, their report, your state twice, BK. Exchange grammar is identical to domestic.",
-            mustContain: [myRst, myState],
+            suggested: `BK GM UR ${myRst} ${myRst}${stateTwice} BK`,
+            prompt: `BK, their report${statePhrase}, BK. Exchange grammar is identical to domestic.`,
+            mustContain: required(myRst, myState),
           },
           {
             who: "dx",
@@ -1084,7 +1172,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
           who: "you",
           suggested: `${myCall}`,
           prompt: "POTA protocol: send your callsign ONCE. No DE, no K — you're one voice in a pileup.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1093,14 +1181,16 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         },
         {
           who: "you",
-          suggested: `BK GM UR ${myRst} ${myRst} ${myState} ${myState} BK`,
-          prompt: "BK back, greeting, their report, your state twice, BK. That's the whole exchange.",
-          mustContain: [myRst, myState],
+          suggested: `BK GM UR ${myRst} ${myRst}${stateTwice} BK`,
+          prompt: `BK back, greeting, their report${statePhrase}, BK. That's the whole exchange.`,
+          mustContain: required(myRst, myState),
         },
         {
           who: "dx",
-          text: `BK TU ${myState} 73 DE ${dx} EE`,
-          copyHint: "Activators often use your state as your handle — TU, your state, 73, dit-dit, next hunter.",
+          text: `BK TU${stateOnce} 73 DE ${dx} EE`,
+          copyHint: myState
+            ? "Activators often use your state as your handle — TU, your state, 73, dit-dit, next hunter."
+            : "TU, 73, dit-dit, next hunter. (Put a state in your QTH and the activator will use it as your handle.)",
         },
       ],
     };
@@ -1119,7 +1209,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: cqCall("pota", myCall),
         prompt: `Call CQ POTA. The park reference (${park}) goes in your log, not on the air.`,
-        mustContain: ["CQ", "POTA", myCall],
+        mustContain: required("CQ", "POTA", myCall),
       },
       {
         who: "dx",
@@ -1130,7 +1220,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: `${dx} GM UR ${myRst} ${myRst} BK`,
         prompt: "Acknowledge the hunter — their call, GM, their report twice, BK.",
-        mustContain: [myRst],
+        mustContain: required(myRst),
       },
       {
         who: "dx",
@@ -1141,7 +1231,7 @@ export function buildPota({ myCall, myQth, cut }, role = "hunter", opts = {}) {
         who: "you",
         suggested: `BK TU ${dxState} 73 DE ${myCall} EE`,
         prompt: "Close with BK TU, their state, 73, your call, dit-dit. On to the next one.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1177,7 +1267,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `${myCall}/P`,
             prompt: "S2S: send your call signing /P — you're also activating. Callsign once.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1188,7 +1278,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `BK R R UR ${myRst} ${myRst} ${mySummit} TU`,
             prompt: "Roger, their report, your summit ref, TU. S2S: both refs get logged.",
-            mustContain: [myRst, mySummit],
+            mustContain: required(myRst, mySummit),
           },
           {
             who: "dx",
@@ -1219,7 +1309,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `${myCall}`,
             prompt: "Chase it — your callsign once. SOTA pileup protocol is the same everywhere.",
-            mustContain: [myCall],
+            mustContain: required(myCall),
           },
           {
             who: "dx",
@@ -1230,7 +1320,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
             who: "you",
             suggested: `BK R R UR ${myRst} ${myRst} TU`,
             prompt: "Roger, their report, TU. Short is right — they're on battery.",
-            mustContain: [myRst],
+            mustContain: required(myRst),
           },
           {
             who: "dx",
@@ -1258,7 +1348,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
           who: "you",
           suggested: `${myCall}`,
           prompt: "Chase it — your callsign once, like a POTA pileup.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1269,7 +1359,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
           who: "you",
           suggested: `BK R R UR ${myRst} ${myRst} TU`,
           prompt: "Roger, send their report, TU. Summit ops are on battery — keep it tight.",
-          mustContain: [myRst],
+          mustContain: required(myRst),
         },
         {
           who: "dx",
@@ -1292,7 +1382,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: cqCall("sota", `${myCall}/P`, summit),
         prompt: `Call CQ SOTA signing portable. Summit ref ${summit} goes in the CQ — chasers expect it there.`,
-        mustContain: ["CQ", "SOTA", myCall],
+        mustContain: required("CQ", "SOTA", myCall),
       },
       {
         who: "dx",
@@ -1303,7 +1393,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: `${dx} GM UR ${myRst} ${myRst} BK`,
         prompt: "Work the chaser — their call, GM, their report twice, BK.",
-        mustContain: [myRst],
+        mustContain: required(myRst),
       },
       {
         who: "dx",
@@ -1314,7 +1404,7 @@ export function buildSota({ myCall, cut }, role = "chaser", opts = {}) {
         who: "you",
         suggested: `BK TU ES 73 DE ${myCall}/P EE`,
         prompt: "Close with BK TU, 73, your portable call, dit-dit. Battery doesn't wait.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1342,7 +1432,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
           who: "you",
           suggested: `${myCall}`,
           prompt: "DX-style pileup — your callsign once, then listen hard.",
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1353,7 +1443,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
           who: "you",
           suggested: `R ${rpt} ${rpt} TU`,
           prompt: "Confirm and report — fast and clean. The pileup is waiting.",
-          mustContain: [rpt],
+          mustContain: required(rpt),
         },
         {
           who: "dx",
@@ -1376,7 +1466,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: cqCall("iota", myCall, ref),
         prompt: `Call CQ IOTA with your island ref ${ref}. Contest pace.`,
-        mustContain: ["CQ", "IOTA", myCall],
+        mustContain: required("CQ", "IOTA", myCall),
       },
       {
         who: "dx",
@@ -1387,7 +1477,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: `${chaser} ${myRpt} ${myRpt} ${ref} ${ref} TU`,
         prompt: "Give them report and island ref twice, TU. That's the whole IOTA exchange.",
-        mustContain: [myRpt],
+        mustContain: required(myRpt),
       },
       {
         who: "dx",
@@ -1398,7 +1488,7 @@ export function buildIota({ myCall, cut }, role = "chaser") {
         who: "you",
         suggested: `TU 73 QRZ IOTA DE ${myCall} K`,
         prompt: "TU, straight to QRZ, back to calling. Island stations keep the rate up.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1438,7 +1528,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
           who: "you",
           suggested: `${myCall}`,
           prompt: step2Prompt,
-          mustContain: [myCall],
+          mustContain: required(myCall),
         },
         {
           who: "dx",
@@ -1449,7 +1539,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
           who: "you",
           suggested: `${rpt} TU`,
           prompt: "Their report back, TU. That's the full DX exchange.",
-          mustContain: [rpt, "TU"],
+          mustContain: required(rpt, "TU"),
         },
         {
           who: "dx",
@@ -1470,7 +1560,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: cqCall("dx", myCall),
         prompt: "Call CQ DX — CQ DX, DE, your call. Keep calling until someone answers.",
-        mustContain: ["CQ", "DX", myCall],
+        mustContain: required("CQ", "DX", myCall),
       },
       {
         who: "dx",
@@ -1481,7 +1571,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: `${dxCall} ${rpt} ${rpt}`,
         prompt: "Work them — their call, then report twice. Short and clean.",
-        mustContain: [rpt],
+        mustContain: required(rpt),
       },
       {
         who: "dx",
@@ -1492,7 +1582,7 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
         who: "you",
         suggested: `TU QRZ DX DE ${myCall}`,
         prompt: "TU, then back to calling — QRZ DX, DE, your call.",
-        mustContain: ["TU"],
+        mustContain: required("TU"),
       },
     ],
   };
@@ -1505,14 +1595,37 @@ export function buildDx({ myCall, cut }, role = "hunt", opts = {}) {
      to increment against; a fake running counter would imply continuity we don't model).
    "zone" — send the CQ zone (CQ World Wide style).
 
-   myCqZone comes from the profile (computed at JSX edge: resolveUSState(stateOf(myQth))?.cq ?? 5).
-   The builder receives it as a pure number and stays free of DOM/dataset access.
+   myCqZone comes from the profile (computed at the JSX edge from the operator's
+   QTH state). The builder receives it as a plain number — or `null` when the QTH
+   doesn't resolve to a US state — and stays free of DOM/dataset access. On null the
+   zone is DROPPED from the exchange rather than defaulted.
+
+   CQ-ZONE ATTRIBUTION — sourced externally, do not "correct" from memory, and do
+   NOT re-cite our own bundled dataset: its US_STATE_ZONES table is hand-coded in
+   scripts/build-dxcc-dataset.mjs (AD1C cty.csv has no per-state zone table), so
+   citing it would be citing the artifact under test. Primary sources, retrieved
+   2026-07-21:
+     zone by state  — CQ's own WAZ zone list, cqww.com/cq_waz_list.htm
+     the exchange   — CQ WW rules §III, www.cqww.com/rules.htm
+   Confirmed there: CQ zone 5 is the eastern seaboard (CT MA ME NH RI VT NJ NY DC DE
+   MD PA FL GA NC SC VA WV) and Wisconsin is zone 4; the CQ WW exchange is RST plus
+   the sender's own CQ zone, zero-padded to two digits, both sides sending their own.
+   THE REPORT IS REQUIRED — a zone sent alone is a fill, not a complete exchange,
+   which is why dropping the zone still leaves the RST as a real requirement.
+
+   Why dropped rather than defaulted: the old `?? 5` put an operator in Wisconsin
+   into Connecticut's zone, and the 5 arrived with the "CT" QTH fallback rather than
+   by design. A CQ zone is derived from where you actually are; asserting one we
+   can't derive is the same falsehood as asserting the state, so this stays
+   consistent with the state fix. The cost is disclosed and real: with no zone the
+   CQ-WW-style exchange is incomplete (report only), which is a thinner lesson — but
+   an incomplete exchange teaches less, while a defaulted one teaches something false.
 
    Both myExch and dxExch are computed once so the token in the step text and
    the token in mustContain are guaranteed to be the same string — the text-parity
    trap that has burned this team before. */
 
-export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts = {}) {
+export function buildContest({ myCall, cut, myCqZone = null }, role = "run", opts = {}) {
   const dxRow = randDxStation();
   const dxCall = dxRow.call;
   const rpt = cutNum("599", cut);
@@ -1524,15 +1637,23 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
 
   // Exchange token per side — computed ONCE and reused in text + mustContain.
   // Zone path: zoneToken() pads to 2 digits and applies cut numbers consistently.
-  const exch = (zone) => opts.contestType === "zone" ? zoneToken(zone, cut) : serial();
+  // An unknown zone yields "" (see the header note); required() then drops it and
+  // the ` ${myExch}` interpolations are guarded so no blank reaches the script.
+  const exch = (zone) =>
+    opts.contestType === "zone" ? (zone == null ? "" : zoneToken(zone, cut)) : serial();
   const myExch = exch(myCqZone);
-  const dxExch = exch(dxRow.cqZone);
+  const dxExch = exch(dxRow.cqZone);   // the DX pool always carries a zone
+  const myExchTail = myExch ? ` ${myExch}` : "";
+  const exchWord = opts.contestType === "zone" ? "zone" : "serial";
+  // Prompts and the summary name your exchange only when you have one to send.
+  const myExchPrompt = myExch ? `, your ${exchWord}` : "";
+  const exchSummary = myExch ? ` Your exchange: ${myExch}.` : "";
 
   // Running role: you call CQ TEST, a DX station pounces.
   if (role === "run") {
     return {
       dx: dxCall, flavor: "CONTEST",
-      summary: `Running — worked ${dxCall}. Your exchange: ${myExch}.`,
+      summary: `Running — worked ${dxCall}.${exchSummary}`,
       steps: [
         {
           who: "you",
@@ -1542,7 +1663,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
           // and "DE" are routinely dropped ("TEST K9MTE" is a valid call), so
           // TEST + call are required and CQ is credited-if-present, never required.
           // CONTEST satisfies TEST via COURTESY_EQUIVALENTS.
-          mustContain: ["TEST", myCall],
+          mustContain: required("TEST", myCall),
         },
         {
           who: "dx",
@@ -1551,20 +1672,20 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
         },
         {
           who: "you",
-          suggested: `${dxCall} ${rpt} ${myExch}`,
-          prompt: `Work them — their call, report, your ${opts.contestType === "zone" ? "zone" : "serial"}.`,
-          mustContain: [rpt, myExch],
+          suggested: `${dxCall} ${rpt}${myExchTail}`,
+          prompt: `Work them — their call, report${myExchPrompt}.`,
+          mustContain: required(rpt, myExch),
         },
         {
           who: "dx",
           text: `${rpt} ${dxExch} TU`,
-          copyHint: `Their report and ${opts.contestType === "zone" ? "zone" : "serial"} — copy that exchange token.`,
+          copyHint: `Their report and ${exchWord} — copy that exchange token.`,
         },
         {
           who: "you",
           suggested: `TU ${myCall} TEST`,
           prompt: "Close with TU, your call, TEST. Back to calling immediately.",
-          mustContain: ["TU"],
+          mustContain: required("TU"),
         },
       ],
     };
@@ -1573,7 +1694,7 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
   // S&P (search & pounce): DX is running, you find and work them.
   return {
     dx: dxCall, flavor: "CONTEST",
-    summary: `S&P — worked ${dxCall} running. Your exchange: ${myExch}.`,
+    summary: `S&P — worked ${dxCall} running.${exchSummary}`,
     steps: [
       {
         who: "dx",
@@ -1584,18 +1705,18 @@ export function buildContest({ myCall, cut, myCqZone = 5 }, role = "run", opts =
         who: "you",
         suggested: `${myCall}`,
         prompt: "Pounce — your call once. Don't repeat, don't say DE.",
-        mustContain: [myCall],
+        mustContain: required(myCall),
       },
       {
         who: "dx",
         text: `${myCall} ${rpt} ${dxExch}`,
-        copyHint: `Your call confirmed, then their exchange — copy that ${opts.contestType === "zone" ? "zone" : "serial"}.`,
+        copyHint: `Your call confirmed, then their exchange — copy that ${exchWord}.`,
       },
       {
         who: "you",
-        suggested: `${rpt} ${myExch} TU`,
-        prompt: `Report + your ${opts.contestType === "zone" ? "zone" : "serial"} + TU. Fast and clean.`,
-        mustContain: [rpt, myExch],
+        suggested: `${rpt}${myExchTail} TU`,
+        prompt: `Report${myExch ? ` + your ${exchWord}` : ""} + TU. Fast and clean.`,
+        mustContain: required(rpt, myExch),
       },
       {
         who: "dx",
@@ -1654,15 +1775,22 @@ export function isReadyToAdvance(history) {
 // RETENTION: keep the last 50 records per category (generous, bounded).
 // 50 × 3 categories × ~200 bytes ≈ 30 KB — trivial for localStorage (5 MB+).
 //
-// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 1.
-// On mismatch migrateProgress() resets to empty — no corrupt blob can crash.
+// SCHEMA VERSION: bumped when the shape changes in a breaking way. Current: 3.
+// migrateProgress() walks PROGRESS_MIGRATIONS from the stored version up to
+// current and carries the data forward; it never wipes on a version mismatch.
 //
 // QSO SEAM INVARIANT (load-bearing): migrateProgress must preserve unknown
 // keys (e.g. `qso`) it finds in a stored blob. A future build may have written
 // QSO records; an older build reading back must NOT strip them. Document and test.
 
 export const PROGRESS_RETENTION = 50;
-export const PROGRESS_SCHEMA_VERSION = 1;
+// v1 — original shape.
+// v2 — KEY verdict fields: a stored "good" is demoted to null (an unmeasured
+//      reading used to be recorded as "good"). From fix/unmeasured-spacing-verdicts.
+// v3 — COPY records carry `conditions` ("easy" | "normal" | "real"). Purely
+//      additive: records written before v3 have no `conditions` and are grouped
+//      and labelled as unknown rather than being assumed to be any one setting.
+export const PROGRESS_SCHEMA_VERSION = 3;
 
 // Known categories in this schema version.
 const KNOWN_PROGRESS_CATEGORIES = ["learn", "key", "copy", "qso"];
@@ -1695,17 +1823,64 @@ export function appendProgress(progress, category, record) {
   return { ...progress, [category]: next };
 }
 
+// Verdict fields on a KEY record that a v1 build could write as a fabricated
+// "good". In v1 analyzeFist's verdict() returned "good" for a null ratio, so a
+// stored "good" means EITHER "measured and within tolerance" OR "never measured
+// at all" — the two are indistinguishable after the fact.
+const V1_AMBIGUOUS_VERDICT_FIELDS = [
+  "elementVerdict", "letterVerdict", "wordVerdict", "weightingVerdict",
+];
+
+// v1 → v2 per-record transform: drop the ambiguous "good", keep everything else.
+// "loose" and "tight" were only ever produced from a real measurement, so they
+// carry forward untouched — as do estWpm, wpmVerdict, copyPct and every other
+// field. Only the claim we cannot stand behind is dropped.
+function dropUnprovenV1Verdicts(rec) {
+  if (!rec || typeof rec !== "object") return rec;
+  const out = { ...rec };
+  for (const field of V1_AMBIGUOUS_VERDICT_FIELDS) {
+    if (out[field] === "good") out[field] = null;
+  }
+  return out;
+}
+
 // PROGRESS_MIGRATIONS — ordered map of (fromVersion → transform function).
 //
-// Only v1 exists today so there are no entries. This is the seam: a future
-// schema bump adds ONE entry here instead of touching any wipe logic.
+// This is the seam: a schema bump adds ONE entry here instead of touching any
+// wipe logic.
 //
 // Shape: { [fromVersion: number]: (obj: object) => object }
 // Each function transforms a blob from `fromVersion` to `fromVersion + 1`.
 // Functions must be pure and must not throw (errors are caught by migrateProgress).
+// A missing entry means that step needs no transform; the walk just increments.
+//
+// MERGE HAZARD, READ BEFORE EDITING THIS MAP. Slot 1 and the slot-2 note below
+// arrived on two independent branches (fix/unmeasured-spacing-verdicts and
+// fix/copy-condition-pooling) that both rewrote this block. Resolving that
+// conflict by taking either side WHOLE deletes the other's decision, and the
+// suite stays green either way: drop slot 1 and every stored v1 "good" verdict
+// is silently promoted back into PROGRESS; drop the slot-2 note and the next
+// person adds a backfill this schema deliberately does not have. The round-trip
+// test "a v1 blob migrates all the way to v3" in cw-core.test.js is the guard
+// that does bite — keep it.
 const PROGRESS_MIGRATIONS = {
-  // Example of future entry:
-  //   1: (obj) => ({ ...obj, newField: [] }),   // v1 → v2
+  // 1 (v1 → v2): spacing/weighting verdicts gained a "null = never measured"
+  //     state. A v1 record's "good" cannot be trusted (see
+  //     V1_AMBIGUOUS_VERDICT_FIELDS), so it is demoted to null and PROGRESS
+  //     simply shows no chip for it. The cost is disclosed and accepted: a
+  //     genuinely-measured-good historical verdict is lost. The alternative —
+  //     rendering it — would retro-label never-measured sessions as measured,
+  //     which is the exact defect this schema change exists to remove.
+  1: (obj) => ({
+    ...obj,
+    key: Array.isArray(obj.key) ? obj.key.map(dropUnprovenV1Verdicts) : obj.key,
+  }),
+
+  // 2 (v2 → v3): deliberately absent. Adding COPY `conditions` is additive-only:
+  //     there is no honest value to backfill onto a pre-v3 record, because the
+  //     app never knew what the operator had the Conditions selector set to.
+  //     Leaving the field absent is the migration — copyTrend() reads absent as
+  //     "unknown" and groups those records separately (see copyConditionsLabel).
 };
 
 // migrateProgress(raw) → a valid progress object.
@@ -1748,7 +1923,12 @@ export function migrateProgress(raw) {
     // missing fields get correct defaults. Stamp schemaVersion last so a migration
     // function can't accidentally leave a stale version number.
     const merged = { ...emptyProgress(), ...obj };
-    merged.schemaVersion = PROGRESS_SCHEMA_VERSION; // always authoritative
+    // Stamp the version the data has actually reached. `fromVersion` is where the
+    // ladder walk ended: PROGRESS_SCHEMA_VERSION for anything we migrated, and the
+    // blob's own (higher) version for a blob written by a NEWER build. Never write
+    // a lower number back than we read — that would tell the newer build its own
+    // data still needs its migration, and it would run it a second time.
+    merged.schemaVersion = fromVersion;
 
     // Per-category default: a bad/missing category array must NOT wipe the others.
     for (const cat of KNOWN_PROGRESS_CATEGORIES) {
@@ -1806,20 +1986,56 @@ export function keyTrend(progress) {
   };
 }
 
-// copyTrend(progress) → last TREND_WINDOW CopyRecords grouped by source rung.
+// COPY_CONDITIONS — the conditions a COPY attempt can be made under, mapped to
+// the plain English used wherever a score is shown. The keys are the values the
+// CopyTrainer's Conditions selector stores on each record; the values are what a
+// learner reads. Never render the raw key.
+export const COPY_CONDITIONS = {
+  easy:   "easy",
+  normal: "normal",
+  real:   "real life",
+};
+
+// Label for a record whose conditions we do not know: written before schema v3,
+// or carrying a value this build doesn't recognise. It is NOT "normal" — saying
+// so would invent a fact about how the operator was practising.
+export const COPY_CONDITIONS_UNKNOWN_LABEL = "conditions not recorded";
+
+// copyConditionsLabel(conditions) → plain-English label, never the raw enum.
+export function copyConditionsLabel(conditions) {
+  return COPY_CONDITIONS[conditions] || COPY_CONDITIONS_UNKNOWN_LABEL;
+}
+
+// copyTrend(progress) → last TREND_WINDOW CopyRecords grouped by rung AND conditions.
+//
+// WHY BOTH: copying through noise and QSB is a harder task than copying a clean
+// signal at the same rung, so the two produce different scores. Pooling them made
+// switching to REAL LIFE look like the operator's accuracy falling — the app
+// telling them they got worse when they had actually raised the difficulty.
+// Each (rung, conditions) pair is its own trend line.
+//
+// Groups appear in first-seen order and only exist when they have records, so a
+// condition never practised on a rung simply isn't shown (rather than a 0% row).
 export function copyTrend(progress) {
   const records = (progress.copy || []).slice(-TREND_WINDOW);
-  const bySource = {};
+  // Keyed by the (rung, conditions) tuple, JSON-encoded so the two parts stay
+  // unambiguous whatever a corrupt blob puts in them.
+  const groups = new Map(); // key -> { source, conditions, recs }
   for (const r of records) {
     // Records written before the `source` field existed have r.source === undefined.
     // Default to "—" so they group under a named rung rather than an `undefined` key
     // (which would render as a garbled "undefined" rung in ProgressView).
-    const key = r.source || "—";
-    if (!bySource[key]) bySource[key] = [];
-    bySource[key].push(r);
+    const source = r.source || "—";
+    // Absent or unrecognised conditions → null, its own honestly-labelled group.
+    const conditions = Object.hasOwn(COPY_CONDITIONS, r.conditions) ? r.conditions : null;
+    const key = JSON.stringify([source, conditions]);
+    if (!groups.has(key)) groups.set(key, { source, conditions, recs: [] });
+    groups.get(key).recs.push(r);
   }
-  return Object.entries(bySource).map(([source, recs]) => ({
+  return [...groups.values()].map(({ source, conditions, recs }) => ({
     source,
+    conditions,
+    conditionsLabel: copyConditionsLabel(conditions),
     recent: recs.map((r) => r.pct),
     lastPct: recs[recs.length - 1].pct,
     // lastT: epoch ms of the most recent record for this rung; used for date

@@ -45,7 +45,9 @@ describe("QSO rail — live running score updates after a graded step", () => {
 
     // First step is a DX (receiving) step in NORMAL difficulty → a copy input +
     // CHECK COPY are available in main. Type an answer and grade it.
-    const copyInput = screen.getByRole("textbox", { name: /Your copy of what you heard/i });
+    // Name is the visible caption (a real <label htmlFor>) since the accessible-names
+    // batch replaced the parallel aria-label "Your copy of what you heard".
+    const copyInput = screen.getByRole("textbox", { name: "Your copy — what did you hear?" });
     await user.type(copyInput, "TEST");
     await user.click(screen.getByRole("button", { name: "CHECK COPY" }));
 

@@ -1010,7 +1010,9 @@ function useCountdown() {
 
   // cancel() stops a running countdown without firing its callback.
   // Called on QSO advance() and ABANDON so a DX countdown started mid-step
-  // doesn't fire playDx() into a later step after the user moves on.
+  // doesn't fire playDx() into a later step after the user moves on — and on
+  // both ■ STOP buttons (COPY and the QSO DX step), where the user is asking
+  // for the pending transmission not to happen at all.
   const cancel = useCallback(() => {
     clearInterval(intervalRef.current);
     intervalRef.current = null;
@@ -1028,9 +1030,19 @@ function useCountdown() {
 // display 20px→1.25rem, input 18px→1.125rem.
 // Structural values (padding, gap, radius, maxWidth) stay in px — they are
 // layout boundaries, not text, and must not grow with font scaling.
+// Pulled out of S so `head` below can build on it; S's own keys can't reference
+// each other inside the object literal.
+const LABEL = { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" };
 const S = {
   panel: { background: "#191C21", border: "1px solid #2E343C", borderRadius: 10, padding: 16, marginBottom: 14 },
-  label: { fontSize: "0.6875rem", letterSpacing: 1.5, color: "#8A929C", textTransform: "uppercase", fontFamily: "system-ui, sans-serif" },
+  label: LABEL,
+  // A section caption that is a real <h1>-<h6> element rather than a styled div, so
+  // screen-reader users can jump between sections. Browsers' UA stylesheets give
+  // headings bold weight, an em-relative size and block margins; LABEL already sets an
+  // absolute font-size, so only the weight and the four margins need neutralising for
+  // the rendered box to match the <div> it replaces. Callers set their own margins
+  // after the spread, exactly as they did on the div.
+  head: { ...LABEL, fontWeight: 400, marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0 },
   btn: { background: "#2A313A", border: "1px solid #3A434E", color: "#E8E2D6", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1 },
   btnAmber: { background: "#3A2E18", border: "1px solid #F2A93B", color: "#F2A93B", padding: "10px 16px", borderRadius: 8, fontSize: "0.875rem", cursor: "pointer", fontFamily: "ui-monospace, monospace", letterSpacing: 1, fontWeight: 600 },
   // M1: "1.25rem" = type.readout; literal kept because S.type is defined later in the same object
@@ -1117,30 +1129,74 @@ const S = {
   },
 };
 
-// Display — the recessed code readout. `compact` (narrow KEY only) shrinks the
-// type and, crucially, CAPS the height with an internal scroll so a long target
-// scrolls INSIDE the readout instead of pushing the key surface down the page —
-// the key's vertical position becomes independent of target length. Default
-// (compact=false) is byte-identical to the shipped readout.
-function Display({ children, cursor, compact }) {
-  const style = compact
-    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem", letterSpacing: 2, maxHeight: 76, overflowY: "auto" }
+// Display — the recessed code readout.
+//
+// TWO INDEPENDENT PROPS. They were briefly fused, and the fusion shipped a
+// defect (see below), so keep them separate:
+//
+//   `compact` — HOW TALL. On narrow it shrinks the type and CAPS the height with
+//     an internal scroll, so long content scrolls INSIDE the readout instead of
+//     pushing the key surface down the page. `compact` alone is the two-line cap
+//     (maxHeight 76); `tail` alone is the one-line cap (maxHeight 40).
+//
+//   `tail` — WHICH END YOU SEE. Keeps the NEWEST characters in view. Required by
+//     any readout whose content GROWS while the operator is watching it, because
+//     a cap without it means you stare at the oldest characters while newer ones
+//     are clipped out of sight.
+//
+// They compose: `compact tail` is a two-line cap that still follows the newest
+// characters. That combination exists because EASY's live "Sending" transcription
+// needs both — it is audio-synchronised and growing (so it needs `tail`) but it
+// is also what the learner is reading along with (so it earns two lines, not
+// one). Capping it with `compact` alone left scrollTop pinned at 0 with 44px of
+// the newest characters clipped below the fold of the box.
+//
+// Static reading material (the drill target, the suggested QSO script) takes
+// `compact` alone: it does not grow, so there is no newest end to follow.
+//
+// Both caps are on the CONTENT box (S.display sets no boxSizing), so the rendered
+// heights are cap + 16 padding + 2 border: compact 94 max, tail-only 58 fixed.
+//
+// Default (no compact, no tail) is byte-identical to the shipped readout.
+// Exported for direct unit test (same reason CompactSelect is): the tail-scroll
+// is an effect on a ref, and jsdom has no layout, so the only way to prove it
+// runs is to mount the component alone with a stubbed scroll box.
+export function Display({ children, cursor, compact, tail, ariaLabel }) {
+  const capped = compact || tail;
+  const style = capped
+    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem",
+        letterSpacing: 2, maxHeight: compact ? 76 : 40, overflowY: "auto" }
     : S.display;
+  const boxRef = useRef(null);
+  // Jump to the tail on every update. A direct scrollTop assignment is instant
+  // by definition — no scroll-behavior is set anywhere on this element, so this
+  // already satisfies prefers-reduced-motion without a media query.
+  useEffect(() => {
+    if (tail && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  });
+  // role="group" + aria-label only in the tail variant: the cap hides the head of
+  // your own send, so the box becomes a scrollable region a keyboard user must be
+  // able to reach and read. tabIndex makes it reachable; a bare aria-label on a
+  // role-less div is not reliably announced, hence the explicit group role.
+  const a11y = tail ? { tabIndex: 0, role: "group", "aria-label": ariaLabel } : {};
   return (
-    <div style={style}>
+    <div ref={boxRef} style={style} {...a11y}>
       {children}
       {cursor && <span className="wr-cursor" style={{ color: "#F2A93B" }}>▮</span>}
     </div>
   );
 }
 
-function TouchKey({ keyDown, keyUp }) {
+function TouchKey({ keyDown, keyUp, surfaceRef }) {
   // role="button" + tabIndex makes this focusable and announced by AT.
   // Keying is owned by the window keydown handler — do not add a competing
   // handler here (double-fire). The window handler's preventDefault on Space
   // suppresses page scroll even when this div is focused.
+  // surfaceRef (optional): lets a parent move focus HERE — QSO break-in needs
+  // focus off the copy <input>, or the keyer's inField guard eats every keystroke.
   return (
     <div
+      ref={surfaceRef}
       role="button"
       tabIndex={0}
       aria-label="Straight key — press and hold Space, or hold this control, to send"
@@ -1166,14 +1222,21 @@ function TouchKey({ keyDown, keyUp }) {
   );
 }
 
-function PaddleKey({ paddleDown, paddleUp, swap }) {
+// `narrow` (M3) drops the visible "Keyboard: Z / ← …" hint line below the pads.
+// It is a desktop affordance on a touch-first surface, and no information is
+// lost: each pad's aria-label already names its keyboard shortcut verbatim, so
+// AT users keep it in both layouts. Named cost: a phone or tablet driven from a
+// Bluetooth keyboard loses the VISIBLE hint. Wide keeps the line unchanged.
+function PaddleKey({ paddleDown, paddleUp, swap, narrow, surfaceRef }) {
   // role="button" + tabIndex + aria-label make each zone focusable and announced by AT.
   // Keying is owned by the window keydown handler — do not add a competing
   // handler here (double-fire). The aria-label names the keyboard shortcut so a
   // screen-reader user knows how to key from the keyboard, which already works.
-  const zone = (el, label, glyph, ariaLabel) => (
+  // surfaceRef (optional) lands on the DIT zone — see TouchKey for why.
+  const zone = (el, label, glyph, ariaLabel, ref) => (
     <div
       key={el}
+      ref={ref}
       role="button"
       tabIndex={0}
       aria-label={ariaLabel}
@@ -1194,16 +1257,18 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
       <div style={{ fontSize: S.type.label, color: S.text.eyebrowText, marginTop: 4, letterSpacing: 1 }}>hold to repeat</div>
     </div>
   );
-  const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow");
+  const dit = zone(".", "DIT", "·", "Dit paddle — press and hold Z or left arrow", surfaceRef);
   const dah = zone("-", "DAH", "—", "Dah paddle — press and hold X or right arrow");
   return (
     <div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         {swap ? <>{dah}{dit}</> : <>{dit}{dah}</>}
       </div>
-      <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
-        Keyboard: Z / ← is the left zone, X / → the right · squeeze both to alternate
-      </div>
+      {!narrow && (
+        <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+          Keyboard: Z / ← is the left zone, X / → the right · squeeze both to alternate
+        </div>
+      )}
     </div>
   );
 }
@@ -1212,9 +1277,13 @@ function PaddleKey({ paddleDown, paddleUp, swap }) {
 // Two zones: DIT (pointer-down = auto dits via keep-alive-free touch path)
 // and DAH (pointer-down = manual element, forced to "-" by straightUp).
 // Styled identically to PaddleKey using the same zone helper.
-function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
-  const zone = (label, glyph, sub, ariaLabel, onDown, onUp) => (
+// `narrow` (M3): same rule as PaddleKey — the visible keyboard hint goes, the
+// aria-labels keep the information.
+function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap, narrow, surfaceRef }) {
+  // surfaceRef (optional) lands on the DIT zone — see TouchKey for why.
+  const zone = (label, glyph, sub, ariaLabel, onDown, onUp, ref) => (
     <div
+      ref={ref}
       role="button"
       tabIndex={0}
       aria-label={ariaLabel}
@@ -1241,6 +1310,7 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
     "Bug dit lever — press and hold for automatic dits (bracket key or this control)",
     () => bugDitDown(true),  // fromTouch=true: pointer gives clean up/down, skip keep-alive
     bugDitUp,
+    surfaceRef,
   );
   const dahZone = zone(
     "DAH", "—", "hold = one dah, you time it",
@@ -1255,11 +1325,13 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap }) {
         {/* Swap flips the dit lever side; Space (dah) is always on the right of the on-screen layout */}
         {swap ? <>{dahZone}{ditZone}</> : <>{ditZone}{dahZone}</>}
       </div>
-      <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
-        {swap
-          ? "Keyboard: ] / X / → is dit lever · Space is dah — you time the dahs"
-          : "Keyboard: [ / Z / ← is dit lever · Space is dah — you time the dahs"}
-      </div>
+      {!narrow && (
+        <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+          {swap
+            ? "Keyboard: ] / X / → is dit lever · Space is dah — you time the dahs"
+            : "Keyboard: [ / Z / ← is dit lever · Space is dah — you time the dahs"}
+        </div>
+      )}
     </div>
   );
 }
@@ -1367,22 +1439,211 @@ function KeyModeControls({ keyType, onKeyType, modeB, onModeB, compact }) {
   );
 }
 
+// NarrowInstrumentStrip (M2) — key-type toggle + L/R swap on ONE >=40px row,
+// rendered BELOW the key surface on every narrow keying surface (KEY tab, QSO
+// copy step, QSO send step). ONE component, three callers — the design's §5.1
+// contract, and the reason there is no second hand-rolled copy for QSO.
+//
+// WHY BELOW THE KEY: these are set-once-per-session instrument settings, not
+// per-attempt controls, and everything rendered above the key pushes the key
+// further from the operator's thumb. On a 375x667 phone that relocation is worth
+// a measured 52px on the KEY tab and 122px on each QSO keying step (the QSO
+// callers were rendering the FULL SwapToggle, help sentence and all). The strip
+// keeps its position adjacent to the key and now sits beside Iambic A/B, which
+// has always lived below the key.
+//
+// The verbose swap help sentence is deliberately not on the strip: the button's
+// aria-label carries the meaning, so nothing is lost to AT.
+function NarrowInstrumentStrip({ keyType, onKeyType, swap, onSwap }) {
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "stretch", marginTop: 12 }}>
+      <div style={{ flex: 1 }}>
+        <KeyModeControls compact keyType={keyType} onKeyType={onKeyType} />
+      </div>
+      <SwapToggle compact swap={swap} onSwap={onSwap} keyType={keyType} />
+    </div>
+  );
+}
+
 // KeyInput — combined toggle + swap + key surface. Used by QsoSim, which has not
 // been split (the key is part of the exchange flow there, not a separate pane).
 // KeyTrainer uses KeyModeControls + inlined key surface instead (see Phase 3 split).
 // SwapToggle is now rendered inline here so it appears above the surface in QsoSim too.
-function KeyInput({ keyer, keyType, onKeyType, swap, onSwap }) {
+// surfaceRef (optional): forwarded to whichever key surface is currently rendered,
+// so a parent can move keyboard focus onto it. Undefined for every existing caller.
+//
+// `narrow` (M2) flips the internal order: the key surface comes FIRST and the
+// instrument controls follow it as the shared one-row strip. Wide is unchanged —
+// full KeyModeControls + SwapToggle above the surface, byte-identical to before.
+function KeyInput({ keyer, keyType, onKeyType, swap, onSwap, narrow, surfaceRef }) {
+  // ONE surface expression, rendered by both layouts. `surfaceRef` must reach it in
+  // BOTH: break-in arming focuses the surface, and a surface with no ref leaves the
+  // keyer deaf to the keyboard — the defect BreakInPanel exists to fix.
+  const surface = keyType === "paddle"
+    ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} narrow={narrow} surfaceRef={surfaceRef} />
+    : keyType === "bug"
+    ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
+        dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
+        swap={swap} narrow={narrow} surfaceRef={surfaceRef} />
+    : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} surfaceRef={surfaceRef} />;
+  if (narrow) {
+    return (
+      <div>
+        {surface}
+        <NarrowInstrumentStrip keyType={keyType} onKeyType={onKeyType} swap={swap} onSwap={onSwap} />
+      </div>
+    );
+  }
   return (
     <div>
       <KeyModeControls keyType={keyType} onKeyType={onKeyType} />
       <SwapToggle swap={swap} onSwap={onSwap} keyType={keyType} />
-      {keyType === "paddle"
-        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} />
-        : keyType === "bug"
-        ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
-            dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-            swap={swap} />
-        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
+      {surface}
+    </div>
+  );
+}
+
+/* ================= BREAK-IN PANEL (QSO DX step) ================= */
+//
+// A DX step has exactly ONE required action: copy what you heard, then continue.
+// The key is a REPAIR tool here (? / AGN / QRS / partial-call fill), not the way
+// you answer — you answer on the NEXT step. Before 2.4.1 the key pad was always
+// expanded at step 1, which read as "key your reply here" and was the single most
+// misleading thing on the screen. Worse, it could not work: the copy <input> is
+// auto-focused on every DX step and the keyer's window listener drops any event
+// whose target is an INPUT, so SPACEBAR typed a space instead of keying.
+//
+// So this panel does two jobs at once:
+//   1. Presentation — collapse the whole key block behind one 44px disclosure, so
+//      at rest the copy field is the only prominent input.
+//   2. Behaviour — arming it BLURS the copy field and moves focus onto the key
+//      surface. That is what makes `e.target` a div instead of an INPUT, which is
+//      what makes the keyer hear the keyboard at all. The two are not separable:
+//      the disclosure IS the mode switch.
+//
+// The trigger borrows CompactSelect's chrome (S.btn ground, control border, 44px,
+// caret) without its mechanism, per design-compact-selectors.md §4.6.
+//
+// Armed state is carried by THREE non-colour signals (the standing L2 rule):
+// the words change, the caret flips and the body appears, and aria-expanded is
+// exposed. Amber + weight 700 are additional, never the only cue.
+// `narrow` (composed from fix/key-above-fold-375) is the ONE breakpoint signal this
+// panel needs: it tail-caps the decode readout and flips KeyInput's internal order
+// so the key surface comes first. The pre-merge shape carried a separate `compact`
+// prop for the readout; both call sites passed `!isWide`, so they were one signal
+// wearing two names and the 76px `compact` cap was never the one this surface wanted
+// (see the Display below).
+function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, onSwap, fillMsg, narrow }) {
+  const surfaceRef = useRef(null);
+
+  // Arming must land focus on the key surface, or the keyer stays deaf. The panel
+  // owns this rather than the parent because the surface only exists once armed —
+  // this effect runs on the commit that mounts it.
+  useEffect(() => {
+    if (armed) surfaceRef.current?.focus();
+  }, [armed]);
+
+  return (
+    <div
+      style={{ marginBottom: 12 }}
+      // Esc is the symmetric escape hatch: it arms from the copy field and
+      // disarms from anywhere inside the panel, so no mode can trap you.
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && armed) { e.stopPropagation(); onArmedChange(false); }
+      }}
+    >
+      <button
+        type="button"
+        aria-expanded={armed}
+        aria-controls="qso-breakin-body"
+        onClick={() => onArmedChange(!armed)}
+        style={{
+          ...S.btn,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+          width: "100%", minWidth: 0, minHeight: 44, padding: "10px 14px",
+          textAlign: "left", boxSizing: "border-box",
+          color: armed ? S.text.amber : S.text.body,
+          fontWeight: armed ? 700 : 400,
+        }}
+      >
+        {/* Wraps rather than ellipsizes: measured at 390px the label truncated to
+            "BREAK IN — ASK FOR A REPE…", which cuts off exactly the half that
+            disambiguates this control from "send your answer". A second line
+            costs a few px; losing the meaning costs the whole point of the row. */}
+        <span style={{ minWidth: 0, flexShrink: 1, textAlign: "left" }}>
+          <span aria-hidden="true">⚡ </span>
+          {armed ? "BREAK-IN ARMED — KEYING" : "BREAK IN — ASK FOR A REPEAT"}
+        </span>
+        <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0 }}>{armed ? "▴" : "▾"}</span>
+      </button>
+
+      {armed && (
+        <div id="qso-breakin-body" style={{
+          background: S.ground.panel, border: S.border.panel, borderRadius: S.radius.sm,
+          padding: 12, marginTop: 8,
+        }}>
+          {/* ORDER IS A REACH CONSTRAINT, NOT A PREFERENCE. Everything rendered
+              above the key surface pushes it further down the document, and the key
+              is what the operator is reaching for once break-in is armed. So the
+              only things above it are the decode readout (established elsewhere in
+              this app: you read what you keyed directly above the key) — and the
+              guidance prose, the fill confirmation and the token legend all sit
+              BELOW it.
+
+              WHAT ACTUALLY GUARDS THIS, AND WHAT DOES NOT — read before trusting it:
+                * The REACH tests in src/test/qso-step1-affordance.dom.test.jsx pin
+                  the ORDER of four known landmarks (decode above the key; guidance,
+                  fill status and legend below it) and nothing else. jsdom has no
+                  layout, so they cannot hold a pixel contract. Proven, not assumed:
+                  the delta re-gate inserted 74px of brand-new content directly above
+                  the key inside this div and all 632 tests stayed GREEN. A new
+                  block, a margin change or a CSS reorder passes them.
+                * The pixel contract lives ONLY in the headed harness
+                  (ops/uat-harness/cw-scroll-baseline.py) and is NOT enforced by CI.
+                  Nothing runs it automatically. If you add anything to this div,
+                  re-measure by hand.
+
+              The numbers below are a RECORD OF A MEASUREMENT, not an invariant
+              anything checks. Headed Chromium, realistic installed state,
+              document-relative (rect.bottom + scrollY after scrollTo(0,0)), seeded
+              QSO PRNG (seed 20260722): this rework took the armed key-surface bottom
+              from 916 to 705 against main's 730, identical at 375x667 / 360x780 /
+              390x844. The fill status region alone measures 24px outer.
+
+              data-testid on the decode: a layout-neutral hook so the
+              keyboard-reachability tests read the decode OUTPUT directly instead of
+              walking siblings. */}
+          <div style={{ ...S.label, marginBottom: 6 }}>
+            Decoded from your key <span style={{ color: S.text.amber }}>{keyer.buffer}</span>
+          </div>
+          {/* `tail`, not `compact` (fix/key-above-fold-375 M5). This readout GROWS
+              while you key, so a plain two-line cap leaves scrollTop at 0 and you
+              watch the oldest characters while sending the newest. `tail` gives a
+              one-line cap that follows its own end, plus the role="group" +
+              aria-label that make the clipped region keyboard-reachable. */}
+          <div data-testid="breakin-decode">
+            <Display tail={narrow} ariaLabel="Decoded from your key">{keyer.decoded}</Display>
+          </div>
+          <KeyInput keyer={keyer} keyType={keyType} onKeyType={onKeyType}
+            swap={swap} onSwap={onSwap} surfaceRef={surfaceRef} narrow={narrow} />
+          {/* Always-mounted status container: a live region only announces when the
+              text of an ALREADY-MOUNTED node changes. Mounting the node together
+              with its text is an addition, not a change, and AT stays silent —
+              the exact bug design-keying-qso §0 fixed everywhere else. */}
+          <div role="status" aria-live="polite" aria-atomic="true" style={{
+            fontFamily: "ui-monospace, monospace", color: S.tone.ok,
+            fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8, minHeight: "1.2em",
+          }}>
+            {fillMsg && <><span aria-hidden="true">◉ </span>{fillMsg}</>}
+          </div>
+          <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
+            <div>This interrupts them for a repeat. It is not your answer — you answer on the next step.</div>
+            <div style={{ marginTop: 6 }}>
+              <span>?</span> or <span>AGN</span> — repeat the whole transmission · partial call + <span>?</span> (NM0?) — they confirm their full call · <span>QRS</span> — slower please
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1470,6 +1731,9 @@ const VERDICT_COLOR = {
   loose: S.tone.warn,  // #F2A93B
   tight: S.tone.err,   // #E07A5F
 };
+// Uppercase chip text for the KEY fist panel. Keyed on the same three verdicts
+// as VERDICT_COLOR so a null (never-measured) verdict has no label to render.
+const VERDICT_LABEL = { good: "GOOD", loose: "LOOSE", tight: "TIGHT" };
 function Tag({ verdict, children }) {
   const color = VERDICT_COLOR[verdict] ?? S.text.dim;
   return (
@@ -1479,6 +1743,65 @@ function Tag({ verdict, children }) {
     }}>
       {children}
     </span>
+  );
+}
+
+/* ================= INTRO PANEL (tab orientation) ================= */
+//
+// Every practice tab opens with a block of orientation prose. It is teaching
+// content, so it is never destroyed — but the tab components unmount on every
+// tab switch, so a returning operator was re-taught the tab on every entry and
+// every app launch. Measured at 390x844 in the realistic installed state, that
+// pushed the start control's bottom to 1317px on COPY, 985px on KEY and 706px
+// on QSO — all of it scrolled past to reach the thing they came to do.
+//
+// So each tab's intro is a disclosure: the collapsed state persists under that
+// tab's own store key, and the tab collapses it once the operator has actually
+// started a session there. First run stays expanded — hiding the teaching from
+// someone who has not yet practised would be solving geometry the wrong way.
+//
+// storeKey is one per tab, so collapsing COPY's orientation never touches KEY's
+// or QSO's.
+function useIntroCollapse(storeKey) {
+  const [collapsed, setCollapsed] = useState(() => store.load(storeKey, false));
+  const write = (next) => {
+    setCollapsed(next);
+    store.save(storeKey, next);
+  };
+  return {
+    collapsed,
+    // The disclosure control. Re-opening persists too, so an operator who wants
+    // the orientation back gets it back on the next entry as well.
+    toggle: () => write(!collapsed),
+    // Called when the operator starts a session on this tab: having practised
+    // once, they have demonstrably read (or chosen to skip) the orientation.
+    // Idempotent, so calling it on every start is safe.
+    onSessionStart: () => write(true),
+  };
+}
+
+// IntroPanel — the header row + disclosure control shared by COPY, KEY and QSO,
+// so all three carry the same wording, the same keyboard behaviour (it is a
+// plain <button>) and the same accessible name/state. The collapsed flag is
+// owned by the caller's useIntroCollapse, not by this component.
+//
+// aria-expanded (not aria-controls) is the state carrier here: the body follows
+// the button directly in DOM order, and there is no body element to point at
+// while collapsed.
+function IntroPanel({ title, collapsed, onToggle, children }) {
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: collapsed ? 0 : 10 }}>
+        <div style={S.label}>{title}</div>
+        <button
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Show intro" : "Hide intro"}
+          style={{ ...S.btn, fontSize: "0.6875rem", padding: "4px 10px", color: S.text.dim }}
+          onClick={onToggle}
+        >{collapsed ? "▸ show intro" : "▾ hide intro"}</button>
+      </div>
+      {!collapsed && children}
+    </>
   );
 }
 
@@ -1801,8 +2124,9 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // set in check() so the screen reader sees a *change* and announces it.
   // (The live region is already in the DOM before check() fires — that's the fix.)
   const [scoreLive, setScoreLive] = useState("");
+  const intro = useIntroCollapse("introCopyCollapsed");
   const noiseGain = (v) => (v / 100) * 0.5;
-  const { countdown, start: startCountdown } = useCountdown();
+  const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
   // Auto-focus the copy input when a new target arrives so the user can type
   // immediately without clicking. Guard against null (input not yet in the DOM
   // on the first render before the target exists).
@@ -1854,6 +2178,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
     setResult(null);
     setRevealed(false);
     setLiveText("");
+    intro.onSessionStart();
     return t;
   };
 
@@ -1867,6 +2192,16 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
       qsb: difficulty === "real",
       onChar: difficulty === "easy" ? (idx) => setLiveText(text.slice(0, idx + 1)) : undefined,
     });
+  };
+
+  // STOP means "nothing more is coming". It has to cancel a pending pre-play
+  // countdown as well as any audio in flight: during the "Get ready" beat nothing
+  // is playing yet, so a stop-the-audio-only handler was a visible no-op and the
+  // transmission still fired when the countdown ran out. Cancelling before the
+  // interval expires also means newTarget() never runs — no target is generated.
+  const stopAll = () => {
+    cancelCountdown();
+    player.stop();
   };
 
   const check = () => {
@@ -1885,8 +2220,11 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
     // Guard: an empty answer box yields a meaningless 0% — skip it so junk
     // records don't pollute the trend.  Mirrors the QSO copy-input guard
     // (disabled={!copyAttempt.trim()}) and the KEY fist.elements > 0 guard.
+    // `conditions` (schema v3) records what the attempt was made UNDER, so PROGRESS
+    // can keep a REAL LIFE run (noise + QSB) apart from an EASY one instead of
+    // pooling them and showing the harder setting as accuracy falling.
     if (record && attempt.trim()) {
-      record("copy", { t: Date.now(), source, pct });
+      record("copy", { t: Date.now(), source, conditions: difficulty, pct });
     }
     // Update the always-mounted sr-only region. Because the region is already in the
     // DOM (empty), the AT sees a text change and announces it — the fix for the
@@ -1900,8 +2238,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // Goes in main in both modes (per design §5: the intro wants the wide column,
   // and it's transient — once a target is set it disappears).
   const introJSX = !target && (
-    <>
-      <div style={{ ...S.label, marginBottom: 10 }}>Copy practice</div>
+    <IntroPanel title="Copy practice" collapsed={intro.collapsed} onToggle={intro.toggle}>
       <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
         This is where the receiving ear gets built. Start at the top of the ladder — a single character — and climb as each rung gets comfortable: pairs, short groups, real words, callsigns, full phrases. Characters always play at full speed; the Farnsworth spacing gives you thinking room between them. Most ops can send faster than they can copy. This tab closes that gap.
       </p>
@@ -1911,7 +2248,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
           The goal is instant character recognition — hearing each letter as a single sound and knowing it on the spot, without counting dits and dahs or pausing to decode. To build that reflex, keep a pencil and paper handy: listen to the full transmission, write each character by hand the instant you recognize it, then type your answer once playback ends. Writing as you hear trains the immediate sound-to-letter response that fluent copy depends on, and it keeps you from splitting your focus between listening and typing. It's also how copy is done on the air.
         </p>
       </div>
-    </>
+    </IntroPanel>
   );
 
   // optionsJSX — level ladder + Conditions selector + noise slider.
@@ -1920,21 +2257,23 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // All handlers close over local state — no prop threading needed.
   const optionsJSX = (
     <>
-      <div style={{ ...S.label, marginBottom: 8 }}>What to copy — climb as you improve</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-        {COPY_LEVELS.map(([v, l, desc], i) => (
-          <button key={v} aria-pressed={source === v} onClick={() => setSource(v)}
-            style={{ ...S.btn, textAlign: "left", padding: "9px 12px", ...(source === v ? { borderColor: "#F2A93B" } : {}) }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.625rem", color: "#8A929C" }}>{i + 1}</span>
-              <span style={{ color: source === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.8125rem" }}>{l}</span>
-            </div>
-            {source === v && (
-              <div style={{ fontSize: "0.71875rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 4, letterSpacing: 0, lineHeight: 1.5 }}>{desc}</div>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* Level ladder — the standard CompactSelect (docs/design-compact-selectors.md
+          §6 names this the next adopter after the five shipped menus). The eight
+          rungs used to stack as eight always-visible buttons, which on a phone
+          pushed Conditions and the start controls off the bottom of the screen.
+          `ladderIndex` keeps each rung's number; `description` puts EVERY rung's
+          guidance in the open panel — previously only the selected rung showed its
+          description, so this is a net gain in discoverability at choosing time.
+          Selection behavior is unchanged: onChange is still plain setSource, and
+          COPY difficulty/level stay session-local (nothing new is persisted). */}
+      <CompactSelect
+        label="What to copy — climb as you improve"
+        options={COPY_LEVELS.map(([v, l, desc], i) => ({
+          value: v, label: l, description: desc, ladderIndex: i + 1,
+        }))}
+        value={source}
+        onChange={setSource}
+      />
       {/* Conditions selector — label-only (COPY has no per-option descriptions, per
           DoR T2). This is a CONSISTENCY change, not a compaction one: a closed
           trigger is about the same height as (or a hair taller than) the old
@@ -1977,7 +2316,7 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
         <button style={S.btnAmber} onClick={() => startCountdown(() => { const t = newTarget(); playTarget(t); })}>▶ NEW</button>
         <button style={S.btn} onClick={() => playTarget()} disabled={!target}>↻ REPLAY</button>
         <button style={S.btn} onClick={() => playTarget(null, { eff: Math.max(4, settings.effWpm - 3) })} disabled={!target}>🐢 SLOWER</button>
-        <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+        <button style={S.btn} onClick={stopAll}>■ STOP</button>
         <button style={S.btn} onClick={() => setRevealed(true)} disabled={!target}>👁 REVEAL</button>
       </div>
 
@@ -2087,11 +2426,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // analysis: the fist-timing result from analyzeFist, shown after CHECK
   const [analysis, setAnalysis] = useState(null);
   const [errFlash, setErrFlash] = useState(false);
-  // E5: intro panel collapsed state — persisted via store so returning users skip it.
-  // Default: expanded (false) on first run; once dismissed, stays collapsed.
-  const [introCollapsed, setIntroCollapsed] = useState(
-    () => store.load("introKeyCollapsed", false)
-  );
+  // E5: intro panel collapsed state — persisted under the key this tab has always
+  // used, so an operator's existing choice survives.
+  const intro = useIntroCollapse("introKeyCollapsed");
   // Live-region text for score + fist summary (C1, design §0). Empty when idle;
   // set in check() so the AT sees a change and speaks it.
   const [scoreLive, setScoreLive] = useState("");
@@ -2189,6 +2526,7 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     setResult(null);
     setAnalysis(null);
     keyer.clear();
+    intro.onSessionStart();
   };
 
   const check = () => {
@@ -2250,8 +2588,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   };
 
   // Verdict color: good=green, loose=caution-amber, tight=red
-  // verdictLabel: human-readable uppercase chip text for the KEY fist panel
-  const verdictLabel = (v) => v === "good" ? "GOOD" : v === "loose" ? "LOOSE" : "TIGHT";
+  // verdictLabel: human-readable uppercase chip text for the KEY fist panel.
+  // A null verdict (never measured) has no label — its row is not rendered at
+  // all, and an explicit "" here means a leak would show as blank, never as a
+  // wrong verdict word.
+  const verdictLabel = (v) => VERDICT_LABEL[v] ?? "";
 
   // pickCat: centralises the "change category" side-effects so the stepper and
   // direct-pick buttons stay in sync. Shared by both optionsJSX and the inline
@@ -2327,31 +2668,17 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   // Always goes in main (wants the wider column; teaching content). Same in both modes.
   const introJSX = !target && (
     <div style={S.panel}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introCollapsed ? 0 : 10 }}>
-        <div style={S.label}>Sending practice</div>
-        <button
-          aria-label={introCollapsed ? "Show intro" : "Hide intro"}
-          style={{ ...S.btn, fontSize: "0.6875rem", padding: "4px 10px", color: "#8A929C" }}
-          onClick={() => {
-            const next = !introCollapsed;
-            setIntroCollapsed(next);
-            store.save("introKeyCollapsed", next);
-          }}
-        >{introCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
-      </div>
-      {!introCollapsed && (
-        <>
-          <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-            Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
+      <IntroPanel title="Sending practice" collapsed={intro.collapsed} onToggle={intro.toggle}>
+        <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+          Now the other half: the fist. The trainer shows you text, you send it with the paddle or straight key, and the decoder shows exactly what your keying actually says — not what you meant. Watch your spacing especially: clean gaps between letters and words are what make a fist readable on the air.
+        </p>
+        <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
+          <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
+          <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
+            Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle (near the key-type selector) if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
           </p>
-          <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: "10px 12px", marginTop: 12 }}>
-            <div style={{ ...S.label, color: "#F2A93B", marginBottom: 4 }}>Use the screen, a keyboard, or your own key</div>
-            <p style={{ color: "#C9CDD3", fontSize: "0.8125rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
-              Tap the on-screen key, or use the keyboard: <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> for a straight key, <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>Z</span> and <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>X</span> (or the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets) for paddle dit and dah. <strong style={{ color: "#E8E2D6" }}>BUG mode</strong> simulates a semiautomatic key — the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> bracket (or Z / ←) holds the dit lever for a stream of automatic dits; <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>SPACE</span> sends a hand-timed dah you control. A real key or paddle works too through a USB or Bluetooth adapter that emulates those keystrokes — straight keys on Space, paddles on Z / X, the arrow keys, or the <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>[</span> / <span style={{ color: "#FFD89B", fontFamily: "ui-monospace, monospace" }}>]</span> brackets that VBand-style USB paddle adapters send — on a computer or Android device. Use the ⇄ swap toggle (near the key-type selector) if your lever comes out on the wrong side. Made a mistake? Send eight dits in a row — the HH error signal — to wipe it and start over, just like on the air.
-            </p>
-          </div>
-        </>
-      )}
+        </div>
+      </IntroPanel>
     </div>
   );
 
@@ -2403,11 +2730,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   const keySurfaceEl = (
     <div style={{ marginTop: 4 }} data-testid="key-surface">
       {settings.keyType === "paddle"
-        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
+        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} narrow={!isWide} />
         : settings.keyType === "bug"
         ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
             dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-            swap={settings.paddleSwap} />
+            swap={settings.paddleSwap} narrow={!isWide} />
         : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
     </div>
   );
@@ -2475,18 +2802,19 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Spacing verdicts — three rows.
-                    Element spacing: straight key only (paddle and bug machine-time dits).
-                    Letter/word gaps: all modes (operator controls inter-character timing). */}
+                {/* Spacing verdicts — up to three rows.
+                    A row appears ONLY when analyzeFist actually measured it (verdict
+                    non-null). That is the single rule for every reading in this panel:
+                    element gaps are null for paddle/bug (machine-timed), and letter or
+                    word gaps are null when the drill contained none of that gap class —
+                    a callsign drill has no word gaps, so it gets no word-gap row rather
+                    than a fabricated "GOOD". */}
                 {[
-                  // Element spacing: meaningful for straight key only; suppressed for paddle + bug
-                  ...(settings.keyType === "straight"
-                    ? [["Element gaps", "between elements (ideal 1u)", analysis.spacing.element]]
-                    : []),
+                  ["Element gaps", "between elements (ideal 1u)", analysis.spacing.element],
                   ["Letter gaps", "between letters (ideal 3u)", analysis.spacing.character],
                   ["Word gaps", "between words (ideal 7u)", analysis.spacing.word],
                 ].map(([label, sub, sp]) => (
-                  sp.ratio !== null && (
+                  sp.verdict !== null && (
                     <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: "0.75rem" }}>
                         {label}
@@ -2505,10 +2833,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   )
                 ))}
 
-                {/* B3: dah weighting — straight key and bug; suppressed for paddle.
-                    Bug dahs are hand-timed (the point of bug practice), so weighting
-                    feedback is shown. The header text adapts for bug mode. */}
-                {(settings.keyType === "straight" || settings.keyType === "bug") && analysis.weighting.ratio !== null && (
+                {/* B3: dah weighting — same rule as the spacing rows above. The verdict
+                    is null for paddle (machine-timed dahs) and for an all-dit send with
+                    no dahs to measure; in both cases the row is absent. Bug dahs are
+                    hand-timed (the point of bug practice) so they do get a verdict. */}
+                {analysis.weighting.verdict !== null && (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <span style={{ fontFamily: "system-ui, sans-serif", color: "#8A929C", fontSize: "0.75rem" }}>
                       Dah length
@@ -2531,11 +2860,16 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                   </div>
                 )}
 
-                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim */}
+                {/* Footnote: machine-timed dit spacing. H2: instructional — floor to S.text.dim.
+                    The bug variant's "graded above" sentence points at the Dah length row, so
+                    it is only true when that row is actually there — on an all-dit send there
+                    are no dahs to grade and the row is absent. Claiming a grade the operator
+                    can't see is the same defect this change exists to remove. */}
                 {(settings.keyType === "paddle" || settings.keyType === "bug") && (
                   <div style={{ fontSize: "0.75rem", color: S.text.dim, fontFamily: "system-ui, sans-serif", marginTop: 8 }}>
                     {settings.keyType === "bug"
-                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only. Your dah length is graded above."
+                      ? "Dit spacing is machine-timed — spacing feedback covers letter and word gaps only."
+                        + (analysis.weighting.verdict !== null ? " Your dah length is graded above." : "")
                       : "Element spacing is machine-timed in paddle mode — spacing feedback covers letter and word gaps only."}
                   </div>
                 )}
@@ -2571,49 +2905,60 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   );
 
   // ---- Narrow (phone) KEY layout ----
-  // narrowInstrumentStrip — key-type toggle + swap on ONE ≥40px row, relocated from
-  // the options block to sit WITH the key (the ratified "instrument/mode toggles sit
-  // with the key" rule, and the v1.2 open item). The verbose swap help sentence is
-  // dropped on narrow (its meaning is carried by the button's aria-label). Iambic
-  // Mode A/B renders below the key (narrowIambic) so this strip stays one row.
-  const narrowInstrumentStrip = (
-    <div style={{ display: "flex", gap: 6, alignItems: "stretch", marginTop: 12 }}>
-      <div style={{ flex: 1 }}>
-        <KeyModeControls compact keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} />
-      </div>
-      <SwapToggle compact swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} keyType={settings.keyType} />
-    </div>
-  );
   const narrowIambic = settings.keyType === "paddle" && (
     <IambicToggle compact modeB={settings.iambicModeB} onModeB={(v) => setSettings((s) => ({ ...s, iambicModeB: v }))} />
   );
 
-  // narrowKeyLayout — the compact single practice card that clears the 390×844 fold
-  // without scrolling (measured, headed — see the re-gate numbers). Order: category
-  // (its own compact block) → [card] actions → instrument strip → compact target
-  // readout → compact decoded readout → KEY → Iambic (set-once, paddle) → CHECK →
-  // results. The decoded readout stays ABOVE the key (no pedagogical reorder — the
-  // measured budget clears the fold without it). The compact Displays cap + scroll
-  // internally, so a long target never pushes the key down.
+  // narrowKeyLayout — ONE practice card (M1: the drill-category block was a
+  // separate sibling above it, costing a 14px inter-block gap for nothing).
+  //
+  // Order: [card] actions → target readout → decoded readout (tail-capped) →
+  // KEY → instrument strip (M2) → Iambic → drill category (M7) → CHECK → results.
+  //
+  // EVERYTHING SET-ONCE NOW SITS BELOW THE KEY. That is the whole shape of this
+  // fix: the key is the thing the operator reaches for on every attempt, so the
+  // only rows left above it are the two readouts they read while keying. What
+  // moved down — key type, L/R swap, Iambic mode, drill category — is chosen once
+  // per session or once per drill.
+  //
+  // MEASURED at 375x667, headed CDP, realistic installed state, dit-pad bottom
+  // document-relative (rect.bottom + scrollY after scrollTo(0,0)):
+  // main 704 -> 542 at rest, 578 with both readouts stuffed to their caps
+  // (fold 667). M7 — moving the category row below the key — was taken because
+  // it is needed, not because it was available: the same build with the category
+  // row left at the TOP of this card measures 650 at rest and **686 stuffed**,
+  // i.e. 19px OVER the fold (measured, not predicted — a counterfactual build).
+  // The design's reserve rung triggers below 20px of margin and the alternative
+  // lever, a size cut, is forbidden. M7 also makes the key position independent
+  // of the category label's length, which the old top position did not.
+  //
+  // These numbers are a RECORD OF A MEASUREMENT taken with
+  // ops/uat-harness/cw-scroll-baseline.py. NOTHING in CI enforces them — jsdom has
+  // no layout. The suite pins the ORDER below (narrow.dom.test.jsx) and the cap
+  // styles, and that is all it can do: 74px of new content can be inserted above
+  // the key with the whole suite green. Re-measure by hand if you add a row here.
   const narrowKeyLayout = (
-    <>
-      <div style={{ marginBottom: 14 }}>{categoryRow}</div>
-      <div style={S.panel}>
-        {narrowActionButtons}
-        {narrowInstrumentStrip}
-        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>Send this</div>
-        <Display compact>{target || "press NEW TEXT"}</Display>
-        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>
-          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-        </div>
-        <Display compact cursor>{keyer.decoded}</Display>
-        {errFlashEl}
-        {keySurfaceEl}
-        {narrowIambic}
-        {checkEl}
-        {resultsEl}
+    <div style={S.panel}>
+      {narrowActionButtons}
+      <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
+      <Display compact>{target || "press NEW TEXT"}</Display>
+      <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>
+        Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
       </div>
-    </>
+      <Display tail cursor ariaLabel="Decoded from your key">{keyer.decoded}</Display>
+      {errFlashEl}
+      {keySurfaceEl}
+      <NarrowInstrumentStrip
+        keyType={settings.keyType}
+        onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
+        swap={settings.paddleSwap}
+        onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+      />
+      {narrowIambic}
+      <div style={{ marginTop: 12 }}>{categoryRow}</div>
+      {checkEl}
+      {resultsEl}
+    </div>
   );
 
   // ---- layout rendering ----
@@ -2623,9 +2968,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   //   railEl may be null on the very first paint (before the callback ref fires) —
   //   the portal is skipped for that one imperceptible frame.
   //
-  // Narrow: intro (if !target) + narrowKeyLayout — the category block plus one
-  //   compact practice card (controls relocated to an instrument strip with the
-  //   key, compact+capped Displays) so the key surface clears the 390×844 fold.
+  // Narrow: intro (if !target) + narrowKeyLayout — ONE practice card with every
+  //   set-once control (instrument strip, Iambic, drill category) below the key
+  //   and both readouts capped, so the pads clear the 375×667 fold.
   //
   // The always-mounted scoreLive + catLive regions are in the component root,
   // never gated by isWide, so AT sees changes in both layouts.
@@ -2645,10 +2990,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
       {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
       {isWide && practicePanels}
 
-      {/* Narrow layout: intro (if before first target) + the compact single-card
-          KEY layout — category as its own block, then one practice card with the
-          key-type/mode controls relocated to an instrument strip WITH the key, so
-          the key surface clears the 390×844 fold without scrolling. */}
+      {/* Narrow layout: intro (if before first target) + the single-card KEY
+          layout — every set-once control (instrument strip, Iambic, drill
+          category) below the key so the pads clear the 375×667 fold. */}
       {!isWide && introJSX}
       {!isWide && narrowKeyLayout}
     </div>
@@ -2749,6 +3093,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const [contestType, setContestType] = useState("wpx");
   const [contactType, setContactType] = useState("domestic");
 
+  // Id for the "your copy" text input, so its visible caption can be a real
+  // <label htmlFor>. useId rather than a constant because QsoSim's narrow and
+  // wide layouts are one component but nothing stops a future refactor from
+  // mounting the tab twice; a constant id would then silently point both labels
+  // at the first instance's input.
+  const qsoUid = useId();
+  const copyInputId = `${qsoUid}-copy`;
+
   const [qso, setQso] = useState(null);
   const [step, setStep] = useState(0);
   const [copyAttempt, setCopyAttempt] = useState("");
@@ -2760,11 +3112,9 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   const fillTimer = useRef(null);
   const { countdown, start: startCountdown, cancel: cancelCountdown } = useCountdown();
 
-  // E5: intro paragraph collapsed state — persisted via store so returning users skip it.
-  // Default: expanded (false) on first run; once dismissed, stays collapsed.
-  const [introQsoCollapsed, setIntroQsoCollapsed] = useState(
-    () => store.load("introQsoCollapsed", false)
-  );
+  // E5: intro paragraph collapsed state — persisted under the key this tab has
+  // always used, so an operator's existing choice survives.
+  const intro = useIntroCollapse("introQsoCollapsed");
 
   // stepLive: text for the always-mounted step-transition live region (polite).
   // Set in advance() when a new DX or "your turn" step begins.
@@ -2783,6 +3133,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // to the Role CompactSelect as pulseKey — each bump replays a brief amber glow on
   // its trigger (the sighted-user counterpart to roleLive, reduced-motion-gated).
   const [roleAutoPulse, setRoleAutoPulse] = useState(0);
+  // modeLive: announces the COPY ⇄ BREAK-IN mode switch on a DX step. The switch
+  // also MOVES FOCUS, which is the worst case to do silently for a screen-reader
+  // user. Polite, always-mounted (see the region block in the return).
+  const [modeLive, setModeLive] = useState("");
+
+  // armed: true = BREAK-IN mode on the current DX step (key pad revealed, copy
+  // field parked). Component state only, never persisted, and force-reset on every
+  // step advance / start / abandon — a mode that survived a step transition would
+  // open step 2 in a stale state.
+  const [armed, setArmed] = useState(false);
 
   // Phase 4 (B4) — per-conversation score accumulation for averageScore().
   // We accumulate copy % and send % across every graded step in a contact so
@@ -2822,7 +3182,13 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     keyWpm: settings.keyWpm,
     freq: settings.freq,
     player,
-    enabled: !!qso && step < qso.steps.length,
+    // On a DX (copy) step the keyer is live ONLY while break-in is armed, so the
+    // two input modes are genuinely mutually exclusive rather than incidentally
+    // so. Without this gate a stray SPACEBAR — after clicking ↻ REPLAY, say, when
+    // focus is on a button rather than the copy field — would decode invisibly and
+    // could fire a break-in repeat the user never asked for. On "you" (send) steps
+    // the keyer is always live, exactly as before.
+    enabled: !!qso && step < qso.steps.length && (qso.steps[step]?.who !== "dx" || armed),
     mode: settings.keyType,
     swap: settings.paddleSwap,
     onError: () => { setSendResult(null); showFill("HH — error signal, cleared"); },
@@ -2852,6 +3218,16 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     });
   };
 
+  // STOP means "nothing more is coming" — same contract as COPY's STOP. The
+  // pre-transmission countdown has to be cancelled too: during "Get ready"
+  // nothing is playing yet, so stopping only the audio left the operator
+  // watching a dead button while the DX transmission fired anyway.
+  // The step stays put; REPLAY is how the user hears it when they are ready.
+  const stopAll = () => {
+    cancelCountdown();
+    player.stop();
+  };
+
   // Band noise lives with real-life mode while a contact is underway
   useEffect(() => {
     if (qso && step < qso.steps.length && difficulty === "real") {
@@ -2866,19 +3242,46 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // Auto-focus copy input when a dx step is active (normal/real mode shows the
   // copy input; easy mode shows CONTINUE instead). Guard: qsoCopyInputRef.current
   // is null when the input isn't rendered (easy mode, you-step, or before start).
+  //
+  // `armed` in the DEP LIST is load-bearing: DISarming must re-fire this so focus
+  // returns to the copy field. Removing the dep leaves focus stranded on the
+  // trigger button and typing silently does nothing (mutation-verified, KB-3/KB-5).
+  //
+  // `!armed` in the CONDITION is defence-in-depth, and the comment says so on
+  // purpose. What actually keeps focus out of the <input> while armed is that the
+  // copy block UNMOUNTS (the swap layout below) — so `qsoCopyInputRef.current` is
+  // already null and the third clause blocks first. Removing `!armed` alone was
+  // mutation-tested and did NOT change behaviour. It is kept because it is the
+  // guard that would still hold if this panel ever stacked instead of swapping,
+  // which is precisely how the original deaf-keyer bug happened.
   const cur = qso?.steps[step];
   useEffect(() => {
-    if (cur && cur.who === "dx" && qsoCopyInputRef.current) {
+    if (cur && cur.who === "dx" && !armed && qsoCopyInputRef.current) {
       qsoCopyInputRef.current.focus();
     }
-  }, [cur]);
+  }, [cur, armed]);
+
+  // The one place the DX-step input mode changes. Blurs the copy field on the way
+  // in (BreakInPanel then focuses the key surface); the effect above restores
+  // focus to the field on the way out.
+  const setBreakIn = (next) => {
+    setArmed(next);
+    if (next) {
+      qsoCopyInputRef.current?.blur();
+      setModeLive("Break-in armed. Key question mark, or A G N, to ask for a repeat.");
+    } else {
+      setModeLive("Copy field. Type what you heard.");
+    }
+  };
 
   const start = () => {
     const builder = ACTIVITY_BUILDERS[activity];
-    // myCqZone: contest exchange needs the operator's CQ zone, computed from
-    // their configured QTH state.  Defaults to 5 (W1/W2 eastern US) when the
-    // QTH state isn't resolved — an honest fallback that won't crash the builder.
-    const myCqZone = resolveUSState(stateOf(settings.myQth))?.cq ?? 5;
+    // myCqZone: the CQ-zone contest exchange needs the operator's zone, derived
+    // from their configured QTH state. `null` when the QTH doesn't resolve to a
+    // US state — buildContest then DROPS the zone from the exchange instead of
+    // defaulting it. The old `?? 5` sent eastern-US zone 5 on behalf of an
+    // operator who never said where they were; see buildContest's header.
+    const myCqZone = resolveUSState(stateOf(settings.myQth))?.cq ?? null;
     const profile = {
       myCall:   settings.myCall,
       myName:   settings.myName,
@@ -2902,12 +3305,14 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
     setFillMsg(null);
+    setArmed(false); // a new contact always opens in COPY mode
     keyer.clear();
     // Cancel any pending auto-advance from the previous contact before starting fresh.
     clearTimeout(qsoAdvanceTimer.current);
     qsoAdvanceTimer.current = null;
     // Reset per-conversation score arrays (B4)
     setCopyScores([]); setSendScores([]);
+    intro.onSessionStart();
     if (difficulty === "real") player.startNoise(noiseGain(noise), settings.freq, settings.rxFilter);
 
     // First step: if it's a dx step, count down then play.
@@ -2934,6 +3339,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     setCopyAttempt(""); setCopyResult(null); setRevealed(false); setSendResult(null);
     setLiveText("");
     setFillMsg(null);
+    setArmed(false); // every step opens in COPY mode — break-in never carries over
     keyer.clear();
 
     setStep(next);
@@ -3028,6 +3434,17 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     armAutoAdvance(pct, () => advance({ who: qso.dx, text: cur.text }));
   };
 
+  // The answer speed for "send slower", in ONE place. Keying QRS and pressing the
+  // 🐢 SLOWER button are the same request — the button literally calls the same
+  // playDx() the QRS fill does — so they must give the same speed. They had already
+  // drifted: max(4, eff-4) at the QRS branch, max(5, eff-3) at the button, so the
+  // two answers differed by a word per minute and the floors diverged below 9 wpm.
+  // A shared function rather than two agreeing literals: agreement that lives in one
+  // expression cannot drift again, and there is no DOM-observable way to test it
+  // (the eff is consumed inside the audio player, which is mocked at the
+  // AudioContext level in this harness).
+  const qrsEffWpm = () => Math.max(4, settings.effWpm - 4);
+
   // Break-in: interpret what the user keys during a DX transmission as
   // on-air fill requests — ? / AGN = repeat, QRS = slower, partial call + ? = call fill.
   useEffect(() => {
@@ -3050,7 +3467,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     if (sent === "?" || sent === "AGN" || sent === "AGN?") {
       respond(cur.text, "? — REPEATING");
     } else if (sent === "QRS" || sent === "QRS?") {
-      respond(cur.text, "QRS — SLOWING DOWN", Math.max(4, settings.effWpm - 4));
+      respond(cur.text, "QRS — SLOWING DOWN", qrsEffWpm());
     } else if (sent.endsWith("?")) {
       const part = sent.slice(0, -1);
       const flatCall = dxSigned.replace("/", "");
@@ -3085,6 +3502,22 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     // SHOW-SUGGESTED reference), never the grading target.
     const { score, hits, missing } = gradeSend(cur.mustContain, sent);
     setSendResult({ score, hits, need: cur.mustContain });
+    // score === null → this step has no required elements to check (the ANSWER
+    // steps require only [myCall], so an operator who has cleared their callsign
+    // in Settings lands here). Say so plainly and keep it OUT of the trend: a
+    // grade we didn't earn the right to give must not move the average, and a
+    // flat 0% would be an unreachable zero. TRANSMIT still advances the contact.
+    if (score === null) {
+      // The notice names the CAUSE (an unset callsign) rather than our internal
+      // vocabulary ("no required elements" is mustContain leaking out): to an
+      // operator that reads as a claim about the QSO step, which is wrong and
+      // teaches nothing. It also states the on-air fact this step exists to drill.
+      setResultLive("Send not scored — we can't grade this over until your callsign is set. Add it in Settings — answering a CQ means sending your call.");
+      // Still call armAutoAdvance: a null score never arms (its 100%-only gate),
+      // but the call also cancels any advance left pending from a prior CHECK.
+      armAutoAdvance(score, () => advance({ who: settings.myCall, text: keyer.decoded || "(sent)" }));
+      return;
+    }
     // Accumulate for per-conversation aggregate (B4). Same 0–100 range as before,
     // no schema change — the send-trend now measures required-elements accuracy
     // instead of script fidelity (a semantics improvement, not a format change).
@@ -3164,27 +3597,20 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // introJSX — collapsible orientation paragraph. Goes in main in both modes.
   // On wide it gets its own panel; on narrow it's folded into the setup panel
   // below (matching today's single-box appearance on mobile).
+  // The trailing gap is QSO's alone: on narrow this block shares a panel with the
+  // setup selectors below it, so without it the orientation (collapsed OR expanded)
+  // butts straight up against the ACTIVITY label. COPY and KEY each own their panel
+  // and need no such separator.
   const introJSX = !qso && (
-    <>
-      {/* E5: collapsible intro — same pattern as KeyTrainer. Toggle persists via store. */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: introQsoCollapsed ? 10 : 0 }}>
-        <div style={S.label}>Simulated contact</div>
-        <button
-          aria-label={introQsoCollapsed ? "Show intro" : "Hide intro"}
-          style={{ ...S.btn, fontSize: "0.6875rem", padding: "4px 10px", color: "#8A929C" }}
-          onClick={() => {
-            const next = !introQsoCollapsed;
-            setIntroQsoCollapsed(next);
-            store.save("introQsoCollapsed", next);
-          }}
-        >{introQsoCollapsed ? "▸ show intro" : "▾ hide intro"}</button>
-      </div>
-      {!introQsoCollapsed && (
-        <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", marginTop: 8, marginBottom: 0 }}>
+    <div style={{ marginBottom: 10 }}>
+      <IntroPanel title="Simulated contact" collapsed={intro.collapsed} onToggle={intro.toggle}>
+        {/* margin 0: the gap under the header row is IntroPanel's, shared with the
+            other two tabs, so all three read the same. */}
+        <p style={{ color: "#C9CDD3", fontSize: "0.875rem", lineHeight: 1.6, fontFamily: "system-ui, sans-serif", margin: 0 }}>
           Pick your activity and role, then work the full exchange — CQ, RST, name, QTH — through to the sign-off. On each over you can check your copy before continuing, or just answer the way you would on the air.
         </p>
-      )}
-    </>
+      </IntroPanel>
+    </div>
   );
 
   // optionsJSX — Activity / Role / Conditions selectors + noise slider + start
@@ -3397,10 +3823,12 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           - stepLive:   step transitions in the normal QSO loop (polite)
           - resultLive: copy/send score + verdict after CHECK COPY / CHECK TRANSMISSION (polite)
           - roleLive:   the Role when an Activity change auto-resets it (polite)
+          - modeLive:   the DX-step COPY ⇄ BREAK-IN switch, which also moves focus (polite)
           Not gated by isWide — render in both layouts. */}
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{stepLive}</div>
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{resultLive}</div>
       <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{roleLive}</div>
+      <div role="status" aria-live="polite" aria-atomic="true" style={S.srOnly}>{modeLive}</div>
 
       {/* Wide layout: intro in its own main-column panel; options OR context portaled to rail. */}
       {isWide && !qso && <div style={S.panel}>{introJSX}</div>}
@@ -3423,8 +3851,32 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               : <>◉ Receiving — step {step + 1} of {qso.steps.length}</>}
             {difficulty === "real" && <span style={{ color: "#E07A5F", marginLeft: 8 }}>QSB</span>}
           </div>
-          {difficulty !== "real" && (
-            <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", marginTop: 0 }}>{cur.copyHint}</p>
+          {/* copyHint is a FOCUS AID, not an instruction — it names where to put your
+              attention ("the callsign is what matters"), while copy is graded on
+              fidelity to the WHOLE transmission. Unlabelled prose directly under the
+              heading read as "do this", so a user who copied only the callsign got a
+              20% score they could not explain. The label gives the sentence its role.
+              The hint wording itself is deliberately untouched: directing attention to
+              the one element that matters is real operating practice and good teaching.
+              Rendered as a div rather than a <p> so its bottom margin is explicit —
+              that reclaimed margin pays for most of the label line.
+              GATED ON !armed. THE RULE, STATED ONCE HERE AND REFERRED TO BELOW:
+              break-in mode shows the key and what you need while keying — your
+              decode, the fill tokens, the station's answer. Everything that gets the
+              over back for you WITHOUT asking — this hint, the noise trim, the
+              REPLAY/SLOWER transport, the copy field — steps aside, one tap on the
+              trigger row away (or Esc, on a keyboard). Say the TAP first: this app is
+              headed for phones, where there is no Esc key at all, so "one Esc away"
+              is not a mitigation for the operator this panel is being compacted for.
+              Every row left above the key also pushes the key further from the
+              operator's thumb; this block measures 68px. */}
+          {difficulty !== "real" && !armed && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ ...S.label, marginBottom: 2 }}>Listen for</div>
+              <div style={{ color: S.text.dim, fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5 }}>
+                {cur.copyHint}
+              </div>
+            </div>
           )}
 
           {/* Countdown: shown in the Display area (same spot as easy-mode live text)
@@ -3438,65 +3890,184 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             </div>
           )}
 
+          {/* EASY's live letter-by-letter readout — `compact tail` on narrow (M5).
+              It was the LAST uncapped readout above a key on any keying surface:
+              measured at 375x667 the stuff probe moved the pads +496px through
+              this one box, so the key's position on an easy copy step was
+              content-DEPENDENT. (The design's inventory named the break-in decode
+              as the only uncapped one; it never measured easy.)
+
+              BOTH props, not one. `compact` gives it two lines rather than the
+              one a pure `tail` readout gets, because the learner reads along here.
+              `tail` is what makes the cap honest: this text GROWS in step with the
+              audio, so a cap alone leaves scrollTop at 0 and the learner watching
+              the oldest characters while the DX sends the newest. Measured with a
+              real 77-character exchange line and `compact` only: clientHeight 92,
+              scrollHeight 136, scrollTop 0 — 44px of the newest copy clipped out
+              of view with no way to reach it while the audio ran. */}
           {difficulty === "easy" && countdown === null && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
-              <Display cursor={player.playing}>{liveText}</Display>
+              <Display cursor={player.playing} compact={!isWide} tail={!isWide}
+                ariaLabel="Sending">{liveText}</Display>
             </div>
           )}
 
-          {difficulty === "real" && (
+          {/* Same !armed rule as the "Listen for" hint above: band noise sets how
+              hard the copying is, so it steps aside with the copying. The noise
+              itself is unaffected (it is player state, not this control's), and the
+              slider comes back on a tap of the trigger row (or Esc). Worth 68px measured
+              (armed key surface on `real`: 773 -> 705), which is what pays for the
+              disclosure trigger on the one difficulty that has no "Listen for" hint
+              to give up. Same 68px as the hint block, by coincidence. */}
+          {difficulty === "real" && !armed && (
             <div style={{ marginBottom: 6 }}>
               <Slider label="Band noise" value={noise} min={0} max={100} step={1} suffix="%"
                 onChange={(v) => { setNoise(v); player.setNoiseLevel(noiseGain(v)); }} />
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-            <button style={S.btn} onClick={() => playDx(cur.text)}>↻ REPLAY</button>
-            <button style={S.btn} onClick={() => playDx(cur.text, { eff: Math.max(5, settings.effWpm - 3) })}>🐢 SLOWER</button>
-            <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
-          </div>
+          {/* Same !armed rule again, and this is the one with a real operating
+              argument behind it rather than only a geometric one: REPLAY and SLOWER
+              are the OFFLINE equivalents of the two fill tokens the legend under the
+              key teaches — ? / AGN ("repeat it all") and QRS ("slower please"). On
+              the air you cannot press replay; you ask with your key. Offering the
+              free version of the thing the mode exists to teach, at the exact moment
+              it is teaching it, is the same two-controls-one-action ambiguity the
+              disclosure removed for the key itself.
+              STOP goes with them: a lone STOP on an otherwise empty row reads as a
+              leftover. DISCLOSED FRICTION — after a fill the station replays while
+              you are still armed, and cutting that replay short now means leaving
+              break-in first: tap the trigger row (or press Esc). Judged acceptable:
+              listening to the repeat you just asked for is the expected behaviour,
+              and that tap is the same one that returns you to the copy field anyway.
+              Worth 96px measured on narrow, where the row wraps to two lines, and
+              50px at isWide — on the app's tightest surface.
 
-          <div style={{ background: S.ground.panel, border: "1px solid #2E343C", borderRadius: 8, padding: 12, marginBottom: 12 }}>
-            <div style={{ ...S.label, marginBottom: 6 }}>
-              Break in with your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-            </div>
-            <Display>{keyer.decoded}</Display>
-            {fillMsg && (
-              <div style={{ fontFamily: "ui-monospace, monospace", color: "#8FCB9B", fontSize: "0.8125rem", letterSpacing: 1, marginTop: 8 }}>
-                ◉ {fillMsg}
-              </div>
-            )}
-            <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
-            <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 8, lineHeight: 1.6 }}>
-              <span style={{ color: "#8A929C" }}>?</span> or <span style={{ color: "#8A929C" }}>AGN</span> — repeat the whole transmission · partial call + <span style={{ color: "#8A929C" }}>?</span> (NM0?) — they confirm their full call · <span style={{ color: "#8A929C" }}>QRS</span> — slower please
-            </div>
-          </div>
+              MERGE NOTE (fix/key-above-fold-375 composed in): that branch packed
+              these three onto ONE row on narrow as equal thirds (the pattern KEY's
+              narrowActionButtons already ships) — worth a measured 46px at 375,
+              where the default padding wrapped them onto TWO rows, back when the
+              row still sat above the key. It is a WIDTH change, not a height one:
+              each button lands ~103px at 375 and ~96px at 360, well above any
+              touch minimum, and the row stays >=40px tall. Wide is unchanged.
+              The `!armed` gate
+              above spends that particular saving (the row and the key are never on
+              screen together now), but the packing still governs the UNARMED state,
+              which is the state src/test/narrow.dom.test.jsx "packs the transport
+              row onto ONE row on narrow" drives. Both decisions are kept: the gate
+              from this branch, the thirds layout from that one.
 
-          {difficulty === "easy" ? (
-            <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE →</button>
+              MERGE NOTE (fix/stop-cancels-countdown composed in): STOP calls
+              stopAll — cancel the pending "Get ready" countdown AND stop the
+              audio — not player.stop() alone. The reachability question the
+              `!armed` gate raises is answered above this row, not here: every DX
+              countdown STARTS unarmed, because advance() calls setArmed(false)
+              before startCountdown() and a fresh contact mounts unarmed. So the
+              state the countdown-cancel exists for always has the button in it.
+              A user who arms break-in DURING a countdown loses STOP until they
+              disarm — but that state never had a working STOP either, on this
+              branch or on main, where STOP was a no-op mid-countdown. Nothing
+              regressed; the fix simply does not reach into a state this branch
+              had already emptied. */}
+          {!armed && (
+            <div style={{ display: "flex", gap: 8, flexWrap: isWide ? "wrap" : "nowrap", marginBottom: 12 }}>
+              {/* qrsEffWpm(): the same expression the QRS fill uses — see its
+                  definition for why they are one function and not two literals. */}
+              {[["↻ REPLAY", () => playDx(cur.text)],
+                ["🐢 SLOWER", () => playDx(cur.text, { eff: qrsEffWpm() })],
+                ["■ STOP", stopAll]].map(([label, onClick]) => (
+                <button key={label} style={isWide ? S.btn
+                  : { ...S.btn, flex: 1, minWidth: 0, minHeight: 40, padding: "0 6px", fontSize: "0.8125rem", whiteSpace: "nowrap" }}
+                  onClick={onClick}>{label}</button>
+              ))}
+            </div>
+          )}
+
+          {/* Required path FIRST, repair tool second — the reading order now matches
+              the doing order: hear it → type it → check it → continue. In BREAK-IN
+              mode the whole copy block swaps OUT (it does not stack) so the key
+              surface stays as close to the top of the panel as it can.
+              The copy field's contents survive the swap — `copyAttempt` is state,
+              not DOM — so arming never costs the operator work in progress.
+              There is deliberately NO "back to copy" summary row: the disclosure
+              trigger below already toggles the mode, and a second control for the
+              same action cost ~74px directly above the key (attribution from the
+              2026-07-22 re-measurement that pulled this branch from the queue).
+              ONE `!armed` gate covers both difficulties, so easy behaves like
+              normal/real instead of keeping CONTINUE live under an armed key — the
+              rule is "break-in mode swaps the required path out; disarm to
+              continue", and it should not have an exception. */}
+          {!armed && (difficulty === "easy" ? (
+            <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE → YOUR TURN</button>
           ) : (
             <>
-              <div style={{ ...S.label, marginBottom: 6 }}>Your copy (optional — check it or just answer)</div>
-              <input ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") checkCopy(); }}
-                aria-label="Your copy of what you heard"
+              {/* TWO branches meet on this caption, and both decisions survive.
+                  C1 (fix/qso-step1-keyboard-and-affordance) reworded it: it used to
+                  read "(optional — check it or just answer)", and "or just answer"
+                  told the operator to do something this step does not support — it
+                  is the sentence that authored the reported error. The optionality
+                  is still visible in the affordance: CONTINUE sits right there.
+                  fix/accessible-names-batch made it a real <label htmlFor> and
+                  removed the parallel aria-label, because an accessible name that
+                  does not contain the visible caption is WCAG 2.5.3 failure F96 —
+                  a speech-input user saying the visible label hit nothing.
+                  Composed, the label carries the REWORDED text, so the accessible
+                  name and the visible text are the same string by construction.
+
+                  display:"block" preserves the geometry the caption had as a <div>
+                  (<label> is display:inline by default, and vertical margins do not
+                  apply to inline boxes). marginBottom stays 2 here, not the 6 that
+                  branch used against main: a scoring sub-line follows this caption
+                  now, and that line owns the gap down to the input. */}
+              <label htmlFor={copyInputId} style={{ ...S.label, display: "block", marginBottom: 2 }}>Your copy — what did you hear?</label>
+              {/* States the scoring rule up front so nobody has to infer it from a bad
+                  score. Copy is graded on fidelity to the whole transmission, while
+                  "Listen for" above names only the element that matters most — without
+                  this line the two read as contradicting each other. Deliberately
+                  self-contained (no "not just the part above"): `real` difficulty hides
+                  the hint entirely, so a back-reference would dangle there. */}
+              <div style={{ color: S.text.dim, fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", lineHeight: 1.5, marginBottom: 6 }}>
+                Type everything you heard — the whole transmission is graded.
+              </div>
+              <input id={copyInputId} ref={qsoCopyInputRef} style={S.input} value={copyAttempt} onChange={(e) => setCopyAttempt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") checkCopy();
+                  // Esc from the copy field is the reflex reach for the key.
+                  else if (e.key === "Escape") setBreakIn(true);
+                }}
                 placeholder="type what you hear..." autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
-              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", marginBottom: 12 }}>
                 <button style={S.btn} onClick={checkCopy} disabled={!copyAttempt.trim()}>CHECK COPY</button>
                 <button style={S.btn} onClick={() => setRevealed(true)}>👁 REVEAL</button>
-                <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE →</button>
+                {/* C2: naming the destination is the whole fix for the mistake —
+                    at the moment of decision the screen states that answering
+                    happens AFTER this button, in the app's own vocabulary
+                    ("Your turn — step N of M" is the next screen's heading). */}
+                <button style={S.btnAmber} onClick={() => advance({ who: qso.dx, text: cur.text })}>CONTINUE → YOUR TURN</button>
               </div>
               {revealed && (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 14, marginBottom: 12 }}>
                   <div style={{ ...S.label, marginBottom: 6 }}>Sent</div>
                   {copyResult !== null ? <CharDiff target={cur.text} attempt={copyAttempt} /> : <Display>{cur.text}</Display>}
                   {copyResult !== null && <Score pct={copyResult} />}
                 </div>
               )}
             </>
-          )}
+          ))}
+
+          <BreakInPanel
+            keyer={keyer}
+            armed={armed}
+            onArmedChange={setBreakIn}
+            keyType={settings.keyType}
+            onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
+            swap={settings.paddleSwap}
+            onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+            fillMsg={fillMsg}
+            narrow={!isWide}
+          />
+
           {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
           <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
             <button
@@ -3508,6 +4079,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
                 clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
                 qsoAutoGradeFired.current = false;
+                setArmed(false);
                 setQso(null); keyer.clear();
               }}
             >✕ ABANDON CONTACT / back to setup</button>
@@ -3533,9 +4105,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           <div style={{ ...S.label, margin: "12px 0 6px" }}>
             Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
           </div>
-          {/* compact on narrow: the shorter readout banks vertical room above the key. */}
-          <Display cursor compact={!isWide}>{keyer.decoded}</Display>
-          <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
+          {/* tail on narrow (M5): one line, newest characters always in view. The
+              suggested script above keeps two lines — reading material gets two,
+              your own live output gets one. */}
+          <Display cursor tail={!isWide} ariaLabel="Decoded from your key">{keyer.decoded}</Display>
+          <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} narrow={!isWide} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
             <button style={S.btn} onClick={() => {
@@ -3546,7 +4120,17 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           </div>
           {sendResult && (
             <div style={{ marginTop: 12 }}>
-              <Score pct={sendResult.score} />
+              {/* A null score means there was nothing to require on this step —
+                  render the stated non-scored notice, never a "0%" the operator
+                  could not have avoided. (aria-hidden: the resultLive region
+                  announces it, same as <Score> does for a real grade.) */}
+              {sendResult.score === null ? (
+                <p aria-hidden="true" style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", margin: "10px 0 0", lineHeight: 1.55 }}>
+                  NOT SCORED — we can't grade this over until your callsign is set. Add it in Settings — answering a CQ means sending your call.
+                </p>
+              ) : (
+                <Score pct={sendResult.score} />
+              )}
               <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8125rem", marginTop: 6 }}>
                 {sendResult.need.map((m) => (
                   <span key={m} style={{ marginRight: 12, color: sendResult.hits.includes(m) ? "#8FCB9B" : "#E07A5F" }}>
@@ -3577,6 +4161,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
                 clearTimeout(qsoPauseTimer.current); qsoPauseTimer.current = null;
                 clearTimeout(qsoAdvanceTimer.current); qsoAdvanceTimer.current = null;
                 qsoAutoGradeFired.current = false;
+                setArmed(false);
                 setQso(null); keyer.clear();
               }}
             >✕ ABANDON CONTACT / back to setup</button>
@@ -4033,40 +4618,72 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-        <span style={S.label}>Lesson {lesson} of {maxLesson}</span>
-        <span style={{ display: "flex", gap: 6 }}>
-          <button aria-label="Previous lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: "0.8125rem" }} disabled={lesson <= 1}
-            onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
-          <button aria-label="Next lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: "0.8125rem" }} disabled={lesson >= maxLesson}
-            onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
-        </span>
+      {/* Lesson selector — VISUAL harmonization with KEY's fused stepper row
+          ([◀] [ value ] [▶], docs/design-compact-selectors.md §4.1) so a learner
+          moving between tabs doesn't meet a foreign-looking control. The previous
+          form was two separate rows (a "Lesson N of M" caption with two ~28px
+          arrows, then a labelled jump input); they now compose into one fused row
+          with the same chrome, spacing, typography and 44px touch targets as KEY.
+
+          Deliberately NOT a CompactSelect: 40 Koch lessons in a disclosure panel
+          would be worse than typing the number, and Travis ratified keeping the
+          numeric jump. So the centre of the row is the SAME number input as
+          before — same "Jump to lesson" accessible name, same [1, maxLesson]
+          clamp, same setHistory([]) reset — restyled to the CompactSelect
+          trigger's recipe: S.btn ground + control border, minHeight 44, amber
+          value at weight 600, and a dim right-hand "of N" occupying the slot the
+          trigger's caret sits in. "of N" is aria-hidden because the input already
+          exposes the range programmatically via min/max (a spinbutton announces
+          valuemin/valuemax/valuenow); a visible duplicate would double-announce.
+          The arrows keep their aria-labels and end-clamping and grow to 44px. */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+        <button aria-label="Previous lesson"
+          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+          disabled={lesson <= 1}
+          onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Lesson</div>
+          <div style={{
+            ...S.btn, cursor: "default",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            width: "100%", minWidth: 0, minHeight: 44, padding: "10px 14px", boxSizing: "border-box",
+          }}>
+            <input
+              type="number"
+              aria-label="Jump to lesson"
+              className="wr-lesson-input"
+              min={1}
+              max={maxLesson}
+              value={lesson}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
+                setLesson(v);
+                setHistory([]);
+              }}
+              style={{
+                background: "transparent", border: "none", padding: 0,
+                color: S.text.amber, fontWeight: 600, fontSize: "0.8125rem",
+                fontFamily: "ui-monospace, monospace",
+                width: "100%", minWidth: 0,
+              }}
+            />
+            <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0, fontSize: "0.8125rem", fontFamily: "ui-monospace, monospace" }}>
+              of {maxLesson}
+            </span>
+          </div>
+        </div>
+        <button aria-label="Next lesson"
+          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+          disabled={lesson >= maxLesson}
+          onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
       </div>
 
-      {/* C2: jump-to-lesson input + skip-ahead affordance.
-          Clearing history on jump mirrors what the arrows do — no special case.
-          Clamped to [1, maxLesson] so an out-of-range value is silently
-          corrected rather than blowing up downstream. The gentle note about
-          Koch method is shown on any jump > 1 step to set honest expectations
-          without blocking the user (product decision: note, not confirm). */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <span style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", flex: 1 }}>
-          Already know some? Skip ahead:
-        </span>
-        <input
-          type="number"
-          aria-label="Jump to lesson"
-          min={1}
-          max={maxLesson}
-          value={lesson}
-          onChange={(e) => {
-            const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
-            setLesson(v);
-            setHistory([]);
-          }}
-          style={{ ...S.input, width: 62, padding: "6px 10px", fontSize: "0.875rem", textTransform: "none", letterSpacing: 0 }}
-        />
-      </div>
+      {/* Skip-ahead affordance. The jump input moved into the fused row above, so
+          this line now points at it rather than sitting beside it. The Koch note
+          below it is unchanged — honest expectations without blocking the user. */}
+      <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", margin: "0 0 8px", lineHeight: 1.5 }}>
+        Already know some? Type a lesson number above to skip ahead.
+      </p>
       <p style={{ color: "#8A929C", fontSize: "0.6875rem", fontFamily: "system-ui, sans-serif", margin: "0 0 10px", lineHeight: 1.5 }}>
         The Koch method assumes you've mastered earlier characters — each lesson builds on the ones before it.
       </p>
@@ -4449,11 +5066,21 @@ function ProgressView({ progress }) {
                       {fmtDate(r.t) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(r.t)}</span>}
                     </span>
                   </div>
-                  {/* M4: Tag chips — color + text word = non-color cue always present */}
+                  {/* M4: Tag chips — color + text word = non-color cue always present.
+                      A chip appears ONLY when the session actually measured that thing
+                      (verdict non-null). A drill with no word gaps — single characters,
+                      callsigns — must not report "words: good" for spacing it never
+                      sent. Records written before schema v2 have their ambiguous "good"
+                      demoted to null by migrateProgress, so history is not retro-labelled
+                      as measured either. */}
                   <div style={{ display: "flex", gap: 12, marginTop: 3, flexWrap: "wrap" }}>
-                    <Tag verdict={r.letterVerdict}>letters: {r.letterVerdict}</Tag>
-                    <Tag verdict={r.wordVerdict}>words: {r.wordVerdict}</Tag>
-                    {r.weightingVerdict && r.weightingVerdict !== "good" && (
+                    {r.letterVerdict && (
+                      <Tag verdict={r.letterVerdict}>letters: {r.letterVerdict}</Tag>
+                    )}
+                    {r.wordVerdict && (
+                      <Tag verdict={r.wordVerdict}>words: {r.wordVerdict}</Tag>
+                    )}
+                    {r.weightingVerdict && (
                       <Tag verdict={r.weightingVerdict}>weighting: {r.weightingVerdict}</Tag>
                     )}
                   </div>
@@ -4466,18 +5093,28 @@ function ProgressView({ progress }) {
 
       {/* ---- COPY section ---- */}
       <div style={S.panel}>
-        <div style={{ ...S.label, marginBottom: 10 }}>COPY — Accuracy by rung</div>
+        <div style={{ ...S.label, marginBottom: 10 }}>COPY — Accuracy by rung and conditions</div>
         {copyGroups.length === 0 ? (
           <p style={{ color: "#8A929C", fontSize: "0.8125rem", fontFamily: "system-ui, sans-serif", margin: 0, lineHeight: 1.6 }}>
             No COPY sessions yet — pick a level and CHECK a target to start tracking your accuracy.
           </p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* One row per (rung, conditions) pair — see copyTrend(). The conditions
+                are spelled out beside the rung so a REAL LIFE run reads as a harder
+                task, not as the operator getting worse. */}
             {copyGroups.map((g) => (
-              <div key={g.source} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
+              <div key={`${g.source}/${g.conditions}`} style={{ borderBottom: "1px solid #2E343C", paddingBottom: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>{g.source}</span>
-                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C" }}>
+                  <span style={{ fontFamily: "ui-monospace, monospace", color: "#F2A93B", fontSize: "0.875rem" }}>
+                    {g.source}
+                    <span style={{ color: S.text.dim, fontSize: "0.75rem" }}> · {g.conditionsLabel}</span>
+                  </span>
+                  {/* nowrap: at 360px the longest header ("wordswide · conditions
+                      not recorded") squeezes this column until "last" breaks onto
+                      its own line. Measured: the header wraps instead, and the row
+                      still fits with no overlap and no horizontal overflow. */}
+                  <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.75rem", color: "#8A929C", whiteSpace: "nowrap" }}>
                     last {g.lastPct}%
                     {fmtDate(g.lastT) && <span style={{ marginLeft: 6, color: S.text.dim }}>{fmtDate(g.lastT)}</span>}
                   </span>
@@ -4485,7 +5122,7 @@ function ProgressView({ progress }) {
                 <BarTrend
                   variant="accuracy"
                   values={g.recent}
-                  ariaLabel={accuracyAriaLabel(`${g.source} copy accuracy`, g.recent)}
+                  ariaLabel={accuracyAriaLabel(`${g.source} copy accuracy, ${g.conditionsLabel}`, g.recent)}
                 />
               </div>
             ))}
@@ -4564,6 +5201,22 @@ function ProgressView({ progress }) {
 // tap the gear again — that's still discoverable because the gear is right there).
 function Settings({ settings, setSettings, onClose }) {
   const set = (k) => (v) => setSettings((s) => ({ ...s, [k]: v, ...(k === "charWpm" && s.effWpm > v ? { effWpm: v } : {}) }));
+  // ONE useId() for every generated id in this panel. Two branches each added their
+  // own `const uid = useId()` at this line; keeping both declarations is a
+  // SyntaxError, not a test failure, so this is a build-break the suite cannot warn
+  // about. One call, both id sets.
+  //
+  // useId rather than hard-coded strings so uniqueness doesn't depend on the current
+  // mount-exclusivity invariant (the two render sites gate on `showSettings &&
+  // !isWide` and `isWide && showSettings`, so only one is ever live). A future
+  // refactor that mounts Settings twice would otherwise emit duplicate ids and
+  // silently point every label at the first panel's controls.
+  const uid = useId();
+  // "Your station" text inputs — real <label htmlFor> associations.
+  const callId = `${uid}-mycall`, nameId = `${uid}-myname`, qthId = `${uid}-myqth`;
+  // Caption/gloss text naming the RX-filter group and the cut-numbers toggle.
+  const rxGroupLabelId = `${uid}-rxfilter`;
+  const cutLabelId = `${uid}-cut`, cutGlossId = `${uid}-cutgloss`, cutBtnId = `${uid}-cutbtn`;
   return (
     <div style={S.panel}>
       {/* Close control — only shown on wide where Settings is in the right rail.
@@ -4583,7 +5236,11 @@ function Settings({ settings, setSettings, onClose }) {
           LISTENING speeds affect how the app plays Morse for you to copy.
           SENDING speed is your target when keying — only relevant in the KEY tab. */}
       {/* M3: normalize to plain S.label — consistency over 1px size drift */}
-      <div style={{ ...S.label, marginBottom: 6 }}>LISTENING SPEED</div>
+      {/* Real headings so a screen-reader user can jump between the three Settings
+          sections instead of arrowing through every control. S.head neutralises the
+          UA heading defaults (bold, 1.5em, block margins) so the rendered box is
+          identical to the <div> these were — see the S.head comment. */}
+      <h2 style={{ ...S.head, marginBottom: 6 }}>LISTENING SPEED</h2>
       <Slider label="Character speed" value={settings.charWpm} min={10} max={40} step={1} suffix=" wpm" onChange={set("charWpm")} />
       <Slider label="Effective speed (Farnsworth)" value={settings.effWpm} min={4} max={settings.charWpm} step={1} suffix=" wpm" onChange={set("effWpm")} />
       {/* C3: Farnsworth gloss at point of use — the deeper paragraph below covers
@@ -4593,12 +5250,19 @@ function Settings({ settings, setSettings, onClose }) {
       </p>
 
       {/* M3: normalize to plain S.label */}
-      <div style={{ ...S.label, marginBottom: 6 }}>SENDING SPEED</div>
+      <h2 style={{ ...S.head, marginBottom: 6 }}>SENDING SPEED</h2>
       <Slider label="Your keying speed" value={settings.keyWpm} min={8} max={40} step={1} suffix=" wpm" onChange={set("keyWpm")} />
       <Slider label="Sidetone" value={settings.freq} min={400} max={900} step={10} suffix=" Hz" onChange={set("freq")} />
       <div style={{ marginBottom: 14 }}>
-        <div style={{ ...S.label, marginBottom: 6 }}>RX filter (band noise voicing)</div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div id={rxGroupLabelId} style={{ ...S.label, marginBottom: 6 }}>RX filter (band noise voicing)</div>
+        {/* role="group" + aria-labelledby ties the three buttons to their caption.
+            Without it AT announces "WIDE, toggle button, not pressed" with no clue
+            what is being filtered. The buttons stay aria-pressed toggles rather than
+            becoming a radiogroup: that would change the keyboard contract (roving
+            tabindex, arrow-key selection) and this app's established pattern for an
+            exclusive set of toggles is aria-pressed. Cost, stated plainly: a group
+            conveys "these belong together", not "exactly one is on". */}
+        <div role="group" aria-labelledby={rxGroupLabelId} style={{ display: "flex", gap: 6 }}>
           {[["wide", "WIDE"], ["cw", "CW 500"], ["apf", "APF"]].map(([v, l]) => (
             <button key={v} aria-pressed={settings.rxFilter === v} onClick={() => setSettings((s) => ({ ...s, rxFilter: v }))}
               style={{ ...S.btn, flex: 1, padding: "7px 4px", fontSize: "0.6875rem", ...(settings.rxFilter === v ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
@@ -4610,30 +5274,34 @@ function Settings({ settings, setSettings, onClose }) {
           How real-life band noise sounds. WIDE is open SSB-width hiss (2.4 kHz). CW 500 is a 500 Hz passband centered on your sidetone — the standard CW filter on most rigs. APF is a narrow ~60 Hz audio peak, the razor-filter sound dedicated CW ops run when digging signals out of the noise. AGC is always on — noise ducks under signals and swells back in the gaps.
         </div>
       </div>
-      <div style={{ ...S.label, color: "#F2A93B", marginTop: 4, marginBottom: 8 }}>Your station</div>
+      <h2 style={{ ...S.head, color: "#F2A93B", marginTop: 4, marginBottom: 8 }}>Your station</h2>
       <div style={{ fontSize: "0.6875rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginBottom: 10, lineHeight: 1.5 }}>
         These start as an example (W1AW is a well-known example callsign). Set them to your own call, name, and location — they personalize your practice contacts and are saved automatically.
       </div>
       <div>
-        <div style={{ ...S.label, marginBottom: 4 }}>Your callsign</div>
+        {/* display:"block" preserves the geometry the caption had as a <div>. A
+            <label> defaults to display:inline, whose vertical margins don't apply —
+            so without this the caption loses its bottom margin and the field
+            reflows. Same for the two captions below. */}
+        <label htmlFor={callId} style={{ ...S.label, display: "block", marginBottom: 4 }}>Your callsign</label>
         {/* autoCapitalize="characters": on mobile soft keyboards, capitalise every letter.
             Harmless on desktop. Callsign always uppercases via textTransform anyway,
             but autoCapitalize keeps the mobile keyboard in CAPS mode — one fewer tap. */}
         {/* M1: 0.9375rem → S.type.body (0.875rem) — Settings inputs match other buttons */}
-        <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myCall}
+        <input id={callId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myCall}
           autoCapitalize="characters" autoCorrect="off" spellCheck={false}
           onChange={(e) => setSettings((s) => ({ ...s, myCall: e.target.value.toUpperCase() }))} />
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ ...S.label, marginBottom: 4 }}>Your name</div>
-          <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myName}
+          <label htmlFor={nameId} style={{ ...S.label, display: "block", marginBottom: 4 }}>Your name</label>
+          <input id={nameId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myName}
             autoCapitalize="words" autoCorrect="off" spellCheck={false}
             onChange={(e) => setSettings((s) => ({ ...s, myName: e.target.value.toUpperCase() }))} />
         </div>
         <div style={{ flex: 1.4 }}>
-          <div style={{ ...S.label, marginBottom: 4 }}>Your QTH</div>
-          <input style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myQth}
+          <label htmlFor={qthId} style={{ ...S.label, display: "block", marginBottom: 4 }}>Your QTH</label>
+          <input id={qthId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myQth}
             autoCapitalize="words" autoCorrect="off" spellCheck={false}
             onChange={(e) => setSettings((s) => ({ ...s, myQth: e.target.value.toUpperCase() }))} />
         </div>
@@ -4643,12 +5311,26 @@ function Settings({ settings, setSettings, onClose }) {
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 14 }}>
         <div>
-          <div style={S.label}>Cut numbers (contest style)</div>
-          <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+          <div id={cutLabelId} style={S.label}>Cut numbers (contest style)</div>
+          <div id={cutGlossId} style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
             599 → 5NN, 0 → T in QSO exchanges
           </div>
         </div>
+        {/* The button's own text is its whole accessible name today ("5NN ON" / "599
+            OFF"), so AT hears the state and never the purpose. aria-labelledby names
+            the caption FIRST and then self-references the button, giving
+            "Cut numbers (contest style) 5NN ON".
+            Why the self-reference and not the caption alone: the caption alone would
+            drop "5NN ON" out of the accessible name while it is still the visible text
+            on the control, which is a WCAG 2.5.3 (label-in-name) failure — a speech-input
+            user says what they see. Keeping the visible text in the name means the state
+            is announced twice (name + aria-pressed), which is redundant but harmless;
+            removing that redundancy properly needs state-free visible text, i.e. a
+            visual change, which is out of scope here. */}
         <button
+          id={cutBtnId}
+          aria-labelledby={`${cutLabelId} ${cutBtnId}`}
+          aria-describedby={cutGlossId}
           aria-pressed={settings.cutNumbers}
           onClick={() => setSettings((s) => ({ ...s, cutNumbers: !s.cutNumbers }))}
           style={{ ...S.btn, padding: "8px 14px", ...(settings.cutNumbers ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: "#8A929C" }) }}>
@@ -4925,8 +5607,34 @@ export default function CWTrainer() {
     );
   }
 
+  // Two separate load-bearing declarations on the app root.  Neither is decoration.
+  //
+  // 1. boxSizing: "border-box".  This app has no global box-sizing reset, so under
+  //    the browser default content-box the 16px top + 60px bottom padding is ADDED
+  //    to the viewport-height minimum.  The page height becomes
+  //        max(100svh, content) + 76      instead of      max(100svh, content + 76)
+  //    The two are ARITHMETICALLY IDENTICAL once content already exceeds the
+  //    viewport — so this is a 76px FLOOR under the page height, not a 76px tax on
+  //    every screen.  It only moves screens whose content sits at or within 76px of
+  //    the viewport.  Measured 2026-07-21 with a within-cell control: 3 of 16
+  //    no-scroll-contract cells moved, and all eight phone-portrait cells did not.
+  //    Its real value is therefore MEASUREMENT-BASELINE INTEGRITY: until this fix,
+  //    every layout budget computed from this root was being taken against a 76px
+  //    artifact, so "we are 40px over" could mean "we are 36px under."  Do not
+  //    re-describe it as a per-screen tax; the control disproved that.
+  //
+  // 2. minHeight: "100svh", not "100vh".  Per CSS Values 4, `vh` is defined as
+  //    `lvh` — the LARGE viewport, i.e. sized as if any dynamically retracting UA
+  //    chrome were already retracted.  In a mobile BROWSER (the phone-preview path
+  //    Travis reads the app on) that makes 100vh taller than what is actually
+  //    visible, an overflow generator entirely independent of the box model above.
+  //    `svh` is the SMALL viewport — chrome assumed present — so it can never
+  //    exceed the visible area.  In Electron and Capacitor there is no dynamic UA
+  //    chrome at all, so svh == lvh == vh and this is a measured no-op there.
+  //
+  // Both guarded by src/test/root-box-model.dom.test.jsx.
   return (
-    <div style={{ minHeight: "100vh", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
+    <div style={{ minHeight: "100svh", boxSizing: "border-box", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
       {/*
         The <style> block is the only injected CSS in the app — established
         precedent for keyframes and focus rings. We extend it with two layout
@@ -4954,8 +5662,13 @@ export default function CWTrainer() {
 
         * { -webkit-tap-highlight-color: transparent; }
         button { outline: none; }
-        button:focus { outline: none; }
-        button:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
+        button:focus, [role="button"]:focus { outline: none; }
+        /* [role="button"] is included deliberately: the key surfaces (TouchKey /
+           PaddleKey / BugKey zones) are focusable role="button" DIVS, so a
+           button-only selector left them with NO visible focus ring. That matters
+           now that arming break-in MOVES focus onto one of them — a keyboard user
+           would otherwise be sent somewhere invisible. */
+        button:focus-visible, [role="button"]:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
         input[type="text"]:focus, input:not([type]):focus { outline: 1px solid #F2A93B; }
         input[type="range"]:focus { outline: none; }
         button:active { transform: translateY(1px); }
@@ -5076,6 +5789,23 @@ export default function CWTrainer() {
         }
         .wr-select-pulse { animation: wrSelectPulse 900ms ease-out; }
         @media (prefers-reduced-motion: reduce) { .wr-select-pulse { animation: none !important; } }
+
+        /*
+          LEARN's lesson-jump input, harmonized with the CompactSelect trigger
+          (docs/design-compact-selectors.md §4.6). It sits INSIDE a trigger-styled
+          box, so two things need CSS that inline styles can't express:
+          1. Hide the native number spinners — they would overlap the "of N"
+             suffix and read as foreign chrome next to the app's own controls.
+             Keyboard ↑/↓ still step the value; the ← → buttons remain the
+             primary stepping affordance.
+          2. Give it the house focus ring. The global button:focus-visible rule
+             doesn't cover inputs, and the input has no border of its own, so
+             without this the keyboard focus cue would be the browser default.
+        */
+        .wr-lesson-input::-webkit-outer-spin-button,
+        .wr-lesson-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .wr-lesson-input { -moz-appearance: textfield; appearance: textfield; }
+        .wr-lesson-input:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
       `}</style>
 
       {/*
@@ -5267,8 +5997,21 @@ export default function CWTrainer() {
           <div style={{ fontFamily: "ui-monospace, monospace", color: S.text.dim, fontSize: "0.6875rem", letterSpacing: 3 }}>
             ·−− ·−·&nbsp;&nbsp;WISCO RADIO LABS
           </div>
+          {/* Version rides the EXISTING tagline line — no new row, wordmark untouched.
+              It sits at S.text.dim rather than the tagline's faint: H2's rule makes
+              faint decorative-only, and a version string someone is meant to read and
+              transcribe into a bug report is not decorative. The visible token is
+              aria-hidden with an sr-only twin so AT says "Version 2.4.0" instead of
+              spelling out "vee two point four point zero". */}
           <div style={{ fontFamily: "system-ui, sans-serif", color: S.text.faint, fontSize: S.type.micro, letterSpacing: 1, marginTop: 4 }}>
             made in the Driftless
+            <span aria-hidden="true"> · </span>
+            <span aria-hidden="true" style={{ color: S.text.dim }}>
+              v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}
+            </span>
+            <span style={S.srOnly}>
+              Version {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}
+            </span>
           </div>
         </footer>
 
