@@ -3201,6 +3201,17 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     armAutoAdvance(pct, () => advance({ who: qso.dx, text: cur.text }));
   };
 
+  // The answer speed for "send slower", in ONE place. Keying QRS and pressing the
+  // 🐢 SLOWER button are the same request — the button literally calls the same
+  // playDx() the QRS fill does — so they must give the same speed. They had already
+  // drifted: max(4, eff-4) at the QRS branch, max(5, eff-3) at the button, so the
+  // two answers differed by a word per minute and the floors diverged below 9 wpm.
+  // A shared function rather than two agreeing literals: agreement that lives in one
+  // expression cannot drift again, and there is no DOM-observable way to test it
+  // (the eff is consumed inside the audio player, which is mocked at the
+  // AudioContext level in this harness).
+  const qrsEffWpm = () => Math.max(4, settings.effWpm - 4);
+
   // Break-in: interpret what the user keys during a DX transmission as
   // on-air fill requests — ? / AGN = repeat, QRS = slower, partial call + ? = call fill.
   useEffect(() => {
@@ -3223,7 +3234,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
     if (sent === "?" || sent === "AGN" || sent === "AGN?") {
       respond(cur.text, "? — REPEATING");
     } else if (sent === "QRS" || sent === "QRS?") {
-      respond(cur.text, "QRS — SLOWING DOWN", Math.max(4, settings.effWpm - 4));
+      respond(cur.text, "QRS — SLOWING DOWN", qrsEffWpm());
     } else if (sent.endsWith("?")) {
       const part = sent.slice(0, -1);
       const flatCall = dxSigned.replace("/", "");
@@ -3611,7 +3622,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               break-in mode shows the key and what you need while keying — your
               decode, the fill tokens, the station's answer. Everything that gets the
               over back for you WITHOUT asking — this hint, the noise trim, the
-              REPLAY/SLOWER transport, the copy field — steps aside, one Esc away.
+              REPLAY/SLOWER transport, the copy field — steps aside, one tap on the
+              trigger row away (or Esc, on a keyboard). Say the TAP first: this app is
+              headed for phones, where there is no Esc key at all, so "one Esc away"
+              is not a mitigation for the operator this panel is being compacted for.
               Every row left above the key also pushes the key further from the
               operator's thumb; this block measures 68px. */}
           {difficulty !== "real" && !armed && (
@@ -3644,7 +3658,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           {/* Same !armed rule as the "Listen for" hint above: band noise sets how
               hard the copying is, so it steps aside with the copying. The noise
               itself is unaffected (it is player state, not this control's), and the
-              slider is one Esc away. Worth 68px measured
+              slider comes back on a tap of the trigger row (or Esc). Worth 68px measured
               (armed key surface on `real`: 773 -> 705), which is what pays for the
               disclosure trigger on the one difficulty that has no "Listen for" hint
               to give up. Same 68px as the hint block, by coincidence. */}
@@ -3665,14 +3679,18 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               disclosure removed for the key itself.
               STOP goes with them: a lone STOP on an otherwise empty row reads as a
               leftover. DISCLOSED FRICTION — after a fill the station replays while
-              you are still armed, and cutting that replay short now needs Esc first.
-              Judged acceptable: listening to the repeat you just asked for is the
-              expected behaviour, and Esc is the same key that returns you to the copy
-              field anyway. Worth 52px measured, on the app's tightest surface. */}
+              you are still armed, and cutting that replay short now means leaving
+              break-in first: tap the trigger row (or press Esc). Judged acceptable:
+              listening to the repeat you just asked for is the expected behaviour,
+              and that tap is the same one that returns you to the copy field anyway.
+              Worth 96px measured on narrow, where the row wraps to two lines, and
+              50px at isWide — on the app's tightest surface. */}
           {!armed && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
               <button style={S.btn} onClick={() => playDx(cur.text)}>↻ REPLAY</button>
-              <button style={S.btn} onClick={() => playDx(cur.text, { eff: Math.max(5, settings.effWpm - 3) })}>🐢 SLOWER</button>
+              {/* qrsEffWpm(): the same expression the QRS fill uses — see its
+                  definition for why they are one function and not two literals. */}
+              <button style={S.btn} onClick={() => playDx(cur.text, { eff: qrsEffWpm() })}>🐢 SLOWER</button>
               <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
             </div>
           )}

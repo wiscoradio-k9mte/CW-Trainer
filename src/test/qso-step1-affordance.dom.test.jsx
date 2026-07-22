@@ -268,11 +268,17 @@ describe("M1 — break-in collapses behind one disclosure", () => {
 //
 //   NARROW, 375x667 and 390x844 (identical to each other):
 //                       main    branch tip    rework    +M4
-//   normal (default)     730         916        705     609   (fits 667)
-//   real life            749         916        705     609   (fits 667)
+//   normal (default)     730         916        705     609
+//   real life            749         916        705     609
 //   easy                 849         999        824     728
-//   NARROW, 360x780 — easy ONLY differs here, +15px, see WIDTH note below:
+//   NARROW, 360x780 — easy ONLY differs here, +15px, see the WRAP note below:
 //   easy                  —           —         839     743
+//
+//   WHAT FITS, SCOPED BY DIFFICULTY. A headline loses this and the distinction is
+//   the whole point: at the 375x667 GATE cell the armed key is inside the fold on
+//   NORMAL and REAL (609 <= 667, 58px spare) and is NOT on EASY (728 — still 61px
+//   past, improved from main's 849 but not fixed). Easy renders the live "Sending"
+//   readout, which normal and real never mount at all.
 //
 //   WIDE 1133x744 (isWide):
 //   normal               582         n/m         603     553   (-29 vs main)
@@ -292,15 +298,22 @@ describe("M1 — break-in collapses behind one disclosure", () => {
 //   its height follows the over. The compact decode readout is capped (maxHeight
 //   76 + scroll) and does not move. Flagged, out of scope here.
 //
-// WIDTH, NOT SEED — a correction to what this header said before. The delta re-gate
-// saw easy at 839 on one seed and attributed it to the draw. It reproduces
-// deterministically at 360x780 on seed 20260722: the narrower viewport wraps the
-// "<DX> is sending — <flavor> — step N of M" header one line further. Twelve seeds
-// at 390x844 (1, 2, 3, 5, 7, 11, 13, 20260722, 31337, 99991, 424242, 8675309) all
-// gave the same number, so seed sensitivity is unproven and width sensitivity is
-// measured. An earlier version of this comment said easy was "identical at all
-// three" narrow viewports — it had never been measured at 360x780. Quote the
-// viewport AND the seed with any easy-mode figure.
+// WRAP — WIDTH *AND* SEED, one mechanism. Easy's step heading is
+// "<DX> IS SENDING — <flavor> — STEP N OF M". Whenever it takes one more line, every
+// easy figure below it moves by +15px. TWO independent things push it over:
+//   * viewport WIDTH — 360x780 wraps where 375x667 and 390x844 do not (measured on
+//     seed 20260722: 743 vs 728 post-M4, 839 vs 824 pre-M4);
+//   * the PRNG SEED — a longer flavor/callsign draw wraps at any width. Measured
+//     here: seed 4242 reads 743 at 390x844, where seed 20260722 reads 728.
+// Both corrections in this comment's history were half right, which is the lesson.
+// I first recorded easy as "identical at all three narrow viewports" having measured
+// two. I then over-corrected to "WIDTH, NOT SEED" on the strength of twelve agreeing
+// seeds at 390x844 (1, 2, 3, 5, 7, 11, 13, 20260722, 31337, 99991, 424242, 8675309)
+// — but twelve agreeing seeds are absence of evidence, and ONE reproduced
+// counter-example (4242, two independent runs by the gate, re-run here) settles it.
+// Chase a variance to a deterministic cause, yes — but only rule out the
+// probabilistic one once you have actually searched for it.
+// Quote the viewport AND the seed with any easy-mode figure.
 //
 // The pre-rework branch read 844 at 390x844 and looked like a pass ONLY because
 // arming focuses the key surface and the browser auto-scrolled 72px first.
@@ -364,6 +377,19 @@ describe("REACH — what may sit above the key while break-in is armed", () => {
     expect(screen.getByRole("button", { name: /REPLAY/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /SLOWER/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /STOP/ })).toBeInTheDocument();
+
+    // MUTATIONS VERIFIED, each proving a DIFFERENT half of this test:
+    //   • suppression: ungate the row (`{!armed &&` -> `{(`) -> the three
+    //     queryByRole assertions above red with "expected document not to contain
+    //     element, found <button>".
+    //   • RESTORE: a one-way latch — `const [everArmed, setEverArmed]` set true by
+    //     an effect on `armed`, gating the row `{!armed && !everArmed && …}`. It is
+    //     correct before arming and correct while armed, and breaks ONLY on disarm.
+    //     Reds this test and NOTHING else, on the getByRole below the disarm click.
+    //     The obvious mutation for that half — latching setBreakIn so `armed` never
+    //     goes false — also reds seven sibling tests, so it proves nothing specific
+    //     to this guard. When a mutation is too broad, narrow it until it isolates
+    //     the line; do not rule on the broad one.
   });
 
   it("on 'real', the Band noise slider steps aside too — same rule, and it is what pays for the trigger row", async () => {
