@@ -250,17 +250,48 @@ describe("M1 — break-in collapses behind one disclosure", () => {
 // ---------------------------------------------------------------------------
 // REACH — the reach-the-key contract, expressed structurally.
 //
-// jsdom has no layout, so none of this can assert pixels. What it CAN pin is the
-// thing the pixels follow from: WHAT is rendered above the key surface while
-// break-in is armed. Every row above it pushes it further down the document.
+// jsdom has no layout, so none of this can assert pixels. What it CAN pin is one
+// thing the pixels follow from: the ORDER of four known landmarks around the key
+// surface while break-in is armed.
 //
-// Measured, headed Chromium, document-relative (rect.bottom + scrollY after
-// scrollTo(0,0)), realistic installed state, seeded QSO, 375x667 / 360x780 /
-// 390x844 — identical at all three:
+// THE LIMIT OF THESE TESTS, STATED SO NOBODY READS THEM AS A PIXEL GUARD:
+// they pin ORDER ONLY. The delta re-gate inserted 74px of brand-new content
+// directly above the key inside #qso-breakin-body and ALL 632 TESTS STAYED GREEN.
+// A new block, a margin change or a CSS reorder sails past them. The pixel
+// contract lives only in the headed harness (ops/uat-harness/cw-scroll-baseline.py)
+// and NOTHING RUNS IT IN CI. Touching the armed panel means re-measuring by hand.
+//
+// The table below is a RECORD OF A MEASUREMENT, not an invariant anything checks.
+// Headed Chromium, document-relative (rect.bottom + scrollY after scrollTo(0,0)),
+// realistic installed state, QSO PRNG seed 20260722. Armed key-surface bottom:
+//
+//   NARROW — identical at 375x667 / 360x780 / 390x844:
 //                       main    branch tip    after rework
 //   normal (default)     730         916            705
 //   real life            749         916            705
-//   easy                 849         999            824
+//   easy                 849         999            824   (seed-DEPENDENT, below)
+//
+//   WIDE 1133x744 (isWide) — the branch is WORSE here, disclosed not fixed:
+//   normal               582         n/m            603   (+21 vs main)
+//   easy                 701         n/m            722   (+21 vs main)
+//   At isWide the "Listen for" hint and the noise slider live in the RAIL, so the
+//   !armed savings below do not apply and the disclosure row is pure added height.
+//   The pressable zones still clear the 744 fold by 22px on easy and 141px on
+//   normal, so it is not a failure — but on easy the key block's trailing keyboard
+//   hint line ends at 747, 3px under (main: 726). Flagged by the delta re-gate
+//   2026-07-22 and re-measured here on separately built bundles. My own first claim
+//   table wrote main as "—" at this cell, i.e. it reported an `after` with no
+//   `before` — the same shape as the difficulty gap, one axis over. Breakpoint is a
+//   state axis too.
+//
+// SEED SENSITIVITY: normal and real are seed-invariant. `easy` is NOT: the delta
+// re-gate measured 824 on five of its seeds and 839 on a sixth, where the
+// "<DX> is sending — <flavor> — step N of M" header wraps one extra line for a
+// longer flavor/callsign draw. I could not reproduce the 839 — twelve seeds here
+// (1, 2, 3, 5, 7, 11, 13, 20260722, 31337, 99991, 424242, 8675309) all gave 824 —
+// so the wrap is rare rather than absent, and the honest reading is that easy's
+// 390x844 margin is 5-20px, not 20px. Quote the seed with any easy-mode figure.
+//
 // The pre-rework branch read 844 at 390x844 and looked like a pass ONLY because
 // arming focuses the key surface and the browser auto-scrolled 72px first.
 // ---------------------------------------------------------------------------

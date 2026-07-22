@@ -1472,12 +1472,28 @@ function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, o
               only things above it are the decode readout (established elsewhere in
               this app: you read what you keyed directly above the key) — and the
               guidance prose, the fill confirmation and the token legend all sit
-              BELOW it. The fill status region alone measures 24px outer; the whole
-              rework (this reorder plus the copy-block swap above) took the armed key
-              surface from 916 to 705 document-relative, against main's 730 — headed
-              Chromium, realistic installed state, identical at 375x667 / 360x780 /
-              390x844. The numbers are in the REACH block of
-              src/test/qso-step1-affordance.dom.test.jsx.
+              BELOW it.
+
+              WHAT ACTUALLY GUARDS THIS, AND WHAT DOES NOT — read before trusting it:
+                * The REACH tests in src/test/qso-step1-affordance.dom.test.jsx pin
+                  the ORDER of four known landmarks (decode above the key; guidance,
+                  fill status and legend below it) and nothing else. jsdom has no
+                  layout, so they cannot hold a pixel contract. Proven, not assumed:
+                  the delta re-gate inserted 74px of brand-new content directly above
+                  the key inside this div and all 632 tests stayed GREEN. A new
+                  block, a margin change or a CSS reorder passes them.
+                * The pixel contract lives ONLY in the headed harness
+                  (ops/uat-harness/cw-scroll-baseline.py) and is NOT enforced by CI.
+                  Nothing runs it automatically. If you add anything to this div,
+                  re-measure by hand.
+
+              The numbers below are a RECORD OF A MEASUREMENT, not an invariant
+              anything checks. Headed Chromium, realistic installed state,
+              document-relative (rect.bottom + scrollY after scrollTo(0,0)), seeded
+              QSO PRNG (seed 20260722): this rework took the armed key-surface bottom
+              from 916 to 705 against main's 730, identical at 375x667 / 360x780 /
+              390x844. The fill status region alone measures 24px outer.
+
               data-testid on the decode: a layout-neutral hook so the
               keyboard-reachability tests read the decode OUTPUT directly instead of
               walking siblings. */}
