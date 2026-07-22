@@ -1119,26 +1119,41 @@ const S = {
 
 // Display — the recessed code readout.
 //
-// `compact` (narrow) shrinks the type and CAPS the height with an internal
-// scroll so a long target scrolls INSIDE the readout instead of pushing the key
-// surface down the page — the key's vertical position becomes independent of
-// target length. Two visible lines (maxHeight 76).
+// TWO INDEPENDENT PROPS. They were briefly fused, and the fusion shipped a
+// defect (see below), so keep them separate:
 //
-// `tail` (narrow decoded readouts) is the ONE-line variant: same cap mechanism,
-// maxHeight 40, and it keeps the NEWEST characters in view. Reading material
-// (the drill target, the suggested QSO script) gets `compact`; your own live
-// output gets `tail`. Without the tail-scroll the cap would be a regression —
-// you would watch the oldest characters while keying new ones.
+//   `compact` — HOW TALL. On narrow it shrinks the type and CAPS the height with
+//     an internal scroll, so long content scrolls INSIDE the readout instead of
+//     pushing the key surface down the page. `compact` alone is the two-line cap
+//     (maxHeight 76); `tail` alone is the one-line cap (maxHeight 40).
+//
+//   `tail` — WHICH END YOU SEE. Keeps the NEWEST characters in view. Required by
+//     any readout whose content GROWS while the operator is watching it, because
+//     a cap without it means you stare at the oldest characters while newer ones
+//     are clipped out of sight.
+//
+// They compose: `compact tail` is a two-line cap that still follows the newest
+// characters. That combination exists because EASY's live "Sending" transcription
+// needs both — it is audio-synchronised and growing (so it needs `tail`) but it
+// is also what the learner is reading along with (so it earns two lines, not
+// one). Capping it with `compact` alone left scrollTop pinned at 0 with 44px of
+// the newest characters clipped below the fold of the box.
+//
+// Static reading material (the drill target, the suggested QSO script) takes
+// `compact` alone: it does not grow, so there is no newest end to follow.
 //
 // Both caps are on the CONTENT box (S.display sets no boxSizing), so the rendered
-// heights are cap + 16 padding + 2 border: compact 94 max, tail 58 fixed.
+// heights are cap + 16 padding + 2 border: compact 94 max, tail-only 58 fixed.
 //
 // Default (no compact, no tail) is byte-identical to the shipped readout.
-function Display({ children, cursor, compact, tail, ariaLabel }) {
-  const style = tail
-    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem", letterSpacing: 2, maxHeight: 40, overflowY: "auto" }
-    : compact
-    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem", letterSpacing: 2, maxHeight: 76, overflowY: "auto" }
+// Exported for direct unit test (same reason CompactSelect is): the tail-scroll
+// is an effect on a ref, and jsdom has no layout, so the only way to prove it
+// runs is to mount the component alone with a stubbed scroll box.
+export function Display({ children, cursor, compact, tail, ariaLabel }) {
+  const capped = compact || tail;
+  const style = capped
+    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem",
+        letterSpacing: 2, maxHeight: compact ? 76 : 40, overflowY: "auto" }
     : S.display;
   const boxRef = useRef(null);
   // Jump to the tail on every update. A direct scrollTop assignment is instant
@@ -3523,18 +3538,26 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             </div>
           )}
 
-          {/* EASY's live letter-by-letter readout. `compact` on narrow (M5) — it
-              is reading material, so it keeps two lines like the drill target and
-              the suggested script, rather than the one-line `tail` its own live
-              output gets. It was the LAST uncapped readout above a key on any
-              keying surface: measured at 375x667 the stuff probe moved the pads
-              +496px through this one box, so the key's position on an easy copy
-              step was content-DEPENDENT. (The design's inventory named the
-              break-in decode as the only uncapped one; it never measured easy.) */}
+          {/* EASY's live letter-by-letter readout — `compact tail` on narrow (M5).
+              It was the LAST uncapped readout above a key on any keying surface:
+              measured at 375x667 the stuff probe moved the pads +496px through
+              this one box, so the key's position on an easy copy step was
+              content-DEPENDENT. (The design's inventory named the break-in decode
+              as the only uncapped one; it never measured easy.)
+
+              BOTH props, not one. `compact` gives it two lines rather than the
+              one a pure `tail` readout gets, because the learner reads along here.
+              `tail` is what makes the cap honest: this text GROWS in step with the
+              audio, so a cap alone leaves scrollTop at 0 and the learner watching
+              the oldest characters while the DX sends the newest. Measured with a
+              real 77-character exchange line and `compact` only: clientHeight 92,
+              scrollHeight 136, scrollTop 0 — 44px of the newest copy clipped out
+              of view with no way to reach it while the audio ran. */}
           {difficulty === "easy" && countdown === null && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
-              <Display cursor={player.playing} compact={!isWide}>{liveText}</Display>
+              <Display cursor={player.playing} compact={!isWide} tail={!isWide}
+                ariaLabel="Sending">{liveText}</Display>
             </div>
           )}
 

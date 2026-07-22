@@ -21,7 +21,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import CWTrainer from "../../wr-cw-trainer.jsx";
+import CWTrainer, { Display } from "../../wr-cw-trainer.jsx";
 import { chooseOption } from "./helpers.jsx";
 
 // Save the wide-default mock the shared setup installed, override it with a
@@ -330,6 +330,53 @@ describe("narrow (mobile) layout — QSO send step", () => {
 // key's position was content-DEPENDENT — stuffing it moved the pads 520px down
 // the page at 375x667. The cap is what makes this surface's geometry stable at
 // all, so it gets its own assertion rather than riding on the send step's.
+//
+// THE ACCEPTANCE CELL FOR THIS SURFACE — every axis named, because leaving one
+// unnamed is exactly what failed this branch's first gate. A criterion that says
+// only "375x667 clears the fold" is satisfiable by a lucky content draw:
+//
+//   viewport    375x667  (GATE tier — shortest real phone, binding HEIGHT cell)
+//   surface     QSO copy (DX) step
+//   step        step 3 of 5 — the Ragchew full exchange, the LONGEST DX text the
+//               builder produces. An unstated step makes a row unreproducible:
+//               step 1 reads ~18px lower than step 3 for the same build.
+//   difficulty  EASY — the axis that was missing. Easy renders an extra live
+//               "Sending" readout above the key, so it is the WORST cell on this
+//               surface, not the looser one it was assumed to be.
+//   armed       break-in ARMED. The key only exists in this state once the
+//               sibling's disclosure lands, and arming is what the operator does
+//               to reach it.
+//   content     the DX's REAL transmitted exchange line (~100 chars), let through
+//               at speed rather than an invented stuff string. In easy mode the
+//               worst case IS the ordinary case.
+//   seed        at least FIVE distinct PRNG seeds. The DX call/name/QTH draw
+//               moves the step header by one wrapped line = 15px, so one seed is
+//               reproducible, not representative.
+//
+// PASS = dit-pad bottom, measured document-relative
+// (rect.bottom + window.scrollY after scrollTo(0,0), scrollY recorded and 0 in
+// every row), below 667 on EVERY seed.
+//
+// Recorded 2026-07-22, three builds of the same cell (headed Chromium, realistic
+// installed state). "no-M4" is a counterfactual BUILD, not arithmetic: the
+// composed tree with the sibling's `!armed` gate on the transport row removed.
+//
+//   seed      main   no-M4   composed(with M4)
+//   20260722   955     666    614
+//   31337      955     666    614
+//   1          970     681    629
+//   4242       970     681    629
+//   99         970     681    629
+//   20260101   970     681    629
+//   777        970     681    629
+//
+// Worst margin 38px. The 15px step between seeds is one wrapped line in the step
+// header and is present in all three columns, so it is the DRAW, not the fix.
+// Suppressing the transport row while armed is worth a measured 52px, and it is
+// what carries this cell: without it five of these seven seeds are OVER the fold.
+//
+// NOTHING BELOW CHECKS ANY OF THAT. jsdom has no layout; these tests pin the cap
+// styles and the reach order and nothing else.
 describe("narrow (mobile) layout — QSO copy step break-in key", () => {
   const precedes = (a, b) =>
     Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -349,8 +396,18 @@ describe("narrow (mobile) layout — QSO copy step break-in key", () => {
   // transcription of what the DX is sending. It was UNCAPPED, and it is the
   // reason the easy copy step is the worst cell on this surface rather than the
   // "looser" one it was assumed to be — the stuff probe moved the pads +496px
-  // through this one box at 375x667. Two lines, not one: it is reading material.
-  it("caps the EASY live 'Sending' readout at two lines on narrow", async () => {
+  // through this one box at 375x667.
+  //
+  // It needs BOTH readout props, and the pair is asserted together because
+  // either one alone is a defect:
+  //   compact only — two lines, but scrollTop pinned at 0 while the text grows,
+  //     so the learner reads the OLDEST characters as the DX sends the newest
+  //     (measured live: clientHeight 92, scrollHeight 136, scrollTop 0).
+  //   tail only    — follows the newest, but drops to ONE line of reading
+  //     material on the one difficulty whose whole point is reading along.
+  // maxHeight 76 pins the first; the role="group" + name (which only the tail
+  // branch emits) pins the second.
+  it("gives the EASY live 'Sending' readout two lines AND tail semantics", async () => {
     const { user } = await qsoCopyStep({ difficulty: /EASY/i });
     // A DX step opens with the 5s "Get ready" countdown, which occupies this slot
     // until it expires. Wait it out on the REAL clock: the interval was scheduled
@@ -358,15 +415,40 @@ describe("narrow (mobile) layout — QSO copy step break-in key", () => {
     // it would just hang. One real 5s wait in one test is the honest cost.
     const label = await screen.findByText("Sending", {}, { timeout: 9000 });
     const readout = label.nextElementSibling;
-    expect(readout).not.toBeNull();
+    // queryByRole, not getByRole: a missing group must fail with a value diff
+    // rather than a thrown query error, so the mutation that removes `tail`
+    // reds by ASSERTION.
+    expect(screen.queryByRole("group", { name: "Sending" })).toBe(readout);
+    expect(readout.getAttribute("tabindex")).toBe("0");
     expect(readout.style.maxHeight).toBe("76px");
     expect(readout.style.overflowY).toBe("auto");
     expect(user).toBeTruthy();
   });
 
+  // The break-in key block is being reworked by a SIBLING branch at the same
+  // time (fix/qso-step1-keyboard-and-affordance), which collapses it behind a
+  // disclosure trigger and relabels the readout. These two guards are about the
+  // cap and the reach ORDER, not about which wording or disclosure state wins,
+  // so they reach the keying state through a helper that accepts either shape.
+  // The helper ASSERTS it arrived (the key surface exists), so it cannot go
+  // vacuous if the block disappears. Once both branches are on main only the
+  // disclosure shape exists and the `if (trigger)` fallback can go.
+  //
+  // The readout is then found by its ACCESSIBLE NAME rather than by walking from
+  // its label: the sibling wraps the readout in a test-hook div, so a
+  // nextElementSibling walk would silently measure the wrapper's empty style
+  // and pass. The name is emitted only by the tail variant, which is the thing
+  // under test anyway.
+  async function armBreakIn(user) {
+    const trigger = screen.queryByRole("button", { name: /BREAK.IN/i });
+    if (trigger) await user.click(trigger);
+    return screen.getByRole("button", { name: /Dit paddle/ });
+  }
+
   it("caps the break-in decode readout at one line on narrow", async () => {
-    await qsoCopyStep();
-    const readout = screen.getByText(/Break in with your key/).nextElementSibling;
+    const { user } = await qsoCopyStep();
+    await armBreakIn(user);
+    const readout = screen.queryByRole("group", { name: "Decoded from your key" });
     expect(readout).not.toBeNull();
     expect(readout.style.maxHeight).toBe("40px");
     expect(readout.style.overflowY).toBe("auto");
@@ -393,12 +475,71 @@ describe("narrow (mobile) layout — QSO copy step break-in key", () => {
   });
 
   it("puts the key-type and swap controls BELOW the break-in key on narrow", async () => {
-    await qsoCopyStep();
-    const key = screen.getByRole("button", { name: /Dit paddle/ });
+    const { user } = await qsoCopyStep();
+    const key = await armBreakIn(user);
     expect(precedes(key, screen.getByRole("button", { name: "PADDLE" }))).toBe(true);
     expect(
       precedes(key, screen.getByRole("button", { name: /Swap dit and dah paddles/ })),
     ).toBe(true);
-    expect(precedes(screen.getByText(/Break in with your key/), key)).toBe(true);
+    // The decode readout stays ABOVE the key — you read what you keyed directly
+    // above the pads. Pinning both directions stops a wholesale reorder passing.
+    expect(
+      precedes(screen.getByRole("group", { name: "Decoded from your key" }), key),
+    ).toBe(true);
+  });
+});
+
+// The readout component itself. Every cap above is only honest if the readout
+// that GROWS while you watch it also follows its newest end — and that is an
+// effect writing to a ref, which no app-level assertion can see. jsdom has no
+// layout, so scrollHeight is permanently 0 and scrollTop is a no-op setter;
+// stubbing both on the mounted node is what makes the effect's write observable.
+//
+// LIMIT, stated so nobody reads more into it: this proves the effect runs and
+// writes scrollHeight into scrollTop. It cannot prove the browser then paints
+// the newest characters — that is the headed measurement's job.
+describe("Display readout — height cap and tail behaviour", () => {
+  // Mount, then stub the scroll box, then re-render so the effect (no dep array,
+  // so it runs on every commit) writes into the stub. Each call gets its own
+  // container so a test may mount several variants without ambiguous queries.
+  function mountAndGrow(props) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const { rerender } = render(<Display {...props}>ABC</Display>, { container });
+    const el = container.firstElementChild;
+    let scrollTop = 0;
+    Object.defineProperty(el, "scrollHeight", { configurable: true, value: 480 });
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v) => { scrollTop = v; },
+    });
+    rerender(<Display {...props}>ABC DEF</Display>);
+    return { el, scrollTop: () => scrollTop };
+  }
+
+  it("scrolls a tail readout to its newest end as the text grows", () => {
+    const { scrollTop } = mountAndGrow({ tail: true, ariaLabel: "Sending" });
+    expect(scrollTop()).toBe(480);
+  });
+
+  it("leaves a non-tail readout at its top", () => {
+    const { scrollTop } = mountAndGrow({ compact: true });
+    expect(scrollTop()).toBe(0);
+  });
+
+  // The two props are independent: `compact` decides HOW TALL, `tail` decides
+  // WHICH END. Fusing them is what shipped the easy-Sending defect, so all three
+  // combinations are pinned.
+  it("keeps the height cap independent of the tail behaviour", () => {
+    const { el: tailOnly } = mountAndGrow({ tail: true, ariaLabel: "x" });
+    expect(tailOnly.style.maxHeight).toBe("40px");
+
+    const { el: compactOnly } = mountAndGrow({ compact: true });
+    expect(compactOnly.style.maxHeight).toBe("76px");
+
+    const { el: both, scrollTop } = mountAndGrow({ compact: true, tail: true, ariaLabel: "x" });
+    expect(both.style.maxHeight).toBe("76px");
+    expect(scrollTop()).toBe(480);
   });
 });
