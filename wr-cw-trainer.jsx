@@ -5454,8 +5454,34 @@ export default function CWTrainer() {
     );
   }
 
+  // Two separate load-bearing declarations on the app root.  Neither is decoration.
+  //
+  // 1. boxSizing: "border-box".  This app has no global box-sizing reset, so under
+  //    the browser default content-box the 16px top + 60px bottom padding is ADDED
+  //    to the viewport-height minimum.  The page height becomes
+  //        max(100svh, content) + 76      instead of      max(100svh, content + 76)
+  //    The two are ARITHMETICALLY IDENTICAL once content already exceeds the
+  //    viewport — so this is a 76px FLOOR under the page height, not a 76px tax on
+  //    every screen.  It only moves screens whose content sits at or within 76px of
+  //    the viewport.  Measured 2026-07-21 with a within-cell control: 3 of 16
+  //    no-scroll-contract cells moved, and all eight phone-portrait cells did not.
+  //    Its real value is therefore MEASUREMENT-BASELINE INTEGRITY: until this fix,
+  //    every layout budget computed from this root was being taken against a 76px
+  //    artifact, so "we are 40px over" could mean "we are 36px under."  Do not
+  //    re-describe it as a per-screen tax; the control disproved that.
+  //
+  // 2. minHeight: "100svh", not "100vh".  Per CSS Values 4, `vh` is defined as
+  //    `lvh` — the LARGE viewport, i.e. sized as if any dynamically retracting UA
+  //    chrome were already retracted.  In a mobile BROWSER (the phone-preview path
+  //    Travis reads the app on) that makes 100vh taller than what is actually
+  //    visible, an overflow generator entirely independent of the box model above.
+  //    `svh` is the SMALL viewport — chrome assumed present — so it can never
+  //    exceed the visible area.  In Electron and Capacitor there is no dynamic UA
+  //    chrome at all, so svh == lvh == vh and this is a measured no-op there.
+  //
+  // Both guarded by src/test/root-box-model.dom.test.jsx.
   return (
-    <div style={{ minHeight: "100vh", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
+    <div style={{ minHeight: "100svh", boxSizing: "border-box", background: S.ground.app, padding: "16px 12px 60px", color: S.text.body }}>
       {/*
         The <style> block is the only injected CSS in the app — established
         precedent for keyframes and focus rings. We extend it with two layout
