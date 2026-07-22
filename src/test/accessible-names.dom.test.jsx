@@ -16,8 +16,18 @@
 // The layout assertions matter as much as the ARIA ones: <label> and <h2> carry UA
 // default styles (inline display; bold weight and em-relative block margins) that
 // silently reflow a <div>-shaped caption. Each replacement neutralises those
-// explicitly, and each neutralisation is pinned below so a future tidy-up that
-// drops one fails here rather than in a screenshot nobody takes.
+// explicitly, and the neutralisations that jsdom can see are pinned below.
+//
+// COVERAGE LIMIT, measured not assumed. jsdom implements only PART of the UA heading
+// sheet: `h2 { font-weight: bold }` and `font-size: 1.5em` apply, but the block
+// margins do NOT (a bare <h2> in jsdom computes margin-top "0"; the spec's suggested
+// rendering states them as the logical `margin-block-*`, which jsdom's cascade does
+// not map to margin-top/bottom). So the `fontWeight: 400` in S.head IS mutation-proven
+// here, and the margin zeroing is NOT: stripping it leaves this file green. Real
+// Chrome disagrees — the same strip, measured on the built app, adds 9.13px of
+// margin-top to each heading (0.83em of an 11px caption) and grows the narrow
+// Settings page from 2017px to 2026px. The margin assertions below are kept as a
+// documented pin of intent; the evidence that they matter is the headed run.
 
 import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/react";
@@ -164,6 +174,45 @@ describe("Cut numbers toggle — the name says what it does", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Keyboard integrity — none of the four fixes may add or remove a tab stop.
+// A <label>, an <h2> and a role="group" wrapper are all non-focusable; this pins
+// that, so a later "let's make the group focusable" tidy-up fails loudly.
+// ---------------------------------------------------------------------------
+describe("the new elements are not tab stops", () => {
+  it("tabbing walks WIDE → CW 500 → APF with nothing inserted between them", async () => {
+    const { user } = await renderApp();
+    await openSettings(user);
+
+    const group = screen.getByRole("group", { name: "RX filter (band noise voicing)" });
+    expect(group.getAttribute("tabindex")).toBeNull();
+
+    const [wide, cw, apf] = [...group.querySelectorAll("button")];
+    wide.focus();
+    await user.tab();
+    expect(document.activeElement).toBe(cw);
+    await user.tab();
+    expect(document.activeElement).toBe(apf);
+  });
+
+  it("the section headings and the copy caption carry no tabindex", async () => {
+    const { user } = await renderApp();
+    await openSettings(user);
+
+    for (const h of screen.getAllByRole("heading", { level: 2 })) {
+      expect(h.getAttribute("tabindex")).toBeNull();
+    }
+    // Same for the QSO caption, on its own screen.
+    await user.click(screen.getByRole("button", { name: "Settings" })); // close
+    await gotoTab(user, "QSO");
+    await user.click(screen.getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+    const input = await screen.findByRole("textbox", { name: QSO_COPY_CAPTION });
+    const labelEl = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+    expect(labelEl).not.toBeNull();
+    expect(labelEl.getAttribute("tabindex")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4. Settings section headings
 // ---------------------------------------------------------------------------
 describe("Settings section captions are real headings", () => {
@@ -186,9 +235,9 @@ describe("Settings section captions are real headings", () => {
     const { user } = await renderApp();
     await openSettings(user);
 
-    // Each expected margin is the one the <div> carried before the swap; the UA
-    // heading defaults (bold, 1.5em, 0.83em block margins) would override all of
-    // these if S.head stopped neutralising them.
+    // Each expected value is the one the <div> carried before the swap. fontWeight
+    // and fontSize bite here; the margins do not (see the COVERAGE LIMIT at the top
+    // of this file) and are pinned as intent, proven in the headed run.
     const expected = {
       "LISTENING SPEED": { marginTop: "0px", marginBottom: "6px" },
       "SENDING SPEED": { marginTop: "0px", marginBottom: "6px" },
