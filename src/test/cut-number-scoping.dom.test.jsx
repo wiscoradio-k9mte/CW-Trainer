@@ -19,6 +19,10 @@ import CWTrainer from "../../wr-cw-trainer.jsx";
 import { MORSE } from "../cw-core.js";
 import { gotoTab, chooseOption } from "./helpers.jsx";
 
+// COPY's rung ladder is one CompactSelect; its combobox accessible name starts
+// with this label.
+const LADDER = /What to copy/;
+
 afterEach(() => {
   window.localStorage.clear();
   vi.useRealTimers();
@@ -63,7 +67,9 @@ describe("COPY callsign rung — a cut-digit mis-copy is not a perfect copy", ()
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "COPY");
-    await user.click(screen.getByRole("button", { name: /Callsigns/ }));
+    // The rung ladder is a CompactSelect (enhancement/compactselect-copy-learn),
+    // not the eight stacked buttons this test was first written against.
+    await chooseOption(user, LADDER, /Callsigns/);
 
     // The rung draws three calls; the cycling queue makes all three "N8NT".
     let i = 0;
@@ -91,7 +97,7 @@ describe("COPY callsign rung — a cut-digit mis-copy is not a perfect copy", ()
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "COPY");
-    await user.click(screen.getByRole("button", { name: /QSO phrases/ }));
+    await chooseOption(user, LADDER, /QSO phrases/);
 
     // QSO_PHRASES[1] is "UR 5NN 5NN BK"; rand() indexes it at 1/20.
     const rnd = vi.spyOn(Math, "random").mockReturnValue(0.06);

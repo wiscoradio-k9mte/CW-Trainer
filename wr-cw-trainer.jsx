@@ -1117,17 +1117,58 @@ const S = {
   },
 };
 
-// Display — the recessed code readout. `compact` (narrow KEY only) shrinks the
-// type and, crucially, CAPS the height with an internal scroll so a long target
-// scrolls INSIDE the readout instead of pushing the key surface down the page —
-// the key's vertical position becomes independent of target length. Default
-// (compact=false) is byte-identical to the shipped readout.
-function Display({ children, cursor, compact }) {
-  const style = compact
-    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem", letterSpacing: 2, maxHeight: 76, overflowY: "auto" }
+// Display — the recessed code readout.
+//
+// TWO INDEPENDENT PROPS. They were briefly fused, and the fusion shipped a
+// defect (see below), so keep them separate:
+//
+//   `compact` — HOW TALL. On narrow it shrinks the type and CAPS the height with
+//     an internal scroll, so long content scrolls INSIDE the readout instead of
+//     pushing the key surface down the page. `compact` alone is the two-line cap
+//     (maxHeight 76); `tail` alone is the one-line cap (maxHeight 40).
+//
+//   `tail` — WHICH END YOU SEE. Keeps the NEWEST characters in view. Required by
+//     any readout whose content GROWS while the operator is watching it, because
+//     a cap without it means you stare at the oldest characters while newer ones
+//     are clipped out of sight.
+//
+// They compose: `compact tail` is a two-line cap that still follows the newest
+// characters. That combination exists because EASY's live "Sending" transcription
+// needs both — it is audio-synchronised and growing (so it needs `tail`) but it
+// is also what the learner is reading along with (so it earns two lines, not
+// one). Capping it with `compact` alone left scrollTop pinned at 0 with 44px of
+// the newest characters clipped below the fold of the box.
+//
+// Static reading material (the drill target, the suggested QSO script) takes
+// `compact` alone: it does not grow, so there is no newest end to follow.
+//
+// Both caps are on the CONTENT box (S.display sets no boxSizing), so the rendered
+// heights are cap + 16 padding + 2 border: compact 94 max, tail-only 58 fixed.
+//
+// Default (no compact, no tail) is byte-identical to the shipped readout.
+// Exported for direct unit test (same reason CompactSelect is): the tail-scroll
+// is an effect on a ref, and jsdom has no layout, so the only way to prove it
+// runs is to mount the component alone with a stubbed scroll box.
+export function Display({ children, cursor, compact, tail, ariaLabel }) {
+  const capped = compact || tail;
+  const style = capped
+    ? { ...S.display, minHeight: 40, padding: "8px 14px", fontSize: "1.05rem",
+        letterSpacing: 2, maxHeight: compact ? 76 : 40, overflowY: "auto" }
     : S.display;
+  const boxRef = useRef(null);
+  // Jump to the tail on every update. A direct scrollTop assignment is instant
+  // by definition — no scroll-behavior is set anywhere on this element, so this
+  // already satisfies prefers-reduced-motion without a media query.
+  useEffect(() => {
+    if (tail && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
+  });
+  // role="group" + aria-label only in the tail variant: the cap hides the head of
+  // your own send, so the box becomes a scrollable region a keyboard user must be
+  // able to reach and read. tabIndex makes it reachable; a bare aria-label on a
+  // role-less div is not reliably announced, hence the explicit group role.
+  const a11y = tail ? { tabIndex: 0, role: "group", "aria-label": ariaLabel } : {};
   return (
-    <div style={style}>
+    <div ref={boxRef} style={style} {...a11y}>
       {children}
       {cursor && <span className="wr-cursor" style={{ color: "#F2A93B" }}>▮</span>}
     </div>
@@ -1169,7 +1210,12 @@ function TouchKey({ keyDown, keyUp, surfaceRef }) {
   );
 }
 
-function PaddleKey({ paddleDown, paddleUp, swap, surfaceRef }) {
+// `narrow` (M3) drops the visible "Keyboard: Z / ← …" hint line below the pads.
+// It is a desktop affordance on a touch-first surface, and no information is
+// lost: each pad's aria-label already names its keyboard shortcut verbatim, so
+// AT users keep it in both layouts. Named cost: a phone or tablet driven from a
+// Bluetooth keyboard loses the VISIBLE hint. Wide keeps the line unchanged.
+function PaddleKey({ paddleDown, paddleUp, swap, narrow, surfaceRef }) {
   // role="button" + tabIndex + aria-label make each zone focusable and announced by AT.
   // Keying is owned by the window keydown handler — do not add a competing
   // handler here (double-fire). The aria-label names the keyboard shortcut so a
@@ -1206,9 +1252,11 @@ function PaddleKey({ paddleDown, paddleUp, swap, surfaceRef }) {
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         {swap ? <>{dah}{dit}</> : <>{dit}{dah}</>}
       </div>
-      <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
-        Keyboard: Z / ← is the left zone, X / → the right · squeeze both to alternate
-      </div>
+      {!narrow && (
+        <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+          Keyboard: Z / ← is the left zone, X / → the right · squeeze both to alternate
+        </div>
+      )}
     </div>
   );
 }
@@ -1217,7 +1265,9 @@ function PaddleKey({ paddleDown, paddleUp, swap, surfaceRef }) {
 // Two zones: DIT (pointer-down = auto dits via keep-alive-free touch path)
 // and DAH (pointer-down = manual element, forced to "-" by straightUp).
 // Styled identically to PaddleKey using the same zone helper.
-function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap, surfaceRef }) {
+// `narrow` (M3): same rule as PaddleKey — the visible keyboard hint goes, the
+// aria-labels keep the information.
+function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap, narrow, surfaceRef }) {
   // surfaceRef (optional) lands on the DIT zone — see TouchKey for why.
   const zone = (label, glyph, sub, ariaLabel, onDown, onUp, ref) => (
     <div
@@ -1263,11 +1313,13 @@ function BugKey({ bugDitDown, bugDitUp, dahDown, dahUp, swap, surfaceRef }) {
         {/* Swap flips the dit lever side; Space (dah) is always on the right of the on-screen layout */}
         {swap ? <>{dahZone}{ditZone}</> : <>{ditZone}{dahZone}</>}
       </div>
-      <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
-        {swap
-          ? "Keyboard: ] / X / → is dit lever · Space is dah — you time the dahs"
-          : "Keyboard: [ / Z / ← is dit lever · Space is dah — you time the dahs"}
-      </div>
+      {!narrow && (
+        <div style={{ fontSize: "0.75rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", textAlign: "center", marginTop: 8 }}>
+          {swap
+            ? "Keyboard: ] / X / → is dit lever · Space is dah — you time the dahs"
+            : "Keyboard: [ / Z / ← is dit lever · Space is dah — you time the dahs"}
+        </div>
+      )}
     </div>
   );
 }
@@ -1375,24 +1427,66 @@ function KeyModeControls({ keyType, onKeyType, modeB, onModeB, compact }) {
   );
 }
 
+// NarrowInstrumentStrip (M2) — key-type toggle + L/R swap on ONE >=40px row,
+// rendered BELOW the key surface on every narrow keying surface (KEY tab, QSO
+// copy step, QSO send step). ONE component, three callers — the design's §5.1
+// contract, and the reason there is no second hand-rolled copy for QSO.
+//
+// WHY BELOW THE KEY: these are set-once-per-session instrument settings, not
+// per-attempt controls, and everything rendered above the key pushes the key
+// further from the operator's thumb. On a 375x667 phone that relocation is worth
+// a measured 52px on the KEY tab and 122px on each QSO keying step (the QSO
+// callers were rendering the FULL SwapToggle, help sentence and all). The strip
+// keeps its position adjacent to the key and now sits beside Iambic A/B, which
+// has always lived below the key.
+//
+// The verbose swap help sentence is deliberately not on the strip: the button's
+// aria-label carries the meaning, so nothing is lost to AT.
+function NarrowInstrumentStrip({ keyType, onKeyType, swap, onSwap }) {
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "stretch", marginTop: 12 }}>
+      <div style={{ flex: 1 }}>
+        <KeyModeControls compact keyType={keyType} onKeyType={onKeyType} />
+      </div>
+      <SwapToggle compact swap={swap} onSwap={onSwap} keyType={keyType} />
+    </div>
+  );
+}
+
 // KeyInput — combined toggle + swap + key surface. Used by QsoSim, which has not
 // been split (the key is part of the exchange flow there, not a separate pane).
 // KeyTrainer uses KeyModeControls + inlined key surface instead (see Phase 3 split).
 // SwapToggle is now rendered inline here so it appears above the surface in QsoSim too.
 // surfaceRef (optional): forwarded to whichever key surface is currently rendered,
 // so a parent can move keyboard focus onto it. Undefined for every existing caller.
-function KeyInput({ keyer, keyType, onKeyType, swap, onSwap, surfaceRef }) {
+//
+// `narrow` (M2) flips the internal order: the key surface comes FIRST and the
+// instrument controls follow it as the shared one-row strip. Wide is unchanged —
+// full KeyModeControls + SwapToggle above the surface, byte-identical to before.
+function KeyInput({ keyer, keyType, onKeyType, swap, onSwap, narrow, surfaceRef }) {
+  // ONE surface expression, rendered by both layouts. `surfaceRef` must reach it in
+  // BOTH: break-in arming focuses the surface, and a surface with no ref leaves the
+  // keyer deaf to the keyboard — the defect BreakInPanel exists to fix.
+  const surface = keyType === "paddle"
+    ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} narrow={narrow} surfaceRef={surfaceRef} />
+    : keyType === "bug"
+    ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
+        dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
+        swap={swap} narrow={narrow} surfaceRef={surfaceRef} />
+    : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} surfaceRef={surfaceRef} />;
+  if (narrow) {
+    return (
+      <div>
+        {surface}
+        <NarrowInstrumentStrip keyType={keyType} onKeyType={onKeyType} swap={swap} onSwap={onSwap} />
+      </div>
+    );
+  }
   return (
     <div>
       <KeyModeControls keyType={keyType} onKeyType={onKeyType} />
       <SwapToggle swap={swap} onSwap={onSwap} keyType={keyType} />
-      {keyType === "paddle"
-        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={swap} surfaceRef={surfaceRef} />
-        : keyType === "bug"
-        ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
-            dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-            swap={swap} surfaceRef={surfaceRef} />
-        : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} surfaceRef={surfaceRef} />}
+      {surface}
     </div>
   );
 }
@@ -1421,7 +1515,13 @@ function KeyInput({ keyer, keyType, onKeyType, swap, onSwap, surfaceRef }) {
 // Armed state is carried by THREE non-colour signals (the standing L2 rule):
 // the words change, the caret flips and the body appears, and aria-expanded is
 // exposed. Amber + weight 700 are additional, never the only cue.
-function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, onSwap, fillMsg, compact }) {
+// `narrow` (composed from fix/key-above-fold-375) is the ONE breakpoint signal this
+// panel needs: it tail-caps the decode readout and flips KeyInput's internal order
+// so the key surface comes first. The pre-merge shape carried a separate `compact`
+// prop for the readout; both call sites passed `!isWide`, so they were one signal
+// wearing two names and the 76px `compact` cap was never the one this surface wanted
+// (see the Display below).
+function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, onSwap, fillMsg, narrow }) {
   const surfaceRef = useRef(null);
 
   // Arming must land focus on the key surface, or the keyer stays deaf. The panel
@@ -1504,11 +1604,16 @@ function BreakInPanel({ keyer, armed, onArmedChange, keyType, onKeyType, swap, o
           <div style={{ ...S.label, marginBottom: 6 }}>
             Decoded from your key <span style={{ color: S.text.amber }}>{keyer.buffer}</span>
           </div>
+          {/* `tail`, not `compact` (fix/key-above-fold-375 M5). This readout GROWS
+              while you key, so a plain two-line cap leaves scrollTop at 0 and you
+              watch the oldest characters while sending the newest. `tail` gives a
+              one-line cap that follows its own end, plus the role="group" +
+              aria-label that make the clipped region keyboard-reachable. */}
           <div data-testid="breakin-decode">
-            <Display compact={compact}>{keyer.decoded}</Display>
+            <Display tail={narrow} ariaLabel="Decoded from your key">{keyer.decoded}</Display>
           </div>
           <KeyInput keyer={keyer} keyType={keyType} onKeyType={onKeyType}
-            swap={swap} onSwap={onSwap} surfaceRef={surfaceRef} />
+            swap={swap} onSwap={onSwap} surfaceRef={surfaceRef} narrow={narrow} />
           {/* Always-mounted status container: a live region only announces when the
               text of an ALREADY-MOUNTED node changes. Mounting the node together
               with its text is an addition, not a change, and AT stays silent —
@@ -2549,11 +2654,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   const keySurfaceEl = (
     <div style={{ marginTop: 4 }} data-testid="key-surface">
       {settings.keyType === "paddle"
-        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} />
+        ? <PaddleKey paddleDown={keyer.paddleDown} paddleUp={keyer.paddleUp} swap={settings.paddleSwap} narrow={!isWide} />
         : settings.keyType === "bug"
         ? <BugKey bugDitDown={keyer.bugDitDown} bugDitUp={keyer.bugDitUp}
             dahDown={keyer.straightDown} dahUp={() => keyer.straightUp({ forceEl: "-" })}
-            swap={settings.paddleSwap} />
+            swap={settings.paddleSwap} narrow={!isWide} />
         : <TouchKey keyDown={keyer.straightDown} keyUp={keyer.straightUp} />}
     </div>
   );
@@ -2717,49 +2822,60 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   );
 
   // ---- Narrow (phone) KEY layout ----
-  // narrowInstrumentStrip — key-type toggle + swap on ONE ≥40px row, relocated from
-  // the options block to sit WITH the key (the ratified "instrument/mode toggles sit
-  // with the key" rule, and the v1.2 open item). The verbose swap help sentence is
-  // dropped on narrow (its meaning is carried by the button's aria-label). Iambic
-  // Mode A/B renders below the key (narrowIambic) so this strip stays one row.
-  const narrowInstrumentStrip = (
-    <div style={{ display: "flex", gap: 6, alignItems: "stretch", marginTop: 12 }}>
-      <div style={{ flex: 1 }}>
-        <KeyModeControls compact keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} />
-      </div>
-      <SwapToggle compact swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} keyType={settings.keyType} />
-    </div>
-  );
   const narrowIambic = settings.keyType === "paddle" && (
     <IambicToggle compact modeB={settings.iambicModeB} onModeB={(v) => setSettings((s) => ({ ...s, iambicModeB: v }))} />
   );
 
-  // narrowKeyLayout — the compact single practice card that clears the 390×844 fold
-  // without scrolling (measured, headed — see the re-gate numbers). Order: category
-  // (its own compact block) → [card] actions → instrument strip → compact target
-  // readout → compact decoded readout → KEY → Iambic (set-once, paddle) → CHECK →
-  // results. The decoded readout stays ABOVE the key (no pedagogical reorder — the
-  // measured budget clears the fold without it). The compact Displays cap + scroll
-  // internally, so a long target never pushes the key down.
+  // narrowKeyLayout — ONE practice card (M1: the drill-category block was a
+  // separate sibling above it, costing a 14px inter-block gap for nothing).
+  //
+  // Order: [card] actions → target readout → decoded readout (tail-capped) →
+  // KEY → instrument strip (M2) → Iambic → drill category (M7) → CHECK → results.
+  //
+  // EVERYTHING SET-ONCE NOW SITS BELOW THE KEY. That is the whole shape of this
+  // fix: the key is the thing the operator reaches for on every attempt, so the
+  // only rows left above it are the two readouts they read while keying. What
+  // moved down — key type, L/R swap, Iambic mode, drill category — is chosen once
+  // per session or once per drill.
+  //
+  // MEASURED at 375x667, headed CDP, realistic installed state, dit-pad bottom
+  // document-relative (rect.bottom + scrollY after scrollTo(0,0)):
+  // main 704 -> 542 at rest, 578 with both readouts stuffed to their caps
+  // (fold 667). M7 — moving the category row below the key — was taken because
+  // it is needed, not because it was available: the same build with the category
+  // row left at the TOP of this card measures 650 at rest and **686 stuffed**,
+  // i.e. 19px OVER the fold (measured, not predicted — a counterfactual build).
+  // The design's reserve rung triggers below 20px of margin and the alternative
+  // lever, a size cut, is forbidden. M7 also makes the key position independent
+  // of the category label's length, which the old top position did not.
+  //
+  // These numbers are a RECORD OF A MEASUREMENT taken with
+  // ops/uat-harness/cw-scroll-baseline.py. NOTHING in CI enforces them — jsdom has
+  // no layout. The suite pins the ORDER below (narrow.dom.test.jsx) and the cap
+  // styles, and that is all it can do: 74px of new content can be inserted above
+  // the key with the whole suite green. Re-measure by hand if you add a row here.
   const narrowKeyLayout = (
-    <>
-      <div style={{ marginBottom: 14 }}>{categoryRow}</div>
-      <div style={S.panel}>
-        {narrowActionButtons}
-        {narrowInstrumentStrip}
-        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>Send this</div>
-        <Display compact>{target || "press NEW TEXT"}</Display>
-        <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>
-          Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
-        </div>
-        <Display compact cursor>{keyer.decoded}</Display>
-        {errFlashEl}
-        {keySurfaceEl}
-        {narrowIambic}
-        {checkEl}
-        {resultsEl}
+    <div style={S.panel}>
+      {narrowActionButtons}
+      <div style={{ ...S.label, marginBottom: 6 }}>Send this</div>
+      <Display compact>{target || "press NEW TEXT"}</Display>
+      <div style={{ ...S.label, marginTop: 12, marginBottom: 6 }}>
+        Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
       </div>
-    </>
+      <Display tail cursor ariaLabel="Decoded from your key">{keyer.decoded}</Display>
+      {errFlashEl}
+      {keySurfaceEl}
+      <NarrowInstrumentStrip
+        keyType={settings.keyType}
+        onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))}
+        swap={settings.paddleSwap}
+        onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
+      />
+      {narrowIambic}
+      <div style={{ marginTop: 12 }}>{categoryRow}</div>
+      {checkEl}
+      {resultsEl}
+    </div>
   );
 
   // ---- layout rendering ----
@@ -2769,9 +2885,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
   //   railEl may be null on the very first paint (before the callback ref fires) —
   //   the portal is skipped for that one imperceptible frame.
   //
-  // Narrow: intro (if !target) + narrowKeyLayout — the category block plus one
-  //   compact practice card (controls relocated to an instrument strip with the
-  //   key, compact+capped Displays) so the key surface clears the 390×844 fold.
+  // Narrow: intro (if !target) + narrowKeyLayout — ONE practice card with every
+  //   set-once control (instrument strip, Iambic, drill category) below the key
+  //   and both readouts capped, so the pads clear the 375×667 fold.
   //
   // The always-mounted scoreLive + catLive regions are in the component root,
   // never gated by isWide, so AT sees changes in both layouts.
@@ -2791,10 +2907,9 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
       {isWide && railEl && !suppressRail && createPortal(<div style={S.panel}>{optionsJSX}</div>, railEl)}
       {isWide && practicePanels}
 
-      {/* Narrow layout: intro (if before first target) + the compact single-card
-          KEY layout — category as its own block, then one practice card with the
-          key-type/mode controls relocated to an instrument strip WITH the key, so
-          the key surface clears the 390×844 fold without scrolling. */}
+      {/* Narrow layout: intro (if before first target) + the single-card KEY
+          layout — every set-once control (instrument strip, Iambic, drill
+          category) below the key so the pads clear the 375×667 fold. */}
       {!isWide && introJSX}
       {!isWide && narrowKeyLayout}
     </div>
@@ -3664,10 +3779,26 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             </div>
           )}
 
+          {/* EASY's live letter-by-letter readout — `compact tail` on narrow (M5).
+              It was the LAST uncapped readout above a key on any keying surface:
+              measured at 375x667 the stuff probe moved the pads +496px through
+              this one box, so the key's position on an easy copy step was
+              content-DEPENDENT. (The design's inventory named the break-in decode
+              as the only uncapped one; it never measured easy.)
+
+              BOTH props, not one. `compact` gives it two lines rather than the
+              one a pure `tail` readout gets, because the learner reads along here.
+              `tail` is what makes the cap honest: this text GROWS in step with the
+              audio, so a cap alone leaves scrollTop at 0 and the learner watching
+              the oldest characters while the DX sends the newest. Measured with a
+              real 77-character exchange line and `compact` only: clientHeight 92,
+              scrollHeight 136, scrollTop 0 — 44px of the newest copy clipped out
+              of view with no way to reach it while the audio ran. */}
           {difficulty === "easy" && countdown === null && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ ...S.label, marginBottom: 6 }}>Sending</div>
-              <Display cursor={player.playing}>{liveText}</Display>
+              <Display cursor={player.playing} compact={!isWide} tail={!isWide}
+                ariaLabel="Sending">{liveText}</Display>
             </div>
           )}
 
@@ -3700,14 +3831,27 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
               listening to the repeat you just asked for is the expected behaviour,
               and that tap is the same one that returns you to the copy field anyway.
               Worth 96px measured on narrow, where the row wraps to two lines, and
-              50px at isWide — on the app's tightest surface. */}
+              50px at isWide — on the app's tightest surface.
+
+              MERGE NOTE (fix/key-above-fold-375 composed in): that branch packed
+              these three onto ONE row on narrow as equal thirds — worth a measured
+              46px at 375 when the row still sat above the key. The `!armed` gate
+              above spends that particular saving (the row and the key are never on
+              screen together now), but the packing still governs the UNARMED state,
+              which is the state src/test/narrow.dom.test.jsx "packs the transport
+              row onto ONE row on narrow" drives. Both decisions are kept: the gate
+              from this branch, the thirds layout from that one. */}
           {!armed && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              <button style={S.btn} onClick={() => playDx(cur.text)}>↻ REPLAY</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: isWide ? "wrap" : "nowrap", marginBottom: 12 }}>
               {/* qrsEffWpm(): the same expression the QRS fill uses — see its
                   definition for why they are one function and not two literals. */}
-              <button style={S.btn} onClick={() => playDx(cur.text, { eff: qrsEffWpm() })}>🐢 SLOWER</button>
-              <button style={S.btn} onClick={() => player.stop()}>■ STOP</button>
+              {[["↻ REPLAY", () => playDx(cur.text)],
+                ["🐢 SLOWER", () => playDx(cur.text, { eff: qrsEffWpm() })],
+                ["■ STOP", () => player.stop()]].map(([label, onClick]) => (
+                <button key={label} style={isWide ? S.btn
+                  : { ...S.btn, flex: 1, minWidth: 0, minHeight: 40, padding: "0 6px", fontSize: "0.8125rem", whiteSpace: "nowrap" }}
+                  onClick={onClick}>{label}</button>
+              ))}
             </div>
           )}
 
@@ -3779,7 +3923,7 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
             swap={settings.paddleSwap}
             onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))}
             fillMsg={fillMsg}
-            compact={!isWide}
+            narrow={!isWide}
           />
 
           {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
@@ -3819,9 +3963,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           <div style={{ ...S.label, margin: "12px 0 6px" }}>
             Decoded from your key <span style={{ color: "#F2A93B" }}>{keyer.buffer}</span>
           </div>
-          {/* compact on narrow: the shorter readout banks vertical room above the key. */}
-          <Display cursor compact={!isWide}>{keyer.decoded}</Display>
-          <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} />
+          {/* tail on narrow (M5): one line, newest characters always in view. The
+              suggested script above keeps two lines — reading material gets two,
+              your own live output gets one. */}
+          <Display cursor tail={!isWide} ariaLabel="Decoded from your key">{keyer.decoded}</Display>
+          <KeyInput keyer={keyer} keyType={settings.keyType} onKeyType={(v) => setSettings((s) => ({ ...s, keyType: v }))} swap={settings.paddleSwap} onSwap={(v) => setSettings((s) => ({ ...s, paddleSwap: v }))} narrow={!isWide} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button style={S.btnAmber} onClick={checkSend}>CHECK TRANSMISSION</button>
             <button style={S.btn} onClick={() => {
