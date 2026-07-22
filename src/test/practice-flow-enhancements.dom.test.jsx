@@ -122,12 +122,14 @@ describe("Enhancement #1 — auto-focus copy input (QSO tab, DX step)", () => {
     // The DX step panel renders a copy input when difficulty !== "easy".
     // The focus effect fires when cur transitions to a dx step.
     // Mutation to prove bite: remove qsoCopyInputRef.current.focus() → fails.
-    const input = screen.queryByRole("textbox", { name: /Your copy of what you heard/i });
-    if (input) {
-      // Input is present → focus effect should have run.
-      expect(document.activeElement).toBe(input);
-    }
-    // If input is null the step is a you-step (activator role variant) — no focus expected.
+    // Name is the visible caption (a real <label htmlFor>) since the accessible-names
+    // batch replaced the parallel aria-label "Your copy of what you heard".
+    const input = screen.queryByRole("textbox", { name: "Your copy (optional — check it or just answer)" });
+    // Assert presence rather than branching on it: this test fixes Ragchew + "Answer a
+    // CQ" + NORMAL, so step 0 IS a DX copy step and the input MUST be there. The old
+    // `if (input)` made the whole test vacuous if the lookup ever stopped matching.
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
   });
 
   it("copy input is NOT focused when the active step is a you-send step", async () => {
@@ -142,7 +144,7 @@ describe("Enhancement #1 — auto-focus copy input (QSO tab, DX step)", () => {
     await user.click(startBtn);
 
     // On a you-step, the keyer decoded display is visible; the copy input is NOT.
-    const copyInput = screen.queryByRole("textbox", { name: /Your copy of what you heard/i });
+    const copyInput = screen.queryByRole("textbox", { name: "Your copy (optional — check it or just answer)" });
     expect(copyInput).not.toBeInTheDocument();
   });
 });

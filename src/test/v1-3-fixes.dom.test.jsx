@@ -26,9 +26,14 @@ describe("Fix 1 — QSO DX-step copy input accessible name", () => {
     // Ragchew "Answer a CQ" opens on step 0 which is a DX step.  Non-easy difficulty
     // (default NORMAL) renders the copy input immediately — no countdown gate.
     // findByRole polls until the element is present (or the 1 s default timeout fires).
-    // An absent aria-label would make this resolve to null and the assertion below would
+    // An absent label would make this resolve to null and the assertion below would
     // fail, biting on any label regression.
-    const copyInput = await screen.findByRole("textbox", { name: /Your copy of what you heard/i });
+    // The name is now the input's own visible caption (a real <label htmlFor>), not the
+    // parallel aria-label "Your copy of what you heard" this used to assert — the two
+    // did not share a full string, which was the WCAG 2.5.3 defect. Matching the exact
+    // visible caption is the stronger check: it fails both if the label vanishes and if
+    // the accessible name ever drifts from what a sighted user reads.
+    const copyInput = await screen.findByRole("textbox", { name: "Your copy (optional — check it or just answer)" });
     expect(copyInput).toBeInTheDocument();
   });
 });
