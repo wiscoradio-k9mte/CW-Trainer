@@ -11,7 +11,7 @@
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { fireEvent, act } from "@testing-library/react";
-import { renderApp, gotoTab, screen } from "./helpers.jsx";
+import { renderApp, gotoTab, chooseOption, screen, within } from "./helpers.jsx";
 import { WIDE_WORD_POOL, COMMON_WORDS } from "../cw-core.js";
 
 describe("COPY tab — setup and interaction", () => {
@@ -22,9 +22,13 @@ describe("COPY tab — setup and interaction", () => {
     expect(screen.getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(screen.getByText("Conditions")).toBeInTheDocument();
 
-    // A couple of the level-ladder options (unchanged — still buttons, out of scope).
-    expect(screen.getByRole("button", { name: /1 character/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Callsigns/ })).toBeInTheDocument();
+    // The level ladder is a CompactSelect too now. Its trigger shows the current
+    // rung (number + label) and its panel holds every rung.
+    const ladder = screen.getByRole("combobox", { name: /What to copy/ });
+    expect(ladder).toHaveTextContent("1 — 1 character");
+    await user.click(ladder);
+    expect(screen.getByRole("option", { name: /Callsigns/ })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
 
     // Conditions is now a CompactSelect combobox; all three difficulties are its
     // options (label-only for COPY, no descriptions per DoR T2).
@@ -34,17 +38,22 @@ describe("COPY tab — setup and interaction", () => {
     }
   });
 
-  it("selects a copy level (marks it pressed)", async () => {
+  it("selects a copy level (commits the new rung)", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "COPY");
 
-    // Default source is "single" (1 character).
-    expect(screen.getByRole("button", { name: /1 character/ })).toHaveAttribute("aria-pressed", "true");
+    const ladder = screen.getByRole("combobox", { name: /What to copy/ });
+    // Default source is "single" — rung 1, "1 character".
+    expect(ladder).toHaveTextContent("1 — 1 character");
 
-    const groups = screen.getByRole("button", { name: /Letter groups/ });
-    await user.click(groups);
-    expect(groups).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: /1 character/ })).toHaveAttribute("aria-pressed", "false");
+    await user.click(ladder);
+    await user.click(screen.getByRole("option", { name: /Letter groups/ }));
+    // The committed value is what the closed trigger shows.
+    expect(ladder).toHaveTextContent("3 — Letter groups");
+
+    await user.click(ladder);
+    expect(screen.getByRole("option", { name: /Letter groups/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: /1 character/ })).toHaveAttribute("aria-selected", "false");
   });
 
   it("accepts typing into the copy input", async () => {
@@ -65,7 +74,20 @@ describe("COPY tab — setup and interaction", () => {
 describe("LEARN tab — CHARS setup and drill", () => {
   it("renders the lesson setup with START DRILL", async () => {
     await renderApp(); // opens on LEARN/CHARS by default
-    expect(screen.getByText(/Lesson 1 of/)).toBeInTheDocument();
+    // The lesson stepper's centre is the jump input itself now (harmonized with
+    // KEY's fused row). Asserting its VALUE is stronger than the old
+    // getByText(/Lesson 1 of/) caption check — that only proved a string rendered,
+    // this proves the control reports the lesson the app is actually on.
+    const jump = screen.getByRole("spinbutton", { name: "Jump to lesson" });
+    expect(jump).toHaveValue(1);
+    expect(screen.getByText("Lesson")).toBeInTheDocument();
+    // The old caption ALSO carried the visible total ("Lesson 1 of 40"), and the
+    // value assertion above does not cover it — so guard the "of N" suffix here,
+    // scoped to the stepper row. The design doc gives that suffix a deliberate
+    // job: it is the sighted counterpart to the input's aria-hidden min/max, so
+    // deleting it silently loses "how many lessons are there?" for sighted users.
+    // Asserting it against the input's own `max` also pins it to the RIGHT total.
+    expect(within(jump.parentElement).getByText(`of ${jump.getAttribute("max")}`)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /START DRILL/ })).toBeInTheDocument();
     expect(screen.getByText("Characters in play")).toBeInTheDocument();
   });
@@ -186,7 +208,8 @@ describe("LEARN — correct-answer flash shows char + Morse pattern (v2.0 §4)",
 // and return the raw target string for pool-membership assertions.
 async function generateAndReveal(user, rungLabel) {
   await gotoTab(user, "COPY");
-  await user.click(screen.getByRole("button", { name: new RegExp(rungLabel) }));
+  // The ladder is a CompactSelect: open the trigger, then commit the rung.
+  await chooseOption(user, /What to copy/, new RegExp(rungLabel));
 
   // ▶ NEW starts a 5-second countdown; skip it with fake timers.
   vi.useFakeTimers();
@@ -208,25 +231,38 @@ async function generateAndReveal(user, rungLabel) {
 describe("COPY tab — Phase 3 pool routing", () => {
   afterEach(() => { vi.useRealTimers(); });
 
-  it("level ladder has all 8 rungs including 'Wider vocabulary' and 'Ham words'", async () => {
+  it("level ladder panel shows all 8 rungs with their number AND their description", async () => {
     // Mutation to prove bite: delete the wordswide or hamwords row from COPY_LEVELS
     // → the corresponding getByRole call throws → test FAILS.
+    //
+    // This also pins the COPY-ladder adoption's user-visible gain: before, only
+    // the SELECTED rung showed its guidance; now every rung's description is in
+    // the open panel, at the moment of choice. Dropping `description` from the
+    // options mapping turns the textContent assertions red.
     const { user } = await renderApp();
     await gotoTab(user, "COPY");
+    await user.click(screen.getByRole("combobox", { name: /What to copy/ }));
 
-    const expectedLabels = [
-      "1 character",
-      "2-char groups",
-      "Letter groups",
-      "Common words",
-      "Wider vocabulary",   // Phase 3 — bites if wordswide rung is removed
-      "Ham words",          // Phase 3 — bites if hamwords rung is removed
-      "Callsigns",
-      "QSO phrases",
+    // [rung number, label, a distinctive phrase from that rung's description]
+    const expected = [
+      ["1", "1 character",      "One character at a time"],
+      ["2", "2-char groups",    "Two characters together"],
+      ["3", "Letter groups",    "Short random groups of 3-4"],
+      ["4", "Common words",     "The 500 most common English words"],
+      ["5", "Wider vocabulary", "ranks 1001–5000"],   // bites if the wordswide rung is removed
+      ["6", "Ham words",        "TNX, FER, RST, QTH"], // bites if the hamwords rung is removed
+      ["7", "Callsigns",        "no rhythm to predict"],
+      ["8", "QSO phrases",      "Full exchange fragments"],
     ];
-    for (const label of expectedLabels) {
-      expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
-    }
+    const rows = screen.getAllByRole("option");
+    expect(rows).toHaveLength(8);
+    expected.forEach(([num, label, descPhrase], i) => {
+      // Rows are in ladder order, and each carries its rung numeral, its label,
+      // and its guidance description — all three visible without selecting it.
+      expect(rows[i]).toHaveTextContent(num);
+      expect(rows[i]).toHaveTextContent(label);
+      expect(rows[i]).toHaveTextContent(descPhrase);
+    });
   });
 
   it("'wordswide' rung produces tokens exclusively from WIDE_WORD_POOL", async () => {

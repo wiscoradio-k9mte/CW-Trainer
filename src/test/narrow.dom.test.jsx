@@ -93,7 +93,8 @@ describe("narrow (mobile) layout — collapse path", () => {
     // catches a regression where narrow loses its setup controls.)
     expect(screen.getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(screen.getByText("Conditions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1 character/ })).toBeInTheDocument();
+    // The level ladder is a CompactSelect; the closed trigger carries the value.
+    expect(screen.getByRole("combobox", { name: /What to copy/ })).toHaveTextContent("1 — 1 character");
 
     // And the practice input still accepts typing (located by placeholder; its
     // caption is an unassociated div — see the a11y testability note).

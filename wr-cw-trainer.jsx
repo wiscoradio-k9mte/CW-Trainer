@@ -1920,21 +1920,23 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
   // All handlers close over local state — no prop threading needed.
   const optionsJSX = (
     <>
-      <div style={{ ...S.label, marginBottom: 8 }}>What to copy — climb as you improve</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-        {COPY_LEVELS.map(([v, l, desc], i) => (
-          <button key={v} aria-pressed={source === v} onClick={() => setSource(v)}
-            style={{ ...S.btn, textAlign: "left", padding: "9px 12px", ...(source === v ? { borderColor: "#F2A93B" } : {}) }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.625rem", color: "#8A929C" }}>{i + 1}</span>
-              <span style={{ color: source === v ? "#F2A93B" : "#E8E2D6", fontWeight: 700, fontSize: "0.8125rem" }}>{l}</span>
-            </div>
-            {source === v && (
-              <div style={{ fontSize: "0.71875rem", color: "#8A929C", fontFamily: "system-ui, sans-serif", marginTop: 4, letterSpacing: 0, lineHeight: 1.5 }}>{desc}</div>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* Level ladder — the standard CompactSelect (docs/design-compact-selectors.md
+          §6 names this the next adopter after the five shipped menus). The eight
+          rungs used to stack as eight always-visible buttons, which on a phone
+          pushed Conditions and the start controls off the bottom of the screen.
+          `ladderIndex` keeps each rung's number; `description` puts EVERY rung's
+          guidance in the open panel — previously only the selected rung showed its
+          description, so this is a net gain in discoverability at choosing time.
+          Selection behavior is unchanged: onChange is still plain setSource, and
+          COPY difficulty/level stay session-local (nothing new is persisted). */}
+      <CompactSelect
+        label="What to copy — climb as you improve"
+        options={COPY_LEVELS.map(([v, l, desc], i) => ({
+          value: v, label: l, description: desc, ladderIndex: i + 1,
+        }))}
+        value={source}
+        onChange={setSource}
+      />
       {/* Conditions selector — label-only (COPY has no per-option descriptions, per
           DoR T2). This is a CONSISTENCY change, not a compaction one: a closed
           trigger is about the same height as (or a hair taller than) the old
@@ -4033,40 +4035,72 @@ function LearnTab({ player, settings, isWide, railEl, suppressRail, record }) {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-        <span style={S.label}>Lesson {lesson} of {maxLesson}</span>
-        <span style={{ display: "flex", gap: 6 }}>
-          <button aria-label="Previous lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: "0.8125rem" }} disabled={lesson <= 1}
-            onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
-          <button aria-label="Next lesson" style={{ ...S.btn, padding: "5px 12px", fontSize: "0.8125rem" }} disabled={lesson >= maxLesson}
-            onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
-        </span>
+      {/* Lesson selector — VISUAL harmonization with KEY's fused stepper row
+          ([◀] [ value ] [▶], docs/design-compact-selectors.md §4.1) so a learner
+          moving between tabs doesn't meet a foreign-looking control. The previous
+          form was two separate rows (a "Lesson N of M" caption with two ~28px
+          arrows, then a labelled jump input); they now compose into one fused row
+          with the same chrome, spacing, typography and 44px touch targets as KEY.
+
+          Deliberately NOT a CompactSelect: 40 Koch lessons in a disclosure panel
+          would be worse than typing the number, and Travis ratified keeping the
+          numeric jump. So the centre of the row is the SAME number input as
+          before — same "Jump to lesson" accessible name, same [1, maxLesson]
+          clamp, same setHistory([]) reset — restyled to the CompactSelect
+          trigger's recipe: S.btn ground + control border, minHeight 44, amber
+          value at weight 600, and a dim right-hand "of N" occupying the slot the
+          trigger's caret sits in. "of N" is aria-hidden because the input already
+          exposes the range programmatically via min/max (a spinbutton announces
+          valuemin/valuemax/valuenow); a visible duplicate would double-announce.
+          The arrows keep their aria-labels and end-clamping and grow to 44px. */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+        <button aria-label="Previous lesson"
+          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+          disabled={lesson <= 1}
+          onClick={() => { setLesson((l) => Math.max(1, l - 1)); setHistory([]); }}>←</button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ ...S.label, marginBottom: 8 }}>Lesson</div>
+          <div style={{
+            ...S.btn, cursor: "default",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+            width: "100%", minWidth: 0, minHeight: 44, padding: "10px 14px", boxSizing: "border-box",
+          }}>
+            <input
+              type="number"
+              aria-label="Jump to lesson"
+              className="wr-lesson-input"
+              min={1}
+              max={maxLesson}
+              value={lesson}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
+                setLesson(v);
+                setHistory([]);
+              }}
+              style={{
+                background: "transparent", border: "none", padding: 0,
+                color: S.text.amber, fontWeight: 600, fontSize: "0.8125rem",
+                fontFamily: "ui-monospace, monospace",
+                width: "100%", minWidth: 0,
+              }}
+            />
+            <span aria-hidden="true" style={{ color: S.text.dim, flexShrink: 0, fontSize: "0.8125rem", fontFamily: "ui-monospace, monospace" }}>
+              of {maxLesson}
+            </span>
+          </div>
+        </div>
+        <button aria-label="Next lesson"
+          style={{ ...S.btn, padding: "10px 14px", minHeight: 44, marginBottom: 14 }}
+          disabled={lesson >= maxLesson}
+          onClick={() => { setLesson((l) => Math.min(maxLesson, l + 1)); setHistory([]); }}>→</button>
       </div>
 
-      {/* C2: jump-to-lesson input + skip-ahead affordance.
-          Clearing history on jump mirrors what the arrows do — no special case.
-          Clamped to [1, maxLesson] so an out-of-range value is silently
-          corrected rather than blowing up downstream. The gentle note about
-          Koch method is shown on any jump > 1 step to set honest expectations
-          without blocking the user (product decision: note, not confirm). */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <span style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", flex: 1 }}>
-          Already know some? Skip ahead:
-        </span>
-        <input
-          type="number"
-          aria-label="Jump to lesson"
-          min={1}
-          max={maxLesson}
-          value={lesson}
-          onChange={(e) => {
-            const v = Math.max(1, Math.min(maxLesson, Number(e.target.value) || 1));
-            setLesson(v);
-            setHistory([]);
-          }}
-          style={{ ...S.input, width: 62, padding: "6px 10px", fontSize: "0.875rem", textTransform: "none", letterSpacing: 0 }}
-        />
-      </div>
+      {/* Skip-ahead affordance. The jump input moved into the fused row above, so
+          this line now points at it rather than sitting beside it. The Koch note
+          below it is unchanged — honest expectations without blocking the user. */}
+      <p style={{ color: "#8A929C", fontSize: "0.75rem", fontFamily: "system-ui, sans-serif", margin: "0 0 8px", lineHeight: 1.5 }}>
+        Already know some? Type a lesson number above to skip ahead.
+      </p>
       <p style={{ color: "#8A929C", fontSize: "0.6875rem", fontFamily: "system-ui, sans-serif", margin: "0 0 10px", lineHeight: 1.5 }}>
         The Koch method assumes you've mastered earlier characters — each lesson builds on the ones before it.
       </p>
@@ -5076,6 +5110,23 @@ export default function CWTrainer() {
         }
         .wr-select-pulse { animation: wrSelectPulse 900ms ease-out; }
         @media (prefers-reduced-motion: reduce) { .wr-select-pulse { animation: none !important; } }
+
+        /*
+          LEARN's lesson-jump input, harmonized with the CompactSelect trigger
+          (docs/design-compact-selectors.md §4.6). It sits INSIDE a trigger-styled
+          box, so two things need CSS that inline styles can't express:
+          1. Hide the native number spinners — they would overlap the "of N"
+             suffix and read as foreign chrome next to the app's own controls.
+             Keyboard ↑/↓ still step the value; the ← → buttons remain the
+             primary stepping affordance.
+          2. Give it the house focus ring. The global button:focus-visible rule
+             doesn't cover inputs, and the input has no border of its own, so
+             without this the keyboard focus cue would be the browser default.
+        */
+        .wr-lesson-input::-webkit-outer-spin-button,
+        .wr-lesson-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .wr-lesson-input { -moz-appearance: textfield; appearance: textfield; }
+        .wr-lesson-input:focus-visible { outline: 2px solid #F2A93B; outline-offset: 2px; }
       `}</style>
 
       {/*
