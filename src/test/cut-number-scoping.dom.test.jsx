@@ -13,7 +13,7 @@
 // cannot see. Both drive the real UI and assert the rendered score.
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, act, cleanup } from "@testing-library/react";
+import { render, screen, act, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CWTrainer from "../../wr-cw-trainer.jsx";
 import { MORSE } from "../cw-core.js";
@@ -42,21 +42,35 @@ const N8NT_QUEUE = [
   0.18, // prefix index 2 → "N8"
 ];
 
-// COPY's "▶ NEW" runs a 5-second listen countdown BEFORE it generates the target,
-// so the target only exists once that interval has run out. Advance it on fake
-// timers, then hand the clock back for the typing that follows.
 // COPY's "▶ NEW" runs a 5-second listen countdown and only generates the target
-// when it expires. The countdown interval is created by the click itself, so
-// swapping to fake timers afterwards can't drive it (the interval is already a
-// real one) and installing fake timers beforehand deadlocks userEvent. So this
-// waits the real five seconds — the honest cost of driving the real flow.
+// when it expires. Waiting that out on the real clock cost ~5.3s per test; fake
+// timers do it in microseconds, but only in this exact shape:
+//
+//   - the clock is faked ONLY around the countdown. userEvent's internal awaits
+//     never resolve under a faked clock (its `advanceTimers` hook doesn't rescue
+//     a click either — measured: still a 15s timeout), so the NEW click goes
+//     through fireEvent, and real timers are restored before the REVEAL click so
+//     every userEvent interaction in the test body runs on a real clock, exactly
+//     as before.
+//   - the countdown interval self-clears at expiry, but the target's Morse
+//     playback does NOT. play() schedules one end-of-transmission timeout, and
+//     vi.getTimerCount() across this window measures 0 → 1 (the countdown) →
+//     2 at +5000ms (countdown + playback) → 1 at the handback, draining only
+//     after 26s more of fake time. vi.useRealTimers() discards it. Safe here:
+//     that callback only does setPlaying(false), osc.stop() on the no-op Web
+//     Audio mock, and a ref reset — nothing these tests assert. The old
+//     real-clock helper abandoned the SAME timeout and worse, as a live timer
+//     firing into a torn-down tree (its whole test ran 6.9s; the playback needs
+//     ~31s), so the handback is an improvement, not a new liability.
 //
 // COPY also hides the target until it is revealed, so REVEAL is how the test
 // reads back what was actually generated (before CHECK the reveal panel renders
 // the plain string; after CHECK it becomes a per-character CharDiff).
 async function newCopyTarget(user) {
-  await user.click(screen.getByRole("button", { name: /NEW$/ }));
-  await act(() => new Promise((r) => setTimeout(r, 5300)));
+  vi.useFakeTimers();
+  act(() => { fireEvent.click(screen.getByRole("button", { name: /NEW$/ })); });
+  act(() => { vi.advanceTimersByTime(5300); });
+  vi.useRealTimers();
   await user.click(screen.getByRole("button", { name: /REVEAL/ }));
 }
 
