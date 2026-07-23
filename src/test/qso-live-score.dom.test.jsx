@@ -28,7 +28,9 @@ afterEach(() => {
 describe("QSO rail — live running score updates after a graded step", () => {
   it("Copy % appears in the rail only AFTER a copy step is graded (was absent before)", async () => {
     window.localStorage.clear();
-    const user = userEvent.setup();
+    // delay: null drops userEvent's real setTimeout wait between synthetic
+    // events (a no-op cost fix, not a behavior change — see progress-qso.dom.test.jsx).
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "QSO");
@@ -45,7 +47,9 @@ describe("QSO rail — live running score updates after a graded step", () => {
 
     // First step is a DX (receiving) step in NORMAL difficulty → a copy input +
     // CHECK COPY are available in main. Type an answer and grade it.
-    const copyInput = screen.getByRole("textbox", { name: /Your copy of what you heard/i });
+    // Name is the visible caption (a real <label htmlFor>) since the accessible-names
+    // batch replaced the parallel aria-label "Your copy of what you heard".
+    const copyInput = screen.getByRole("textbox", { name: "Your copy — what did you hear?" });
     await user.type(copyInput, "TEST");
     await user.click(screen.getByRole("button", { name: "CHECK COPY" }));
 

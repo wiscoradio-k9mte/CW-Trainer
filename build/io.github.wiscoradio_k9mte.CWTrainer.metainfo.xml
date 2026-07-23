@@ -75,17 +75,45 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="2.4.0" date="2026-07-20" type="stable">
+    <release version="2.4.0" date="2026-07-22" type="stable">
       <description>
-        <p>International and DX operating, plus fairer sending grades:</p>
+        <p>International and DX operating, plus fairer sending grades — with a stack of fixes and refinements from edge testing folded in:</p>
+        <p>New in this release:</p>
         <ul>
           <li>Work the world — a bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer, with two new QSO activities (Work DX and Contest) and a DX walkthrough in the on-air guide.</li>
           <li>Five new sending drills at the hard end of the ladder: DX callsigns, DX exchanges, contest fragments, split and pileup, and abroad callsigns.</li>
           <li>Two copy rungs from a proper word list — "Common words" is now the top 500 of a frequency-ranked list built from public-domain texts, and a new "Wider vocabulary" rung steps up to ranks 1001–5000.</li>
           <li>Your QSO sending is now graded on the elements you actually convey, in any valid on-air form, rather than on matching one scripted wording.</li>
-          <li>Compact option menus and a reworked practice layout that keeps the on-screen key reachable without scrolling — better on small and touch screens.</li>
+          <li>The QSO copy step is reworked around what matters most — reading the other station. Your copy box is now the main input, and the break-in keys tuck behind a "Break in — ask for a repeat" control until you arm them. The prompt now reads "Your copy — what did you hear?", with a reminder to type everything you heard, because the whole transmission is graded.</li>
+          <li>Compact option menus throughout, and the Copy level ladder now uses the app's compact selector — one control instead of a stack of buttons, with every rung's guidance visible. The Learn lesson picker keeps its type-a-number jump, now tidied into a single stepper row.</li>
+          <li>The practice layout keeps the on-screen key reachable without scrolling, down to a small phone screen (375x667) on the Key tab and both QSO keying steps, and the Easy-mode "Sending" readout now scrolls to keep your newest characters in view.</li>
+        </ul>
+        <p>Fixes, from your feedback:</p>
+        <ul>
+          <li>A blank or empty send is no longer scored 100%.</li>
+          <li>Timing ratings — letter spacing, word spacing, and dit/dah weighting — no longer show "good" when there was nothing to measure.</li>
+          <li>Copy accuracy is now tracked separately for Easy, Normal, and Real Life conditions (older records saved without conditions are grouped as "conditions not recorded").</li>
+          <li>On QSO copy steps, the break-in keys (?, AGN, QRS) now work from the keyboard — in earlier versions those keys typed into the copy box instead.</li>
+          <li>STOP now cancels the "Get ready" countdown before playback.</li>
+          <li>When a send can't be scored, the notice now explains why in plain terms — set your callsign in Settings.</li>
+        </ul>
+        <p>Other improvements:</p>
+        <ul>
+          <li>While break-in is armed on a QSO step, the transport controls step aside.</li>
+          <li>Each tab's orientation text (Copy, Key, QSO) now stays collapsed once you start, and is remembered the next time you open the app — Copy gains a hide control it never had.</li>
+          <li>The app footer now shows the version number.</li>
+          <li>Small wording tidy-ups around the QSO steps.</li>
           <li>The support ("Coffee?") link now points to Buy Me a Coffee.</li>
           <li>An arm64 build is now produced and tested natively on every release. It is not yet published to stable, pending validation on real ARM hardware; ARM users can install it from the .snap asset on the GitHub release page.</li>
+        </ul>
+        <p>Accessibility:</p>
+        <ul>
+          <li>The Settings profile fields (callsign, name, QTH) now have real labels, and the QSO copy box, receiver-filter group, cut-numbers toggle, and Settings headings carry proper accessible names (WCAG 2.5.3).</li>
+        </ul>
+        <p>Please note:</p>
+        <ul>
+          <li>A one-time update to your saved progress removes older timing chips that were shown but never actually measured. Your best and last scores are unaffected, and it happens only once.</li>
+          <li>When your QTH is blank or can't be read, the app now leaves the state out of your exchange instead of inventing a "CT" you never sent.</li>
         </ul>
       </description>
     </release>

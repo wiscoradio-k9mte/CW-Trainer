@@ -26,9 +26,14 @@ describe("Fix 1 — QSO DX-step copy input accessible name", () => {
     // Ragchew "Answer a CQ" opens on step 0 which is a DX step.  Non-easy difficulty
     // (default NORMAL) renders the copy input immediately — no countdown gate.
     // findByRole polls until the element is present (or the 1 s default timeout fires).
-    // An absent aria-label would make this resolve to null and the assertion below would
+    // An absent label would make this resolve to null and the assertion below would
     // fail, biting on any label regression.
-    const copyInput = await screen.findByRole("textbox", { name: /Your copy of what you heard/i });
+    // The name is now the input's own visible caption (a real <label htmlFor>), not the
+    // parallel aria-label "Your copy of what you heard" this used to assert — the two
+    // did not share a full string, which was the WCAG 2.5.3 defect. Matching the exact
+    // visible caption is the stronger check: it fails both if the label vanishes and if
+    // the accessible name ever drifts from what a sighted user reads.
+    const copyInput = await screen.findByRole("textbox", { name: "Your copy — what did you hear?" });
     expect(copyInput).toBeInTheDocument();
   });
 });
@@ -225,7 +230,9 @@ describe("Fix 7 — ephemeral session summary on BACK from LEARN drill", () => {
     // v2.0 (cross-session history) — it is a legitimate new key, not a leak.
     const keys = Object.keys(window.localStorage);
     for (const key of keys) {
-      expect(key).toMatch(/^wrcw:(kochLesson|settings|introKeyCollapsed|seenCallNudge|progress)$/);
+      // introCopyCollapsed / introQsoCollapsed are the COPY and QSO siblings of
+      // introKeyCollapsed — one intro-disclosure flag per practice tab.
+      expect(key).toMatch(/^wrcw:(kochLesson|settings|intro(Copy|Key|Qso)Collapsed|seenCallNudge|progress)$/);
     }
   });
 });
@@ -379,9 +386,15 @@ describe("M4 — Tag verdict chips include verdict text", () => {
     // The invariant under test: Tag renders {children}, and children is
     // "letters: good" / "words: loose" etc.  A regression that strips the
     // verdict word (e.g. rendering only a color dot) would make getByText fail.
+    //
+    // CONTRACT CHANGE (fix/unmeasured-spacing-verdicts): the seed is now
+    // schemaVersion 2.  A v1 record's "good" is ambiguous — v1 wrote "good" both
+    // for measured-good and for never-measured — so migrateProgress demotes it
+    // to null and no chip renders.  A v2 "good" is a real measurement, which is
+    // both what this test needs and the case that must keep reading as praise.
     window.localStorage.clear();
     window.localStorage.setItem("wrcw:progress", JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       learn: [],
       copy:  [],
       key: [{
@@ -411,7 +424,7 @@ describe("M4 — Tag verdict chips include verdict text", () => {
     // If the verdict WORD were dropped and only color remained, these would fail.
     expect(screen.getByText(/letters:\s*good/i)).toBeInTheDocument();
     expect(screen.getByText(/words:\s*loose/i)).toBeInTheDocument();
-    // weightingVerdict "tight" is only shown when !== "good" — it is "tight" here.
+    // weightingVerdict is shown whenever it was measured; it is "tight" here.
     expect(screen.getByText(/weighting:\s*tight/i)).toBeInTheDocument();
   });
 });

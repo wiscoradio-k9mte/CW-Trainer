@@ -41,9 +41,15 @@ describe("COPY relocation — WIDE: options live in the rail, practice in main",
     // this fail if the portal regressed to inline-in-main.
     expect(within(rail).getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(within(rail).getByText("Conditions")).toBeInTheDocument();
-    // A representative rung lives in the rail (level ladder unchanged — still buttons).
-    expect(within(rail).getByRole("button", { name: /1 character/ })).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /Callsigns/ })).toBeInTheDocument();
+    // The level ladder is now a CompactSelect too; open it and confirm its rungs
+    // are reachable from within the rail (proving the portal targets railEl).
+    // Stronger than the old "a rung button exists" check: it asserts the rung's
+    // selected state and its guidance description are both in the rail.
+    const ladder = within(rail).getByRole("combobox", { name: /What to copy/ });
+    await user.click(ladder);
+    expect(within(rail).getByRole("option", { name: /1 character/ })).toHaveAttribute("aria-selected", "true");
+    expect(within(rail).getByRole("option", { name: /Callsigns/ })).toHaveAttribute("aria-selected", "false");
+    await user.keyboard("{Escape}");
     // Conditions is a CompactSelect combobox in the rail; open it to confirm its
     // options are reachable from within the rail (the portal targets railEl).
     await user.click(within(rail).getByRole("combobox", { name: "Conditions" }));
@@ -62,7 +68,8 @@ describe("COPY relocation — WIDE: options live in the rail, practice in main",
     const main = screen.getByRole("main");
     expect(within(main).queryByText("What to copy — climb as you improve")).not.toBeInTheDocument();
     expect(within(main).queryByText("Conditions")).not.toBeInTheDocument();
-    expect(within(main).queryByRole("button", { name: /1 character/ })).not.toBeInTheDocument();
+    // The level ladder combobox was relocated to the rail — not in main.
+    expect(within(main).queryByRole("combobox", { name: /What to copy/ })).not.toBeInTheDocument();
     // The Conditions combobox was relocated to the rail — not in main.
     expect(within(main).queryByRole("combobox", { name: "Conditions" })).not.toBeInTheDocument();
   });
@@ -102,19 +109,24 @@ describe("COPY relocation — WIDE: options live in the rail, practice in main",
     expect(within(main).getAllByRole("status").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("selecting a level from the rail control updates the pressed state", async () => {
+  it("selecting a level from the rail control updates the committed value", async () => {
     const { user } = await renderApp();
     await gotoTab(user, "COPY");
 
     const rail = screen.getByRole("complementary", { name: "Options" });
-    // Default source is "single" (1 character).
-    expect(within(rail).getByRole("button", { name: /1 character/ })).toHaveAttribute("aria-pressed", "true");
-    // Click a different rung from inside the rail — the handler closes over local
+    const ladder = within(rail).getByRole("combobox", { name: /What to copy/ });
+    // Default source is "single" (rung 1, "1 character") — read off the trigger,
+    // which is the value a user actually sees when the menu is closed.
+    expect(ladder).toHaveTextContent("1 — 1 character");
+    // Commit a different rung from inside the rail — the handler closes over local
     // state, so selection works even though the control is portaled.
-    const groups = within(rail).getByRole("button", { name: /Letter groups/ });
-    await user.click(groups);
-    expect(groups).toHaveAttribute("aria-pressed", "true");
-    expect(within(rail).getByRole("button", { name: /1 character/ })).toHaveAttribute("aria-pressed", "false");
+    await user.click(ladder);
+    await user.click(within(rail).getByRole("option", { name: /Letter groups/ }));
+    expect(ladder).toHaveTextContent("3 — Letter groups");
+    // …and the selected state moved with it (re-open to inspect the rows).
+    await user.click(ladder);
+    expect(within(rail).getByRole("option", { name: /Letter groups/ })).toHaveAttribute("aria-selected", "true");
+    expect(within(rail).getByRole("option", { name: /1 character/ })).toHaveAttribute("aria-selected", "false");
   });
 });
 
@@ -159,7 +171,7 @@ describe("COPY relocation — NARROW: options render inline, no rail", () => {
     // The same setup controls are present inline (in the single column / main).
     expect(screen.getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(screen.getByText("Conditions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /1 character/ })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /What to copy/ })).toHaveTextContent("1 — 1 character");
 
     // And they are inside <main> (inline path), confirming the narrow branch did
     // not portal them away. This fails if optionsJSX is dropped from the narrow
