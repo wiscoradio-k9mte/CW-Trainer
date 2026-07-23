@@ -35,9 +35,19 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 // Render, get past splash. Returns userEvent instance.
+//
+// delay: null drops userEvent's real setTimeout wait between synthetic events
+// (userEvent's own source: a non-numeric delay skips wait() entirely, vs. the
+// default delay:0 which still schedules a real setTimeout). This file's setup
+// helpers and its E2 tests drive several sequential real-timer clicks each;
+// under CI-shaped contention that per-event wait is what crowded the timeout
+// cap. Safe here because no test in this file calls user.* after switching to
+// vi.useFakeTimers() — every fake-timer window drives via fireEvent instead
+// (see the file's per-test comments), so there's no interaction with the
+// "userEvent hangs under fake timers" pitfall.
 async function freshApp() {
   window.localStorage.clear();
-  const user = userEvent.setup();
+  const user = userEvent.setup({ delay: null });
   render(<CWTrainer />);
   await user.click(screen.getByText("tap to skip"));
   return { user };

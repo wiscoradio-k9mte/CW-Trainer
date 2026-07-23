@@ -45,7 +45,11 @@ afterEach(() => {
 // here), so they are located by their current displayed value.
 async function appWithClearedField(currentValue) {
   window.localStorage.clear();
-  const user = userEvent.setup();
+  // delay: null drops userEvent's real setTimeout wait between synthetic events
+  // (a no-op cost fix, not a behavior change — see progress-qso.dom.test.jsx for
+  // the full rationale). This file drives a full ragchew contact per test on
+  // the real clock.
+  const user = userEvent.setup({ delay: null });
   render(<CWTrainer />);
   await user.click(screen.getByText("tap to skip"));
   await user.click(screen.getByRole("button", { name: "Settings" }));

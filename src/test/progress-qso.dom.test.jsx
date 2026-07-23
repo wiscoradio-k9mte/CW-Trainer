@@ -31,9 +31,18 @@ afterEach(() => {
 });
 
 // Render the app past the splash, clear storage first.
+//
+// userEvent.setup({ delay: null }) removes the real `setTimeout` wait userEvent
+// inserts between synthetic events (confirmed in userEvent's own source: a
+// non-numeric `delay` skips its wait() call entirely, vs. the default `delay: 0`
+// which still schedules a real setTimeout). This file drives a FULL multi-step
+// contact (5-10 sequential clicks) on the real clock — under CI-shaped CPU
+// contention those per-event waits are what pushed the worst test past the
+// timeout cap (see vite.config.mjs). No DOM event or assertion changes; only
+// the dead wait time between them is removed.
 async function freshApp() {
   window.localStorage.clear();
-  const user = userEvent.setup();
+  const user = userEvent.setup({ delay: null });
   render(<CWTrainer />);
   await user.click(screen.getByText("tap to skip"));
   return { user };
