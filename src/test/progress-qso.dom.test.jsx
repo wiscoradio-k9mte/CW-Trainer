@@ -224,7 +224,7 @@ describe("PROGRESS graph render — BarTrend", () => {
       key: [], copy: [], qso: [],
     }));
 
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "PROGRESS");
@@ -259,7 +259,7 @@ describe("PROGRESS graph render — BarTrend", () => {
       copy: [], qso: [],
     }));
 
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "PROGRESS");
@@ -289,7 +289,7 @@ describe("PROGRESS graph render — BarTrend", () => {
       qso: [],
     }));
 
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "PROGRESS");
@@ -304,7 +304,7 @@ describe("PROGRESS graph render — BarTrend", () => {
   });
 
   it("QSO section shows empty state before any contacts", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "PROGRESS");
@@ -323,7 +323,7 @@ describe("PROGRESS graph render — BarTrend", () => {
       ],
     }));
 
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "PROGRESS");

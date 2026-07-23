@@ -52,12 +52,15 @@ export default defineConfig({
     // makes `wait()` a same-tick no-op (a non-numeric delay skips the setTimeout
     // entirely) — no DOM events change, only the dead time between them.
     //
-    // Applied to the six jsdom files that drive part or all of a real QSO contact
+    // Applied to the jsdom files that drive part or all of a real QSO contact
     // with real-timer userEvent: progress-qso, qso-live-score, qso-autoadvance,
-    // qth-state-fallback, qso-blank-required-element, qso-send-grading. No test
-    // needed a fake-timer rewrite — qso-autoadvance already switches to
-    // vi.useFakeTimers() + fireEvent for its timed windows (never user.* once fake
-    // timers are on), so delay:null and that pattern don't collide.
+    // qth-state-fallback, qso-blank-required-element, qso-send-grading, AND
+    // cut-number-scoping (a real-clock userEvent drive that idle looked fine at
+    // ~1.5s but was carded as a 13.9s-under-load timeout — the delay:null sweep
+    // dropped it out of the suite's slowest 12 entirely). No test needed a
+    // fake-timer rewrite — qso-autoadvance already switches to vi.useFakeTimers()
+    // + fireEvent for its timed windows (never user.* once fake timers are on),
+    // so delay:null and that pattern don't collide.
     //
     // Measured with --reporter=json, matching the method the old comment used
     // (idle vs. --maxWorkers=2 + 8 CPU hogs on this 8-core box), 3 repeats each
@@ -84,6 +87,14 @@ export default defineConfig({
     // same test) without re-opening the old crowded-cap problem. Still a 67%
     // reduction from the prior 30000ms. A wrong assertion still fails in
     // milliseconds; only a genuine hang would ever approach this cap.
+    //
+    // Cap safety re-verified UNDER LOAD (2026-07-23): a full 844-test run pinned
+    // to 2 cores (taskset -c 0,1 — harsher than a real 2-core CI runner, which
+    // caps workers rather than over-subscribing) → 815 passed / 0 failed, and the
+    // worst test was 5554ms (narrow's deliberate-wait). Every test cleared 10000ms
+    // with >=44% margin. Because delay:null removed the CPU-bound userEvent
+    // ballooning, only the fixed deliberate waits remain, and a fixed wall-clock
+    // wait does not grow under CPU contention — which is why the cap holds.
     testTimeout: 10000,
   },
 });

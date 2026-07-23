@@ -77,7 +77,7 @@ async function newCopyTarget(user) {
 describe("COPY callsign rung — a cut-digit mis-copy is not a perfect copy", () => {
   it("typing 9890 for the callsign N8NT scores 36%, not 100%", async () => {
     window.localStorage.clear();
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "COPY");
@@ -107,7 +107,7 @@ describe("COPY callsign rung — a cut-digit mis-copy is not a perfect copy", ()
     // negative on the rung where cut numbers are the point. QSO phrases carry a
     // literal "UR 5NN 5NN BK".
     window.localStorage.clear();
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "COPY");
@@ -156,7 +156,7 @@ describe("KEY callsign drill — keying cut digits into a callsign is an error",
   it("keying 9890 for the target N8NT scores 25%, not 100%", async () => {
     window.localStorage.clear();
     window.localStorage.setItem("wrcw:settings", JSON.stringify({ keyType: "straight" }));
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<CWTrainer />);
     await user.click(screen.getByText("tap to skip"));
     await gotoTab(user, "KEY");
