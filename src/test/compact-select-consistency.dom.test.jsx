@@ -85,4 +85,81 @@ describe("CompactSelect — all five uses share one role structure", () => {
     // The section's own side effect also fired: EASY reveals its helper line.
     expect(screen.getByText(/letter by letter as it plays/)).toBeInTheDocument();
   });
+
+  it("COPY level ladder is a CompactSelect combobox and commits a change", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "COPY");
+    await assertSharedCompactSelect(user, /What to copy/, /Ham words/, "6 — Ham words");
+  });
+});
+
+// T1 — the COPY ladder must be the SAME component as KEY's category selector, not
+// a look-alike. Rather than trust that both call CompactSelect, this compares the
+// two triggers' full ARIA contracts attribute-by-attribute: same role, same
+// haspopup, same collapsed/expanded transitions, same aria-controls→listbox wiring,
+// same aria-activedescendant→option-row wiring, and a name that comes from the
+// visible section label (aria-labelledby) rather than the current value.
+//
+// A forked copy of the control — or a variant flag that changed the ladder's
+// markup — would diverge on at least one of these and turn this red.
+describe("COPY level ladder exposes the identical ARIA contract as KEY drill category", () => {
+  async function contractOf(user, comboName) {
+    const trigger = screen.getByRole("combobox", { name: comboName });
+    const closed = {
+      tag: trigger.tagName,
+      role: trigger.getAttribute("role"),
+      haspopup: trigger.getAttribute("aria-haspopup"),
+      expanded: trigger.getAttribute("aria-expanded"),
+      // The name is carried by aria-labelledby pointing at the visible label, so a
+      // value change never renames the control.
+      namedBy: trigger.hasAttribute("aria-labelledby"),
+      labelText: document.getElementById(trigger.getAttribute("aria-labelledby"))?.textContent,
+      activedescendant: trigger.getAttribute("aria-activedescendant"),
+    };
+
+    await user.click(trigger);
+    const listbox = screen.getByRole("listbox");
+    const active = document.getElementById(trigger.getAttribute("aria-activedescendant"));
+    const open = {
+      expanded: trigger.getAttribute("aria-expanded"),
+      // aria-controls resolves to the open listbox…
+      controlsIsListbox: document.getElementById(trigger.getAttribute("aria-controls")) === listbox,
+      listboxRole: listbox.getAttribute("role"),
+      listboxNamedBy: listbox.getAttribute("aria-labelledby") === trigger.getAttribute("aria-labelledby"),
+      // …and aria-activedescendant resolves to an option row inside it.
+      activeIsOptionInListbox: !!active && active.getAttribute("role") === "option" && listbox.contains(active),
+      optionsAllHaveSelected: within(listbox).getAllByRole("option").every((o) => o.hasAttribute("aria-selected")),
+    };
+    await user.keyboard("{Escape}");
+    return { closed, open };
+  }
+
+  it("matches on every ARIA attribute of the contract", async () => {
+    const { user } = await renderApp();
+
+    await gotoTab(user, "KEY");
+    const key = await contractOf(user, /Drill category/);
+
+    await gotoTab(user, "COPY");
+    const copy = await contractOf(user, /What to copy/);
+
+    // Sanity: the two are genuinely different controls with different labels…
+    expect(key.closed.labelText).toBe("Drill category — climb as you improve");
+    expect(copy.closed.labelText).toBe("What to copy — climb as you improve");
+
+    // …and identical in every other respect.
+    expect(copy.closed).toEqual({ ...key.closed, labelText: copy.closed.labelText });
+    expect(copy.open).toEqual(key.open);
+
+    // Pin the actual contract values, so this can't pass by both sides being
+    // equally wrong (e.g. both losing role="combobox").
+    expect(copy.closed).toMatchObject({
+      tag: "BUTTON", role: "combobox", haspopup: "listbox",
+      expanded: "false", namedBy: true, activedescendant: null,
+    });
+    expect(copy.open).toMatchObject({
+      expanded: "true", controlsIsListbox: true, listboxRole: "listbox",
+      listboxNamedBy: true, activeIsOptionInListbox: true, optionsAllHaveSelected: true,
+    });
+  });
 });

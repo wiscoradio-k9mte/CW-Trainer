@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   MORSE, REV, similarity, timing,
   gradeSend, similarityCw, canonicalizeCw,
+  CUT_TOLERANT_COPY_SOURCES, CUT_TOLERANT_KEY_DRILLS,
+  decodeChar, DECODE_PROSIGNS, KOCH,
   isWellFormedRst, isRstReport, courtesyForms, numericForms,
   COURTESY_EQUIVALENTS,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
-  cutNum, isReadyToAdvance,
+  cutNum, isReadyToAdvance, required, isBlankElement,
   PROSIGNS, PROSIGN_CODES, QCODES_ABBREV, DRILL_CATEGORIES,
   drillCallsign, drillCallingCq, drillRstExchange, drillNumbers,
   drillProsigns, drillQCodes, drillCommonWords, drillWiderWords, drillQsoLine,
@@ -18,6 +20,7 @@ import {
   PROGRESS_RETENTION, PROGRESS_SCHEMA_VERSION,
   emptyProgress, appendProgress, migrateProgress,
   learnTrend, keyTrend, copyTrend,
+  COPY_CONDITIONS, copyConditionsLabel,
   toneFor, qsoTrend,
   splashSignature,
   US_PREFIXES,
@@ -25,7 +28,10 @@ import {
   randDxStation, randDxFieldStation, randPark, zoneToken, reciprocalCall,
   drillDxCallsigns, drillDxExchange, drillContestFragments,
   drillSplitPileup, drillReciprocalCalls,
+  stateOf, subTokens, resolveUSState, QSO_PHRASES,
 } from "./cw-core.js";
+import { CALL_AREA_DIGITS, withCallArea } from "./data/dxcc-generation.js";
+import { resolveEntity } from "./data/dxcc-resolve.js";
 
 // ---------------------------------------------------------------------------
 // MORSE round-trip
@@ -271,6 +277,165 @@ describe("similarityCw() — fidelity grade with cut tolerance", () => {
     expect(similarityCw("PARIS", "PARIS")).toBe(1);
     expect(similarityCw("K", "K")).toBe(1);
     expect(similarityCw("DIPOLE", "DIPOLE")).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cut-number scoping — the 2.4.0 regression.
+//
+// The shipped rule normalised any [0-9NT]+ RUN anywhere in the string, so a
+// callsign's N/T were rewritten on BOTH sides of the comparison and a WRONG
+// callsign copy scored 100% "SOLID COPY". Cut numbers are never used inside a
+// callsign on the air — the N in N4ABC is the letter N.
+//
+// MUTATION PROOF (run and watched go red): restoring the old body of
+// canonicalizeCw —
+//     .replace(/[0-9NT]+/g, (run) => /[0-9]/.test(run)
+//       ? run.replace(/N/g,"9").replace(/T/g,"0") : run)
+// — turns every assertion in "callsigns are never cut-normalised" red (each
+// mis-copy scores 1 instead of its true partial score).
+// ---------------------------------------------------------------------------
+describe("canonicalizeCw() — cut normalization is scoped to whole cut tokens", () => {
+  it("callsigns are never cut-normalised (the leak that scored a wrong copy 100%)", () => {
+    // The three cases measured on 2.4.0. Each callsign carries a letter outside
+    // the cut alphabet, so the token is not a cut token and must pass through.
+    expect(canonicalizeCw("N4ABC")).toBe("N4ABC");
+    expect(canonicalizeCw("N0TU")).toBe("N0TU");
+    expect(canonicalizeCw("WT9XY")).toBe("WT9XY");
+    expect(canonicalizeCw("K9MTE")).toBe("K9MTE");
+    // ...and inside a sentence, beside a real cut token that DOES normalise.
+    expect(canonicalizeCw("DE N4ABC UR 5NN")).toBe("DE N4ABC UR 599");
+  });
+
+  it("a mis-copied callsign is graded as the error it is, not 100%", () => {
+    // Each of these read 100% SOLID COPY on 2.4.0. One substituted character
+    // out of the callsign's length is the honest score.
+    expect(similarityCw("N4ABC", "94ABC")).toBeCloseTo(0.8, 5);   // was 1
+    expect(similarityCw("N0TU", "90TU")).toBeCloseTo(0.75, 5);    // was 1
+    expect(similarityCw("WT9XY", "W09XY")).toBeCloseTo(0.8, 5);   // was 1
+    // The cut-habit version of the same mistake: keying N where the 9 belongs.
+    expect(similarityCw("K9MTE", "KNMTE")).toBeCloseTo(0.8, 5);
+  });
+
+  it("the intended exchange tolerance survives untouched", () => {
+    expect(canonicalizeCw("5NN")).toBe("599");
+    expect(canonicalizeCw("T5")).toBe("05");
+    expect(canonicalizeCw("TT1")).toBe("001");
+    expect(similarityCw("5NN", "599")).toBe(1);
+    expect(similarityCw("T5", "05")).toBe(1);
+    expect(similarityCw("TT1", "001")).toBe(1);
+    expect(similarityCw("UR 5NN 5NN BK", "UR 599 599 BK")).toBe(1);
+  });
+
+  it("SAFETY: every verified letter-run stays intact", () => {
+    // The full list carried by the brief. A digit-free token can never be a cut
+    // token, so none of these may change under any rule we adopt.
+    const letterRuns = [
+      "NAME", "TU", "TNX", "NAME IS TRAV", "TNX FER CALL", "ANT", "NR",
+      "NT", "TN", "N", "T", "NN", "TT", "QTH NEWINGTON CT", "TEST",
+      "CONTEST", "KN", "NOTE",
+    ];
+    for (const s of letterRuns) expect(canonicalizeCw(s)).toBe(s);
+  });
+
+  it("a correct copy still scores 100% on both kinds of content", () => {
+    // The fix must never overshoot into a false negative.
+    expect(similarityCw("N4ABC", "N4ABC")).toBe(1);
+    expect(similarityCw("CQ CQ DE K9MTE K", "CQ CQ DE K9MTE K")).toBe(1);
+    expect(similarityCw("UR 5NN 5NN BK", "UR 5NN 5NN BK")).toBe(1);
+  });
+});
+
+describe("similarityCw() — the {cut:false} rungs grade strictly", () => {
+  // Second layer: the whole-token rule alone still equates an all-cut-alphabet
+  // token, e.g. the random COPY letter-group "N4T" or a callsign like N8NT.
+  // Rungs whose content has no exchange numbers turn the equivalence off.
+  it("an all-cut-alphabet token is tolerated only where exchanges live", () => {
+    expect(similarityCw("N4T", "940", { cut: true })).toBe(1);
+    // Strict: only the shared "4" / "8" survives — 2 of 3 and 3 of 4 real errors.
+    expect(similarityCw("N4T", "940", { cut: false })).toBeCloseTo(1 / 3, 5);
+    expect(similarityCw("N8NT", "9890", { cut: true })).toBe(1);
+    expect(similarityCw("N8NT", "9890", { cut: false })).toBeCloseTo(0.25, 5);
+  });
+
+  it("{cut:false} never penalises a genuinely correct copy", () => {
+    expect(similarityCw("N4T", "N4T", { cut: false })).toBe(1);
+    expect(similarityCw("N8NT WT9XY", "N8NT WT9XY", { cut: false })).toBe(1);
+  });
+
+  it("the cut-tolerant rung lists name real rungs, and no callsign rung", () => {
+    // A typo here would silently switch a rung's grading, so pin the membership
+    // against the registry itself rather than trusting the strings.
+    const drillIds = new Set(DRILL_CATEGORIES.map((c) => c.id));
+    for (const id of CUT_TOLERANT_KEY_DRILLS) expect(drillIds.has(id)).toBe(true);
+    for (const id of ["callsigns", "dxcalls", "recip", "split", "cq"]) {
+      expect(CUT_TOLERANT_KEY_DRILLS.has(id)).toBe(false);
+    }
+    // COPY: the two rungs that carry 599/5NN in their content, and only those.
+    expect([...CUT_TOLERANT_COPY_SOURCES].sort()).toEqual(["hamwords", "phrases"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// decodeChar() — the live decoder reads back what the app teaches and plays.
+//
+// The Prosigns drill tells the operator "BT, AR, SK, and KN are sent as a single
+// run-together sound", HEAR IT plays them fused, and then the decoder rendered ■
+// for SK and KN and "+" for AR — so following the instructions graded as an
+// error and the auto-grade length trigger could never be reached.
+//
+// MUTATION PROOF (run and watched go red): reverting finalizeChar to
+// `REV[bufRef.current] || "■"` turns the KEY end-to-end test in
+// prosign-decode.dom.test.jsx red, and emptying DECODE_PROSIGNS turns the
+// round-trip test below red.
+// ---------------------------------------------------------------------------
+describe("decodeChar() — fused prosigns decode to what the target shows", () => {
+  it("decodes the three fused prosign codes to their taught spelling", () => {
+    expect(decodeChar("...-.-")).toBe("SK");
+    expect(decodeChar("-.--.")).toBe("KN");
+    expect(decodeChar(".-.-.")).toBe("AR");
+    // BT keeps REV's "=" — that is exactly how the drill and QSO scripts spell it.
+    expect(decodeChar("-...-")).toBe("=");
+  });
+
+  it("ordinary characters and unknown patterns are unchanged", () => {
+    expect(decodeChar("....")).toBe("H");
+    expect(decodeChar("-----")).toBe("0");
+    expect(decodeChar("..--..")).toBe("?");
+    expect(decodeChar("-..-.")).toBe("/");
+    expect(decodeChar("........")).toBe("■"); // still marks a bad send
+    expect(decodeChar("")).toBe("■");
+  });
+
+  it("BLAST RADIUS: the overlay displaces no character the app can target", () => {
+    // Every overridden code must be unreachable as a normal character, or adding
+    // it would silently change an existing decode.
+    for (const code of Object.keys(DECODE_PROSIGNS)) {
+      const displaced = REV[code];            // "+" for AR; undefined for SK/KN
+      if (displaced !== undefined) {
+        // "+" is the MORSE alias for AR. It must not be in the Koch pool, or a
+        // LEARN/COPY target could ask for a character the decoder no longer emits.
+        expect(KOCH).not.toContain(displaced);
+        expect(displaced).toBe("+");
+      }
+    }
+    // And no Koch character's code collides with an overlay entry.
+    for (const ch of KOCH) expect(DECODE_PROSIGNS[MORSE[ch]]).toBeUndefined();
+  });
+
+  it("what toCodes PLAYS, decodeChar READS BACK — for the whole prosign drill", () => {
+    // The round trip that the reported bug broke: play a prosign target through
+    // the tokenizer, decode each emitted code, and get the original string back.
+    const decode = (text) =>
+      toCodes(text)
+        .map((tok) => (tok.wordGap ? " " : decodeChar(tok.code)))
+        .join("");
+    expect(decode("AR SK KN =")).toBe("AR SK KN =");
+    expect(decode("SK KN AR BK")).toBe("SK KN AR BK");
+    expect(decode("AR AR SK KN =")).toBe("AR AR SK KN =");
+    expect(decode("W4? KN")).toBe("W4? KN");   // the split-drill fragment
+    // Every prosign the drill can draw survives the round trip.
+    for (const p of PROSIGNS) expect(decode(p)).toBe(p);
   });
 });
 
@@ -915,14 +1080,19 @@ function makeFistFromMorse(wpm, morseStr, charGapMultiplier = 1, wordGapMultipli
 }
 
 describe("analyzeFist()", () => {
-  it("empty events → safe zeros, no NaN, no throw", () => {
+  // CONTRACT CHANGE (fix/unmeasured-spacing-verdicts): this test previously
+  // asserted all three verdicts were "good" for an empty event list. That was
+  // the defect — nothing was keyed, so nothing was measured, and "good" was a
+  // fabricated claim. The verdict for a never-measured reading is now null.
+  it("empty events → safe zeros, no NaN, no throw, and NO verdicts (nothing measured)", () => {
     const r = analyzeFist([], 20, "straight");
     expect(r.estWpm).toBe(0);
     expect(r.elements).toBe(0);
     expect(r.unitMs).toBe(0);
-    expect(r.spacing.element.verdict).toBe("good");
-    expect(r.spacing.character.verdict).toBe("good");
-    expect(r.spacing.word.verdict).toBe("good");
+    expect(r.spacing.element.verdict).toBeNull();
+    expect(r.spacing.character.verdict).toBeNull();
+    expect(r.spacing.word.verdict).toBeNull();
+    expect(r.weighting.verdict).toBeNull();
     expect(Array.isArray(r.notes)).toBe(true);
   });
 
@@ -978,16 +1148,26 @@ describe("analyzeFist()", () => {
     expect(r.spacing.character.verdict).toBe("tight");
   });
 
-  it("paddle mode → element.verdict is always 'good' (suppressed)", () => {
+  // CONTRACT CHANGE: suppression used to be expressed as verdict "good", which
+  // read to the operator as praise for machine-timed spacing. Suppressed now
+  // means "not measured" — null ratio, null verdict.
+  it("paddle mode → element spacing is not measured (ratio and verdict null)", () => {
     const unitMs = 60;
-    // Even with terrible intra-element spacing it must be suppressed for paddle
+    // Gaps must be < 2u to land in the ELEMENT bucket at all. This test used to
+    // feed 5u gaps, which bucket as WORD gaps — so elemRatio was null whatever
+    // the suppression did, and the assertion could not fail. 1.6u is a real
+    // element gap and a bad one (60% off the 1u ideal), so the straight-key
+    // control below proves there is something here to suppress.
     const events = [
       { type: "dit", durMs: unitMs, gapBeforeMs: 0 },
-      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 5 * unitMs }, // terrible element gap
-      { type: "dit", durMs: unitMs, gapBeforeMs: 5 * unitMs },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: 1.6 * unitMs },
+      { type: "dit", durMs: unitMs, gapBeforeMs: 1.6 * unitMs },
     ];
+    expect(analyzeFist(events, 20, "straight").spacing.element.verdict).toBe("loose");
+
     const r = analyzeFist(events, 20, "paddle");
-    expect(r.spacing.element.verdict).toBe("good");
+    expect(r.spacing.element.verdict).toBeNull();
+    expect(r.spacing.element.ratio).toBeNull();
   });
 
   it("median-based unitMs: one absurd outlier dah barely moves estWpm", () => {
@@ -1043,8 +1223,9 @@ describe("analyzeFist()", () => {
     ];
     const r = analyzeFist(events, 20, "paddle");
 
-    // Element verdict MUST be suppressed for paddle
-    expect(r.spacing.element.verdict).toBe("good");
+    // Element verdict MUST be suppressed for paddle — CONTRACT CHANGE: suppressed
+    // is now null ("not measured"), not "good".
+    expect(r.spacing.element.verdict).toBeNull();
 
     // Character verdict: 4u gap → ratio 4/3 ≈ 1.33 deviation from ideal 3
     // deviation = |4-3|/3 = 33% > 25% → loose
@@ -1056,6 +1237,87 @@ describe("analyzeFist()", () => {
 
     // estWpm should be in a reasonable range (based on dit durations = 60ms)
     expect(r.estWpm).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// analyzeFist() — the NOT-MEASURED rule (fix/unmeasured-spacing-verdicts)
+// ---------------------------------------------------------------------------
+// The defect: verdict(null, ideal) returned "good", so a drill made of single
+// characters or callsigns — which contain no word gaps at all — still reported
+// "words: good". The app praised a skill it never observed.
+describe("analyzeFist() — a verdict only exists when it was measured", () => {
+  const unitMs = 60; // 20 wpm
+
+  // A callsign is one word: element gaps and letter gaps, never a word gap.
+  // Real content (W1AW-shaped: .-- .---- .- .--) rather than an idealized
+  // synthetic run, so the fixture matches what a KEY drill actually produces.
+  const callsignFist = [
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },              // W: .
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs },     // 1: .   (letter gap)
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs },     // A: .   (letter gap)
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs },     // W: .   (letter gap)
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+    { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },         //    -
+  ];
+
+  it("a drill with no word gaps reports NO word verdict (not 'good')", () => {
+    const r = analyzeFist(callsignFist, 20, "straight");
+    // Nothing in the send was a word gap, so there is nothing to judge.
+    expect(r.spacing.word.ratio).toBeNull();
+    expect(r.spacing.word.verdict).toBeNull();
+    // …while the gaps that WERE sent are still judged normally.
+    expect(r.spacing.element.verdict).toBe("good");
+    expect(r.spacing.character.verdict).toBe("good");
+  });
+
+  it("the unmeasured word gap produces no note either", () => {
+    const r = analyzeFist(callsignFist, 20, "straight");
+    expect(r.notes.some((n) => n.includes("word spacing"))).toBe(false);
+  });
+
+  // T2 — the fix must not silence real praise. Same fixture plus genuine 7u
+  // word gaps: the word verdict must come back and must read "good".
+  it("real word gaps near the 7u ideal DO report 'good'", () => {
+    const withWordGaps = [
+      ...callsignFist,
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // word gap
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // word gap
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+    ];
+    const r = analyzeFist(withWordGaps, 20, "straight");
+    expect(r.spacing.word.ratio).toBeCloseTo(7, 1);
+    expect(r.spacing.word.verdict).toBe("good");
+    // and letters/elements are unaffected
+    expect(r.spacing.character.verdict).toBe("good");
+    expect(r.spacing.element.verdict).toBe("good");
+  });
+
+  it("a single character reports neither a letter nor a word verdict", () => {
+    // "A" = .- : one element gap, no letter gap, no word gap.
+    const r = analyzeFist([
+      { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },
+      { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+    ], 20, "straight");
+    expect(r.spacing.element.verdict).toBe("good"); // the one gap that exists
+    expect(r.spacing.character.verdict).toBeNull();
+    expect(r.spacing.word.verdict).toBeNull();
+  });
+
+  it("every suppressed/absent reading uses the same shape: ratio null, verdict null", () => {
+    // One rule, three readings — this is the consistency the fix exists to hold.
+    const paddle = analyzeFist(callsignFist, 20, "paddle");
+    expect(paddle.spacing.element).toEqual({ ratio: null, verdict: null }); // machine-timed
+    expect(paddle.spacing.word).toEqual({ ratio: null, verdict: null });    // no word gaps sent
+    expect(paddle.weighting).toEqual({ ratio: null, verdict: null });       // machine-timed
   });
 });
 
@@ -1797,7 +2059,8 @@ describe("analyzeFist() — B3: weighting (straight key only)", () => {
     expect(r.weighting.verdict).toBe("tight");
   });
 
-  it("paddle mode → weighting suppressed regardless of dah length (ratio null, verdict 'good')", () => {
+  // CONTRACT CHANGE: suppressed weighting reports verdict null, not "good".
+  it("paddle mode → weighting suppressed regardless of dah length (ratio and verdict null)", () => {
     // Even absurdly long dahs (5u) should be suppressed for paddle
     const events = [
       { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },
@@ -1806,17 +2069,19 @@ describe("analyzeFist() — B3: weighting (straight key only)", () => {
       { type: "dah", durMs: 5 * unitMs, gapBeforeMs: unitMs },
     ];
     const r = analyzeFist(events, 20, "paddle");
-    expect(r.weighting.verdict).toBe("good");
+    expect(r.weighting.verdict).toBeNull();
     expect(r.weighting.ratio).toBeNull();
   });
 
-  it("all-dits sequence (no dahs) → weighting.ratio null, verdict 'good' (no throw)", () => {
+  // CONTRACT CHANGE: an all-dit send has no dahs to weigh, so there is no
+  // verdict — it used to report "good" for dah length the operator never sent.
+  it("all-dits sequence (no dahs) → weighting.ratio null, verdict null (no throw)", () => {
     const events = Array.from({ length: 8 }, (_, i) => ({
       type: "dit", durMs: unitMs, gapBeforeMs: i === 0 ? 0 : unitMs,
     }));
     const r = analyzeFist(events, 20, "straight");
     expect(r.weighting.ratio).toBeNull();
-    expect(r.weighting.verdict).toBe("good");
+    expect(r.weighting.verdict).toBeNull();
   });
 
   it("loose weighting produces a note string about dahs running long", () => {
@@ -1915,7 +2180,8 @@ describe("analyzeFist() — bug mode semantics", () => {
   // confirm they produce a non-good verdict in straight mode, and that bug suppresses
   // the same verdict.
   // Bites: if the element-spacing guard stops including "bug".
-  it("A2: keyType='bug' with bad element gaps → element.verdict === 'good' (suppressed)", () => {
+  // CONTRACT CHANGE: suppressed is now null ("not measured"), not "good".
+  it("A2: keyType='bug' with bad element gaps → element.verdict is null (suppressed)", () => {
     // Element gap must be ratio < 2u to land in the element-gap bucket.
     // 1.6u is loose: |1.6 - 1| / 1 = 60% > 25% FIST_TOLERANCE → verdict = "loose".
     const badGap = [
@@ -1931,7 +2197,7 @@ describe("analyzeFist() — bug mode semantics", () => {
     expect(straight.spacing.element.verdict).not.toBe("good"); // "loose"
     // For bug it must be suppressed:
     const bug = analyzeFist(badGap, WPM, "bug");
-    expect(bug.spacing.element.verdict).toBe("good");
+    expect(bug.spacing.element.verdict).toBeNull();
   });
 
   // A3: long dahs on a bug (durMs ≈ 5u) → weighting verdict is "loose".
@@ -1947,7 +2213,7 @@ describe("analyzeFist() — bug mode semantics", () => {
   });
 
   // Sanity: verify "bug" is NOT accidentally treated as "paddle" anywhere.
-  // If it were, weighting would be null and element verdict would be "good" for all inputs.
+  // If it were, weighting would be null for all inputs (paddle suppresses it).
   // A1 catches the weighting half; this pins the element-spacing suppression path directly.
   it("A4: keyType='bug' is NOT the string 'paddle' — paddle guard does not fire", () => {
     const events = bugStream();
@@ -2045,9 +2311,9 @@ describe("migrateProgress()", () => {
 
   it("mismatched schemaVersion → data is carried forward, version stamped current", () => {
     // Old behaviour: wiped. New behaviour: carry forward through the migration
-    // ladder (PROGRESS_MIGRATIONS). With no migrations registered (only v1 exists),
-    // learn/key/copy arrays pass through untouched and the version is stamped current.
-    // schemaVersion:0 simulates a pre-v1 blob (e.g. written before the field existed).
+    // ladder (PROGRESS_MIGRATIONS). schemaVersion:0 simulates a pre-v1 blob (e.g.
+    // written before the field existed); a LEARN record has no verdict fields, so
+    // the v1→v2 transform leaves it byte-identical.
     const oldBlob = {
       schemaVersion: 0,
       learn: [{ t: 1, lesson: 1, attempts: 10, correct: 9, pct: 90 }],
@@ -2060,6 +2326,74 @@ describe("migrateProgress()", () => {
     expect(p.learn[0].pct).toBe(90);
     // Version is stamped to the current schema.
     expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  // -------------------------------------------------------------------------
+  // v1 → v2: unproven "good" verdicts (fix/unmeasured-spacing-verdicts)
+  // -------------------------------------------------------------------------
+  // A v1 build wrote "good" both for measured-good AND for never-measured, so a
+  // stored v1 "good" is a claim we cannot stand behind. The migration drops it —
+  // and drops nothing else.
+  describe("v1 → v2 KEY verdicts", () => {
+    const v1KeyRecord = {
+      t: 1700000000000, category: "callsigns", keyType: "straight",
+      copyPct: 85, estWpm: 18, wpmVerdict: "on target",
+      elementVerdict: "good", letterVerdict: "good",
+      wordVerdict: "good", weightingVerdict: "loose", weightingRatio: 3.9,
+    };
+
+    it("demotes an ambiguous v1 'good' to null so history is not retro-labelled measured", () => {
+      const p = migrateProgress({ schemaVersion: 1, learn: [], key: [v1KeyRecord], copy: [] });
+      const r = p.key[0];
+      expect(r.elementVerdict).toBeNull();
+      expect(r.letterVerdict).toBeNull();
+      expect(r.wordVerdict).toBeNull();
+    });
+
+    it("carries a v1 'loose'/'tight' forward — those were only ever real measurements", () => {
+      const p = migrateProgress({
+        schemaVersion: 1, learn: [], copy: [],
+        key: [v1KeyRecord, { ...v1KeyRecord, letterVerdict: "tight", wordVerdict: "loose" }],
+      });
+      expect(p.key[0].weightingVerdict).toBe("loose");
+      expect(p.key[1].letterVerdict).toBe("tight");
+      expect(p.key[1].wordVerdict).toBe("loose");
+    });
+
+    it("migrates, never wipes: the record and all its other fields survive", () => {
+      const p = migrateProgress({ schemaVersion: 1, learn: [], key: [v1KeyRecord], copy: [] });
+      expect(p.key.length).toBe(1);
+      const r = p.key[0];
+      expect(r.t).toBe(1700000000000);
+      expect(r.category).toBe("callsigns");
+      expect(r.keyType).toBe("straight");
+      expect(r.copyPct).toBe(85);
+      expect(r.estWpm).toBe(18);
+      expect(r.wpmVerdict).toBe("on target");
+      expect(r.weightingRatio).toBe(3.9);
+    });
+
+    it("round-trips: a migrated blob re-read at v2 is unchanged (idempotent)", () => {
+      const once  = migrateProgress({ schemaVersion: 1, learn: [], key: [v1KeyRecord], copy: [] });
+      const twice = migrateProgress(JSON.parse(JSON.stringify(once)));
+      expect(twice).toEqual(once);
+    });
+
+    it("a v2 record's 'good' is a real measurement and is left alone", () => {
+      const p = migrateProgress({
+        schemaVersion: 2, learn: [], copy: [],
+        key: [{ ...v1KeyRecord, wordVerdict: "good" }],
+      });
+      expect(p.key[0].wordVerdict).toBe("good");
+      expect(p.key[0].letterVerdict).toBe("good");
+    });
+
+    it("survives a malformed record in the key array without throwing or wiping", () => {
+      const p = migrateProgress({ schemaVersion: 1, learn: [], copy: [], key: [null, v1KeyRecord] });
+      expect(p.key.length).toBe(2);
+      expect(p.key[0]).toBeNull();
+      expect(p.key[1].wordVerdict).toBeNull();
+    });
   });
 
   it("QSO seam: qso records in a stored blob are preserved through migrateProgress", () => {
@@ -2183,6 +2517,188 @@ describe("migrateProgress()", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// MIGRATION BAR (v3) — the properties every future schema bump must keep.
+//
+// These are deliberately independent of WHICH version is current: they read
+// PROGRESS_SCHEMA_VERSION rather than hardcoding a number, so the next bump
+// inherits the whole bar instead of quietly dropping it.
+// ---------------------------------------------------------------------------
+describe("migrateProgress() — the standing migration bar", () => {
+  // A blob written by the oldest shipped build (v1), one record per category.
+  const v1Blob = () => ({
+    schemaVersion: 1,
+    learn: [{ t: 1, lesson: 1, attempts: 5, correct: 5, pct: 100 }],
+    key:   [{ t: 2, category: "words", keyType: "straight", estWpm: 14, copyPct: 80 }],
+    copy:  [{ t: 3, source: "single", pct: 70 }],
+    qso:   [{ t: 4, activity: "pota", role: "hunter", copyPct: 90, sendPct: 80 }],
+  });
+
+  // MERGE TRIPWIRE. Every other test in this block reads PROGRESS_SCHEMA_VERSION
+  // rather than a literal — deliberately, so the next bump inherits the whole bar.
+  // The cost of that is that the constant itself is pinned by nothing: this branch
+  // and fix/unmeasured-spacing-verdicts CONFLICT in this file (both rewrite the
+  // version line and the PROGRESS_MIGRATIONS block), and a resolution that leaves
+  // the version at 2 keeps the entire suite green while silently skipping the
+  // v2 -> v3 step. This literal is the one assertion that catches that.
+  //
+  // If you are here because this failed after a deliberate bump: raise the number,
+  // add the ladder slot, and say in the commit which migration the bump carries.
+  it("BAR: PROGRESS_SCHEMA_VERSION is 3 (pinned literal — see the merge note above)", () => {
+    expect(PROGRESS_SCHEMA_VERSION).toBe(3);
+  });
+
+  // THE MERGE ROUND-TRIP. The tripwire above catches a version left at 2; this
+  // catches the other half of the same conflict — a resolution that takes the
+  // version bump but drops the slot-1 transform (or takes the transform and
+  // leaves the version at 2). One v1 blob, walked the whole ladder, asserting
+  // BOTH ends: the stamp reaches 3 AND the ambiguous v1 verdict is demoted.
+  //
+  // Why it needs its own test rather than leaning on the v1 -> v2 block above:
+  // those tests are ALSO satisfied by a two-step ladder that stops at 2. Only a
+  // test that pins the end stamp and the transform's effect in the same
+  // assertion set fails on either half being lost. The v1Blob fixture used by
+  // the rest of this bar carries no verdict fields at all, so it cannot see it.
+  //
+  // MUTATIONS RUN (all by assertion, none by crash), 2026-07-22:
+  //   M1  delete slot 1, keep version 3 ("take fix/copy-condition-pooling whole")
+  //       -> this test reds on `expected 'good' to be null` (+2 siblings).
+  //   M2  keep slot 1, set the version back to 2 ("take the sibling whole")
+  //       -> this test reds on `expected 2 to be 3` (+ the tripwire above).
+  //   M3  delete `PROGRESS_MIGRATIONS[fromVersion](obj)` from the walk
+  //       -> reds on `expected 'good' to be null`. (fix/copy-condition-pooling's
+  //       header used to say that invocation was dead code whose deletion left
+  //       the suite green. True while the map was EMPTY; false now that slot 1
+  //       is in it, which is why that comment is gone.)
+  // M1 and M2 red on DIFFERENT assertions of this test, so both layers are earned.
+  it("BAR: a v1 blob walks the FULL ladder to v3 — verdict demoted, qso seam intact", () => {
+    const v1WithVerdicts = {
+      ...v1Blob(),
+      key: [{
+        t: 2, category: "callsigns", keyType: "straight", estWpm: 18, copyPct: 85,
+        elementVerdict: "good",     // v1 ambiguity: measured-good or never-measured?
+        letterVerdict: "good",
+        wordVerdict: "tight",       // only ever produced from a real ratio
+        weightingVerdict: "good",
+      }],
+    };
+    const p = migrateProgress(v1WithVerdicts);
+
+    expect(p.schemaVersion).toBe(3);            // the whole ladder ran
+    expect(p.key[0].elementVerdict).toBeNull(); // slot 1 ran
+    expect(p.key[0].letterVerdict).toBeNull();
+    expect(p.key[0].weightingVerdict).toBeNull();
+    expect(p.key[0].wordVerdict).toBe("tight"); // and ran precisely, not as a wipe
+    expect(p.key[0].copyPct).toBe(85);          // nothing else touched
+    expect(p.qso).toEqual(v1Blob().qso);        // the unknown-key seam survives
+    expect(p.copy[0].conditions).toBeUndefined(); // v2 -> v3 backfills nothing
+  });
+
+  it("BAR: record counts are preserved across every category", () => {
+    const p = migrateProgress(v1Blob());
+    expect(p.learn.length).toBe(1);
+    expect(p.key.length).toBe(1);
+    expect(p.copy.length).toBe(1);
+    expect(p.qso.length).toBe(1);
+    // The COPY record's own fields survive; only `conditions` is newly absent.
+    expect(p.copy[0].source).toBe("single");
+    expect(p.copy[0].pct).toBe(70);
+    expect(p.copy[0].conditions).toBeUndefined();
+  });
+
+  it("BAR: the qso seam is untouched — records pass through byte-for-byte", () => {
+    const p = migrateProgress(v1Blob());
+    expect(p.qso).toEqual(v1Blob().qso);
+  });
+
+  it("BAR: unknown / future top-level fields survive the walk", () => {
+    const p = migrateProgress({ ...v1Blob(), headcopy: [{ t: 9, pct: 42 }], someFlag: true });
+    expect(p.headcopy).toEqual([{ t: 9, pct: 42 }]);
+    expect(p.someFlag).toBe(true);
+  });
+
+  it("BAR: idempotent — migrating a migrated blob changes nothing", () => {
+    // WHAT THIS ACTUALLY GUARDS TODAY: the version STAMP reaching a fixed point.
+    // Mutating the ladder's `while` to an `if` turns it red (a v1 blob then lands
+    // on 2, and a second pass moves it again to 3) — verified, not assumed.
+    //
+    // What it does NOT yet guard is transform PURITY, because v2 -> v3 has no
+    // transform to run twice. It becomes that guard the moment a lossy migration
+    // is reachable from an already-migrated blob, which is why it stays.
+    const once = migrateProgress(v1Blob());
+    const twice = migrateProgress(once);
+    const thrice = migrateProgress(twice);
+    expect(twice).toEqual(once);
+    expect(thrice).toEqual(once);
+  });
+
+  it("BAR: malformed shapes survive without throwing and without shortening arrays", () => {
+    for (const bad of [0, "", [], false, NaN]) {
+      const p = migrateProgress(bad);
+      expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+      expect(p.copy).toEqual([]);
+    }
+    // Partial / junk RECORDS inside a good array are carried, not filtered:
+    // migrateProgress is not a validator, and silently dropping a learner's rows
+    // would be the same data loss this function exists to prevent.
+    const partial = { schemaVersion: 1, learn: [null, {}, { pct: 50 }], key: [], copy: [], qso: [] };
+    const p = migrateProgress(partial);
+    expect(p.learn.length).toBe(3);
+    expect(p.learn[2].pct).toBe(50);
+  });
+
+  it("BAR: a future schemaVersion is NOT downgraded", () => {
+    // MUTATION RUN: restoring `merged.schemaVersion = PROGRESS_SCHEMA_VERSION`
+    // turns this red. Stamping a newer blob back down to ours would make the
+    // newer build re-run a migration it had already applied.
+    const future = { ...v1Blob(), schemaVersion: PROGRESS_SCHEMA_VERSION + 7 };
+    const p = migrateProgress(future);
+    expect(p.schemaVersion).toBe(PROGRESS_SCHEMA_VERSION + 7);
+    expect(p.learn.length).toBe(1); // and its data is still readable to us
+  });
+
+  it("BAR: an older blob IS raised to the current version", () => {
+    // The other direction of the same guard — the stamp must not simply echo
+    // whatever was stored.
+    expect(migrateProgress(v1Blob()).schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+    expect(migrateProgress({ learn: [], key: [], copy: [] }).schemaVersion).toBe(PROGRESS_SCHEMA_VERSION);
+  });
+
+  it("BAR: retention keeps the NEWEST entries, not the oldest", () => {
+    const overfull = {
+      schemaVersion: 1,
+      learn: [], key: [], qso: [],
+      copy: Array.from({ length: PROGRESS_RETENTION + 5 }, (_, i) => ({ t: i, source: "single", pct: i })),
+    };
+    const p = migrateProgress(overfull);
+    expect(p.copy.length).toBe(PROGRESS_RETENTION);
+    expect(p.copy[p.copy.length - 1].pct).toBe(PROGRESS_RETENTION + 4); // newest kept
+    expect(p.copy[0].pct).toBe(5);                                       // oldest 5 dropped
+  });
+
+  it("BAR: a frozen input is not mutated", () => {
+    const input = Object.freeze({ ...v1Blob(), copy: Object.freeze([Object.freeze({ t: 3, source: "single", pct: 70 })]) });
+    const before = JSON.stringify(input);
+    const p = migrateProgress(input);
+    expect(JSON.stringify(input)).toBe(before);
+    expect(p).not.toBe(input);
+    expect(p.copy).not.toBe(input.copy);
+  });
+
+  it("BAR: appendProgress on a migrated v1 blob preserves everything else", () => {
+    // The realistic write path: read an old blob, migrate it, append today's record.
+    const p = appendProgress(migrateProgress(v1Blob()), "copy", {
+      t: 5, source: "single", conditions: "real", pct: 55,
+    });
+    expect(p.copy.length).toBe(2);
+    expect(p.copy[0].conditions).toBeUndefined();  // the old one stays unknown
+    expect(p.copy[1].conditions).toBe("real");
+    expect(p.qso.length).toBe(1);
+    // And the two do NOT pool in the trend (T3, end to end through the store shape).
+    expect(copyTrend(p).length).toBe(2);
+  });
+});
+
 describe("learnTrend()", () => {
   it("two sets on lesson 3 → one trend row with correct lastPct/bestPct/sets", () => {
     const p = {
@@ -2279,6 +2795,152 @@ describe("copyTrend()", () => {
     expect(wordsGroup).toBeDefined();
     expect(wordsGroup.lastPct).toBe(90);
   });
+});
+
+// ---------------------------------------------------------------------------
+// COPY CONDITIONS (schema v3) — attempts made under different Conditions are
+// separate trends, so raising the difficulty can't read as accuracy falling.
+//
+// Mutation proofs for this block are in the branch report; each `it` names the
+// mutation actually run.
+// ---------------------------------------------------------------------------
+describe("copyConditionsLabel()", () => {
+  it("maps every stored conditions value to plain English, never the raw enum", () => {
+    // The raw "real" enum in front of a learner is the thing this exists to stop.
+    expect(copyConditionsLabel("real")).toBe("real life");
+    expect(copyConditionsLabel("easy")).toBe("easy");
+    expect(copyConditionsLabel("normal")).toBe("normal");
+  });
+
+  it("labels an absent or unrecognised value as not recorded, NOT as normal", () => {
+    // T3: a pre-v3 record must not be misattributed to a condition it may not
+    // have been made under.
+    expect(copyConditionsLabel(undefined)).toBe("conditions not recorded");
+    expect(copyConditionsLabel(null)).toBe("conditions not recorded");
+    expect(copyConditionsLabel("hard")).toBe("conditions not recorded");
+    // Guard against a plausible-looking wrong default.
+    expect(copyConditionsLabel(undefined)).not.toBe("normal");
+  });
+
+  it("COPY_CONDITIONS holds exactly the three stored values", () => {
+    // This pins the MAP's own keys and nothing else — on its own it would NOT
+    // notice a fourth option appearing in the Conditions selector. The test that
+    // ties the map to the real UI lives in copy-conditions.dom.test.jsx
+    // ("the Conditions selector and COPY_CONDITIONS cannot drift apart").
+    expect(Object.keys(COPY_CONDITIONS).sort()).toEqual(["easy", "normal", "real"]);
+  });
+});
+
+describe("copyTrend() — conditions are not pooled", () => {
+  // The defect: the same rung practised EASY and REAL LIFE produced one series,
+  // so turning noise/QSB on made the learner's trend fall.
+  const sameRungBothConditions = () => ({
+    ...emptyProgress(),
+    copy: [
+      { t: 1, source: "single", conditions: "easy", pct: 100 },
+      { t: 2, source: "single", conditions: "easy", pct: 96 },
+      { t: 3, source: "single", conditions: "real", pct: 55 },
+      { t: 4, source: "single", conditions: "real", pct: 60 },
+    ],
+  });
+
+  it("[T1] splits one rung into one series per condition (no pooled series)", () => {
+    // MUTATION RUN: dropping `conditions` from the group key in copyTrend()
+    // collapses these to a single group → this test goes red on the length and
+    // on both recent[] assertions.
+    const trend = copyTrend(sameRungBothConditions());
+    expect(trend.length).toBe(2);
+
+    const easy = trend.find((g) => g.source === "single" && g.conditions === "easy");
+    const real = trend.find((g) => g.source === "single" && g.conditions === "real");
+
+    expect(easy.recent).toEqual([100, 96]);
+    expect(easy.lastPct).toBe(96);
+    expect(real.recent).toEqual([55, 60]);
+    expect(real.lastPct).toBe(60);
+
+    // The defect, stated as an assertion: no series may mix the two conditions.
+    // A pooled series would be [100, 96, 55, 60] — a cliff the operator never fell off.
+    for (const g of trend) {
+      expect(g.recent).not.toEqual([100, 96, 55, 60]);
+    }
+  });
+
+  it("[T1] the REAL LIFE series trends UP even though it sits below the EASY one", () => {
+    // The whole point: within its own conditions the operator is improving
+    // (55 → 60), which the pooled view hid behind a 96 → 55 drop.
+    const real = copyTrend(sameRungBothConditions())
+      .find((g) => g.conditions === "real");
+    expect(real.recent[real.recent.length - 1]).toBeGreaterThan(real.recent[0]);
+  });
+
+  it("[T2] every group carries a plain-English label alongside the raw value", () => {
+    const trend = copyTrend(sameRungBothConditions());
+    expect(trend.map((g) => g.conditionsLabel)).toEqual(["easy", "real life"]);
+  });
+
+  it("[T1] different rungs under the same condition stay separate too", () => {
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [
+        { t: 1, source: "single", conditions: "real", pct: 40 },
+        { t: 2, source: "calls",  conditions: "real", pct: 20 },
+      ],
+    });
+    expect(trend.length).toBe(2);
+    expect(trend.find((g) => g.source === "single").recent).toEqual([40]);
+    expect(trend.find((g) => g.source === "calls").recent).toEqual([20]);
+  });
+
+  it("[T3] pre-v3 records (no conditions field) form their own labelled group", () => {
+    // MUTATION RUN: defaulting an absent conditions to "normal" instead of null
+    // makes the group count 1 and the label "normal" → red on both.
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [
+        { t: 1, source: "words", pct: 70 },                        // written pre-v3
+        { t: 2, source: "words", pct: 80 },                        // written pre-v3
+        { t: 3, source: "words", conditions: "normal", pct: 90 },  // written post-v3
+      ],
+    });
+    expect(trend.length).toBe(2);
+
+    const unknown = trend.find((g) => g.conditions === null);
+    expect(unknown.conditionsLabel).toBe("conditions not recorded");
+    expect(unknown.recent).toEqual([70, 80]);
+
+    const normal = trend.find((g) => g.conditions === "normal");
+    expect(normal.conditionsLabel).toBe("normal");
+    expect(normal.recent).toEqual([90]);
+  });
+
+  it("[T3] an unrecognised conditions value is treated as unknown, not rendered raw", () => {
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [{ t: 1, source: "words", conditions: "brutal", pct: 10 }],
+    });
+    expect(trend[0].conditions).toBeNull();
+    expect(trend[0].conditionsLabel).toBe("conditions not recorded");
+  });
+
+  it("[T5] a condition with no attempts produces no group at all (never a 0% row)", () => {
+    // MUTATION RUN: seeding every condition key up-front in copyTrend() (so all
+    // three always appear) makes length 3 and adds lastPct/recent of 0 → red.
+    const trend = copyTrend({
+      ...emptyProgress(),
+      copy: [{ t: 1, source: "single", conditions: "easy", pct: 88 }],
+    });
+    expect(trend.length).toBe(1);
+    expect(trend.map((g) => g.conditions)).toEqual(["easy"]);
+    // No fabricated zero anywhere in the output.
+    expect(trend.some((g) => g.lastPct === 0)).toBe(false);
+  });
+
+  it("[T5] no copy records at all → empty array (the empty state, not a 0% group)", () => {
+    expect(copyTrend(emptyProgress())).toEqual([]);
+    expect(copyTrend({})).toEqual([]);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -2550,6 +3212,142 @@ describe("randDxStation()", () => {
       expect(s.cqZone).toBe(29);
       expect(s.call.startsWith("VK6")).toBe(true);
     }
+  });
+});
+
+// ---- Call-area digit: real callsigns always carry a separating numeral ----
+// Regression guard for the 2.4.0 blocker: entity-level prefixes (F, DL, JA…)
+// used to generate digit-less, impossible calls (FTT, JAR, ONMK). Every
+// generated DX call must now carry a call-area numeral, and that numeral must
+// keep the call inside its own DXCC entity.
+describe("call-area digit (real-callsign format)", () => {
+  it("EVERY generated DX call carries a digit (5000 draws, 0 digit-less)", () => {
+    // The core invariant. A digit-less call is an impossible callsign.
+    let noDigit = 0;
+    for (let i = 0; i < 5000; i++) {
+      if (!/\d/.test(randDxStation().call)) noDigit++;
+    }
+    expect(noDigit).toBe(0);
+  });
+
+  it("EVERY generated field-station call carries a digit (5000 draws)", () => {
+    let noDigit = 0;
+    for (let i = 0; i < 5000; i++) {
+      if (!/\d/.test(randDxFieldStation().call)) noDigit++;
+    }
+    expect(noDigit).toBe(0);
+  });
+
+  it("the call is a plausible shape: prefix, digit, then 1-3 suffix letters", () => {
+    // Entity prefix (letters) + one call-area digit + letter suffix, OR a
+    // call-area prefix (VK2) whose own digit is followed by letters.
+    const SHAPE = /^[A-Z]{1,2}[0-9][A-Z]{1,3}$/;
+    for (let i = 0; i < 500; i++) {
+      const c = randDxStation().call;
+      expect(SHAPE.test(c)).toBe(true);
+    }
+  });
+
+  it("the inserted numeral is drawn only from the entity's valid set", () => {
+    // For every entity-level prefix (not VK/VE), the digit that follows the
+    // prefix must be one of CALL_AREA_DIGITS for that entity.
+    for (let i = 0; i < 4000; i++) {
+      const s = randDxStation();
+      if (/\d$/.test(s.prefix)) continue;          // VK2/VE3 — own digit, skip
+      const digits = CALL_AREA_DIGITS[s.entityCode];
+      expect(digits).toBeDefined();
+      const inserted = Number(s.call.slice(s.prefix.length, s.prefix.length + 1));
+      expect(digits).toContain(inserted);
+    }
+  });
+
+  it("never generates a call whose prefix names a SEPARATE DXCC entity", () => {
+    // EA6/EA8/EA9 = Balearic/Canary/Ceuta&Melilla; OH0 = Åland;
+    // ZL7/8/9 = Chatham/Kermadec/Subantarctic; ZS7/ZS8 = Antarctica/Marion;
+    // PY0 = Brazilian oceanic islands. Generating any of these would teach a
+    // callsign whose numeral contradicts its own entity/zone.
+    const SEPARATE_ENTITY = /^(EA[689]|OH0|ZL[789]|ZS[78]|PY0)/;
+    for (let i = 0; i < 5000; i++) {
+      expect(SEPARATE_ENTITY.test(randDxStation().call)).toBe(false);
+      expect(SEPARATE_ENTITY.test(randDxFieldStation().call)).toBe(false);
+    }
+  });
+
+  it("VK/VE call-area rows are unchanged — no extra digit inserted", () => {
+    // A VK2 call must read VK2 + letters (VK2ABC), NOT VK2 + digit (VK23AB).
+    const pool = DX_GENERATION_POOL.filter((r) => /\d$/.test(r.prefix));
+    for (let i = 0; i < 1000; i++) {
+      const s = randDxStation(pool);
+      // char right after the call-area prefix is a letter, not another digit
+      expect(s.call[s.prefix.length]).toMatch(/[A-Z]/);
+      expect(s.call.startsWith(s.prefix)).toBe(true);
+    }
+  });
+
+  it("entity / zone mapping is untouched by the inserted digit", () => {
+    // Inserting a numeral changes only the call string; the record's entity and
+    // zone come straight from the pool row and must be unchanged.
+    for (let i = 0; i < 300; i++) {
+      const s = randDxStation();
+      const row = DX_GENERATION_POOL.find((r) => r.prefix === s.prefix);
+      expect(s.entity).toBe(row.entity);
+      expect(s.cqZone).toBe(row.cqZone);
+      expect(s.entityCode).toBe(row.entityCode);
+    }
+  });
+
+  it("digit-bearing calls resolve to the right entity (real examples)", () => {
+    // Proves the format is a REAL call and the prefix+digit is entity-coherent.
+    // NB: resolveEntity() is prefix-substring lenient (a Phase-2 placeholder), so
+    // this uses collision-free suffixes rather than round-tripping random draws —
+    // see the resolver note in the fix report.
+    const cases = [
+      ["F5KT", 227], ["DL2ABC", 230], ["JA1XT", 339], ["ON4KST", 209],
+      ["G3XT", 223], ["EA3KT", 281], ["SM3KT", 284], ["OH2KT", 224],
+      ["XE1KT", 50], ["ZL1KT", 170], ["ZS1KT", 462], ["PY2KT", 108],
+    ];
+    for (const [call, code] of cases) {
+      const r = resolveEntity(call);
+      expect(r).not.toBeNull();
+      expect(r.entityCode).toBe(code);
+    }
+  });
+
+  it("specific real prefixes read like real calls", () => {
+    // Draw until we see a France and a Germany call; assert the shape a human
+    // would recognise (F + digit + letters, DL + digit + letters).
+    let sawF = false, sawDL = false;
+    for (let i = 0; i < 3000 && !(sawF && sawDL); i++) {
+      const c = randDxStation().call;
+      if (c.startsWith("F") && !c.startsWith("F0")) { expect(c).toMatch(/^F[1-8][A-Z]{1,3}$/); sawF = true; }
+      if (c.startsWith("DL")) { expect(c).toMatch(/^DL[1-9][A-Z]{1,3}$/); sawDL = true; }
+    }
+    expect(sawF && sawDL).toBe(true);
+  });
+});
+
+describe("withCallArea()", () => {
+  it("inserts a digit from the set between a digit-less prefix and suffix", () => {
+    for (let i = 0; i < 200; i++) {
+      const c = withCallArea("DL", [1, 2, 3], "ABC");
+      expect(c).toMatch(/^DL[123]ABC$/);
+    }
+  });
+
+  it("leaves a call-area prefix (ends in a digit) untouched", () => {
+    // VK2 already carries its numeral; no second digit is added.
+    expect(withCallArea("VK2", null, "ABC")).toBe("VK2ABC");
+    expect(withCallArea("VE3", [1, 2], "XY")).toBe("VE3XY");
+  });
+
+  it("only ever draws from the supplied set (never an excluded digit)", () => {
+    // Spain omits 6/8/9; over many draws none must appear.
+    const seen = new Set();
+    for (let i = 0; i < 2000; i++) {
+      const c = withCallArea("EA", [1, 2, 3, 4, 5, 7], "KT");
+      seen.add(c[2]);
+    }
+    expect([...seen].sort().join("")).toBe("123457");
   });
 });
 
@@ -3600,5 +4398,424 @@ describe("drillCommonWords() and drillWiderWords() — generator shape", () => {
       if (sawHam) break;
     }
     expect(sawHam).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F5 — a blank required element must never be credited
+// ---------------------------------------------------------------------------
+// The reported defect: Settings is deliberately free-form, so an operator can
+// clear the Name field. `mustContain: [myRst, myName]` then became ["599", ""],
+// and gradeSend credited the empty token unconditionally — `"".includes("")` is
+// true in JS, and numericForms("")/courtesyForms("") both pass "" straight
+// through. Result: a blank always-ticked ✓ row and 100% for sending half the
+// exchange. Same family as the cut-number regression: a wrong answer scoring 100.
+//
+// The fix is two layers, and each layer has its own tests below:
+//   1. `required(...)` filters blanks where mustContain is ASSEMBLED, so the bad
+//      element never exists (this is what makes the ✓ checklist right too);
+//   2. an `isBlankElement` guard in gradeSend, so the contract is explicit for
+//      any future caller that assembles a list some other way.
+describe("F5 — blank required elements (grade inflation)", () => {
+  const BUILDERS = {
+    ragchew: buildRagchew, pota: buildPota, sota: buildSota,
+    iota: buildIota, dx: buildDx, contest: buildContest,
+  };
+  const FULL = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON WI", cut: false, myCqZone: 4 };
+  // Walk the REAL activity/role registry (ROLE_TERMS) rather than a hand-picked
+  // sample, so a new activity or role is covered the day it is added.
+  const eachCombo = (fn) => {
+    for (const [act, build] of Object.entries(BUILDERS)) {
+      for (const [role] of ROLE_TERMS[act]) fn(act, role, build);
+    }
+  };
+  const youSteps = (q) => q.steps.filter((s) => s.who === "you");
+
+  // --- Layer 2: the grader itself -----------------------------------------
+  it("KEYSTONE: gradeSend(['599',''], '599') is NOT 100 — the exact reported case", () => {
+    // MUTATION: delete the `if (isBlankElement(el)) return false;` guard in
+    // gradeSend's isConveyed → this returns 100 → red.
+    const r = gradeSend(["599", ""], "599");
+    expect(r.score).toBe(50);
+    expect(r.hits).toEqual(["599"]);
+    expect(r.missing).toEqual([""]);
+  });
+
+  it("whitespace-only and nullish required elements are never credited either", () => {
+    expect(gradeSend(["599", "   "], "599 599 UR RST").score).toBe(50);
+    expect(gradeSend(["599", "\t"], "599").missing).toEqual(["\t"]);
+    expect(gradeSend([undefined], "K9MTE ANYTHING").score).toBe(0);
+    expect(gradeSend([null], "K9MTE ANYTHING").score).toBe(0);
+    // A blank is not creditable even when the send is itself blank.
+    expect(gradeSend([""], "").score).toBe(0);
+  });
+
+  it("the blank guard does not disturb any real element (populated list unchanged)", () => {
+    // Guards against an over-broad fix: real tokens must grade exactly as before.
+    expect(gradeSend(["599", "TRAVIS"], "UR RST 599 599 NAME TRAVIS").score).toBe(100);
+    expect(gradeSend(["599", "TRAVIS"], "UR RST 599 599").score).toBe(50);
+    expect(gradeSend(["TU"], "TNX 73").score).toBe(100);
+    expect(gradeSend(["599"], "5NN").score).toBe(100);
+  });
+
+  // --- Layer 1: assembly ---------------------------------------------------
+  it("required() drops blank tokens and trims the survivors", () => {
+    expect(required("599", "")).toEqual(["599"]);
+    expect(required("599", "   ")).toEqual(["599"]);
+    expect(required("599", undefined, null)).toEqual(["599"]);
+    expect(required()).toEqual([]);
+    expect(required("", "  ")).toEqual([]);
+    // Trimming is part of the same normalisation: a required " PAT " could never
+    // match, because gradeSend compares against the space-stripped send.
+    expect(required(" PAT ")).toEqual(["PAT"]);
+    expect(gradeSend(required(" PAT "), "NAME PAT PAT").score).toBe(100);
+  });
+
+  it("T1: with Name and QTH cleared, no shipped step carries a blank required element", () => {
+    // MUTATION: unwrap any `mustContain: required(...)` back to an array literal
+    // → that builder's blank name lands in the list → red.
+    const cleared = { ...FULL, myName: "", myQth: "" };
+    let checked = 0;
+    eachCombo((act, role, build) => {
+      for (const s of youSteps(build(cleared, role, {}))) {
+        for (const el of s.mustContain) {
+          expect(String(el).trim(), `${act}/${role}: blank required element`).not.toBe("");
+          checked++;
+        }
+      }
+    });
+    expect(checked).toBeGreaterThan(0);   // the sweep really ran
+  });
+
+  it("T2: with the Name cleared, sending what IS asked scores 100 and sending less scores less", () => {
+    // The ragchew exchange step is the reported instance: [myRst, myName] with a
+    // cleared name reduces to [myRst], so a correct 599 is a genuine 100 — and
+    // the operator can still fall short by not sending it.
+    const cleared = { ...FULL, myName: "" };
+    const step = youSteps(buildRagchew(cleared, "answer"))[1];
+    expect(step.mustContain).toEqual(["599"]);
+    expect(gradeSend(step.mustContain, "R R UR RST 599 599 = QTH MADISON WI = HW? KN").score).toBe(100);
+    expect(gradeSend(step.mustContain, "R R TNX FER RPT = HW? KN").score).toBe(0);
+  });
+
+  it("T3: no false negatives — every you-step of every activity/role still grades 100 on its own script", () => {
+    // Populated profile: the fix must be invisible. Driving each step's own
+    // `suggested` through the real grader is the honest end-to-end check.
+    let steps = 0;
+    eachCombo((act, role, build) => {
+      for (const [i, s] of youSteps(build(FULL, role, {})).entries()) {
+        expect(gradeSend(s.mustContain, s.suggested).score, `${act}/${role} you-step ${i}`).toBe(100);
+        steps++;
+      }
+    });
+    expect(steps).toBe(30);   // 12 activity/role combos, pinned so a lost step shows up
+  });
+
+  it("T3: no false negatives — the total required-element count is unchanged at 47", () => {
+    // The count pin is what catches an OVER-BROAD filter: dropping a real token
+    // would still score 100 (fewer requirements), but the total would fall.
+    // MUTATION: make required() also drop a real token (e.g. filter out "TU")
+    // → 47 becomes 43 → red.
+    let total = 0;
+    eachCombo((act, role, build) => {
+      for (const s of youSteps(build(FULL, role, {}))) total += s.mustContain.length;
+    });
+    expect(total).toBe(47);
+  });
+
+  // --- T4: an empty required list ------------------------------------------
+  it("T4: an empty required list scores null (a stated non-scored state), never a flat 0", () => {
+    // This case IS reachable: the six ANSWER steps require only [myCall], and the
+    // callsign field is clearable too. A flat 0% would be an unreachable zero —
+    // a perfect over graded as total failure. null is the UI's cue to say
+    // "NOT SCORED" instead of showing a grade nobody could have earned.
+    // MUTATION: change gradeSend's empty-list branch back to `: 0` → red.
+    const r = gradeSend([], "CQ CQ DE K9MTE K");
+    expect(r.score).toBeNull();
+    expect(r.hits).toEqual([]);
+    expect(r.missing).toEqual([]);
+  });
+
+  it("T4: a cleared callsign empties exactly the six ANSWER steps, and each grades null", () => {
+    const noCall = { ...FULL, myCall: "" };
+    const empties = [];
+    eachCombo((act, role, build) => {
+      for (const s of youSteps(build(noCall, role, {}))) {
+        if (s.mustContain.length === 0) {
+          empties.push(`${act}/${role}`);
+          expect(gradeSend(s.mustContain, "ANYTHING AT ALL").score).toBeNull();
+        }
+      }
+    });
+    expect(empties).toEqual([
+      "ragchew/answer", "pota/hunter", "sota/chaser",
+      "iota/chaser", "dx/hunt", "contest/sp",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// QTH — an unresolvable QTH must not have a state (or a CQ zone) invented for it
+// ---------------------------------------------------------------------------
+// The defect: `stateOf(qth)` fell back to "CT" for ANY input without a trailing
+// two-letter token, so an operator who typed "MADISON" — or cleared the field —
+// was silently REQUIRED to send Connecticut, and `resolveUSState(...)?.cq ?? 5`
+// silently made their contest zone 5 (Connecticut's). A QTH is something a ham is
+// expected to state truthfully; asserting one on their behalf is a domain-integrity
+// fault, not a cosmetic one.
+//
+// The remedy: stateOf returns "" when it genuinely cannot resolve, `required()`
+// (F5) drops the blank from the graded elements, and the script builders omit it
+// from the text. The W1AW placeholder profile is deliberately KEPT — NEWINGTON CT
+// is genuinely Connecticut and resolves as it always did.
+describe("QTH — no invented state, no invented CQ zone", () => {
+  // Mirror the JSX edge (`start()` in wr-cw-trainer.jsx) exactly, so these tests
+  // exercise the same composition the app ships rather than a hand-built profile.
+  const profileFor = (myQth) => ({
+    myCall: "K9MTE", myName: "TRAVIS", myQth, cut: false,
+    myCqZone: resolveUSState(stateOf(myQth))?.cq ?? null,
+  });
+  const BUILDERS = {
+    ragchew: buildRagchew, pota: buildPota, sota: buildSota,
+    iota: buildIota, dx: buildDx, contest: buildContest,
+  };
+  const eachCombo = (fn, opts = {}) => {
+    for (const [act, build] of Object.entries(BUILDERS)) {
+      for (const [role] of ROLE_TERMS[act]) fn(act, role, build, opts);
+    }
+  };
+  const youSteps = (q) => q.steps.filter((s) => s.who === "you");
+
+  // --- stateOf itself ------------------------------------------------------
+  it("KEYSTONE: an unresolvable QTH yields no state at all — never 'CT'", () => {
+    // MUTATION: restore the `: "CT"` fallback in stateOf → every expect below is red.
+    expect(stateOf("MADISON")).toBe("");
+    expect(stateOf("")).toBe("");
+    expect(stateOf("   ")).toBe("");
+    expect(stateOf(undefined)).toBe("");
+    expect(stateOf(null)).toBe("");
+    expect(stateOf("SOMEWHERE IN THE WOODS")).toBe("");   // trailing token too long
+    expect(stateOf("BOX 12")).toBe("");                    // trailing token not letters
+  });
+
+  it("T2: a resolvable QTH still works exactly as before, W1AW's default included", () => {
+    expect(stateOf("MADISON WI")).toBe("WI");
+    expect(stateOf("madison wi")).toBe("WI");            // case-normalised
+    expect(stateOf("CEDAR RAPIDS IA")).toBe("IA");
+    // The shipped DEFAULT_SETTINGS profile. W1AW is genuinely in Newington,
+    // Connecticut — this fix must not disturb the training placeholder.
+    expect(stateOf("NEWINGTON CT")).toBe("CT");
+    expect(resolveUSState(stateOf("NEWINGTON CT")).cq).toBe(5);
+  });
+
+  // --- the reported case, end to end ---------------------------------------
+  it("KEYSTONE: buildPota with a state-less QTH requires 599 only, and its script says no state", () => {
+    // The manager's live repro: buildPota({myQth:""},"hunter") produced
+    // mustContain ["599","CT"] and suggested "BK GM UR 599 599 CT CT BK".
+    // MUTATION: restore stateOf's "CT" fallback → both expects red.
+    const q = buildPota(profileFor(""), "hunter");
+    const exchange = youSteps(q)[1];
+    expect(exchange.mustContain).toEqual(["599"]);
+    expect(exchange.suggested).toBe("BK GM UR 599 599 BK");
+    // The HUMAN-readable instruction is part of the same guard and gets the same
+    // pin: an unguarded `statePhrase` would tell the operator to send their state
+    // twice while the script omits it and the grader doesn't ask for it — three
+    // surfaces contradicting each other. MUTATION: drop the `myState ?` guard on
+    // statePhrase → this line goes red while everything else stays green.
+    expect(exchange.prompt).toBe("BK back, greeting, their report, BK. That's the whole exchange.");
+    // ...and no stray double space anywhere in the contact (a blank interpolation
+    // would key an audible extra word gap through toCodes).
+    for (const s of q.steps) {
+      for (const field of [s.suggested, s.text, s.prompt, s.copyHint]) {
+        if (field) expect(field, `double space in "${field}"`).not.toMatch(/ {2}/);
+      }
+    }
+  });
+
+  it("T2: the same POTA step with a resolvable QTH is byte-for-byte the old behaviour", () => {
+    // MUTATION: drop `${stateTwice}` from the suggested template → red.
+    const wi = youSteps(buildPota(profileFor("MADISON WI"), "hunter"))[1];
+    expect(wi.mustContain).toEqual(["599", "WI"]);
+    expect(wi.suggested).toBe("BK GM UR 599 599 WI WI BK");
+    // The instruction still names the state — the guard must not over-fire either.
+    expect(wi.prompt).toBe("BK back, greeting, their report, your state twice, BK. That's the whole exchange.");
+
+    const ct = youSteps(buildPota(profileFor("NEWINGTON CT"), "hunter"))[1];
+    expect(ct.mustContain).toEqual(["599", "CT"]);
+    expect(ct.suggested).toBe("BK GM UR 599 599 CT CT BK");
+  });
+
+  it("the activator's reply drops the state handle too, and says why", () => {
+    // The DX closes "BK TU <state> 73 DE <call> EE" — with no state to use as a
+    // handle the token goes, and the copy hint stops promising one.
+    const none = buildPota(profileFor("MADISON"), "hunter");
+    const closing = none.steps[none.steps.length - 1];
+    expect(closing.text).toMatch(/^BK TU 73 DE /);
+    expect(closing.copyHint).toMatch(/Put a state in your QTH/);
+
+    const wi = buildPota(profileFor("MADISON WI"), "hunter");
+    const wiClosing = wi.steps[wi.steps.length - 1];
+    expect(wiClosing.text).toMatch(/^BK TU WI 73 DE /);
+  });
+
+  it("the DX-hunt POTA variant carries the same guard, so it gets the same pin", () => {
+    // buildPota's {dx:true} branch has its own copy of the exchange step with its
+    // own sentence. The activity/role sweeps only reach the default opts, so this
+    // branch needs its own assertion or the guard here is ungated.
+    // MUTATION: drop the `myState ?` guard on statePhrase → the first prompt line
+    // goes red. MUTATION: drop `${stateTwice}` → the suggested lines go red.
+    const none = youSteps(buildPota(profileFor("MADISON"), "hunter", { dx: true }))[1];
+    expect(none.mustContain).toEqual(["599"]);
+    expect(none.suggested).toBe("BK GM UR 599 599 BK");
+    expect(none.prompt).toBe("BK, their report, BK. Exchange grammar is identical to domestic.");
+
+    const wi = youSteps(buildPota(profileFor("MADISON WI"), "hunter", { dx: true }))[1];
+    expect(wi.mustContain).toEqual(["599", "WI"]);
+    expect(wi.suggested).toBe("BK GM UR 599 599 WI WI BK");
+    expect(wi.prompt).toBe("BK, their report, your state twice, BK. Exchange grammar is identical to domestic.");
+  });
+
+  // --- T1: nothing substituted, anywhere in the shipped matrix --------------
+  it("T1: with a state-less QTH, 'CT' appears in no required element or script", () => {
+    // Enumerate the real registry, not a hand-picked sample. MUTATION: restore
+    // stateOf's "CT" fallback → the POTA hunter rows go red.
+    let fields = 0;
+    eachCombo((act, role, build) => {
+      const q = build(profileFor("MADISON"), role, {});
+      for (const s of q.steps) {
+        for (const field of [s.suggested, s.text].filter(Boolean)) {
+          expect(field.split(/\s+/), `${act}/${role}: invented state in "${field}"`)
+            .not.toContain("CT");
+          fields++;
+        }
+        for (const el of s.mustContain ?? []) {
+          expect(el, `${act}/${role}: invented state required`).not.toBe("CT");
+        }
+      }
+    });
+    expect(fields).toBeGreaterThan(0);   // the sweep really ran
+  });
+
+  it("T4: no false negatives — every you-step still grades 100 on its own script", () => {
+    // Both QTH shapes: dropping the state must not make a correct send fail, and
+    // keeping it must not either.
+    for (const qth of ["MADISON", "MADISON WI"]) {
+      let steps = 0;
+      eachCombo((act, role, build) => {
+        for (const [i, s] of youSteps(build(profileFor(qth), role, {})).entries()) {
+          expect(gradeSend(s.mustContain, s.suggested).score,
+            `${qth} — ${act}/${role} you-step ${i}`).toBe(100);
+          steps++;
+        }
+      });
+      expect(steps).toBe(30);   // 12 activity/role combos, pinned
+    }
+  });
+
+  it("T4: exactly ONE required element is lost, and only the POTA hunter's state", () => {
+    // A count pin, because a score-only test cannot catch an OVER-BROAD drop:
+    // losing a real token would still grade 100 over fewer requirements.
+    // MUTATION: make required() also drop "TU" → both totals fall by 4 → red.
+    const total = (qth) => {
+      let n = 0;
+      eachCombo((act, role, build) => {
+        for (const s of youSteps(build(profileFor(qth), role, {}))) n += s.mustContain.length;
+      });
+      return n;
+    };
+    expect(total("MADISON WI")).toBe(47);   // the F5 baseline, undisturbed
+    expect(total("MADISON")).toBe(46);      // exactly the POTA hunter state
+  });
+
+  // --- T3: the CQ zone gets the same treatment as the state ----------------
+  it("T3: an unresolvable QTH drops the contest zone rather than sending zone 5", () => {
+    // Zone 5 arrived with the "CT" fallback, not by design: per the bundled DXCC
+    // dataset it is the eastern seaboard, so a Wisconsin operator with a state-less
+    // QTH was graded on a zone they are not in. MUTATION VERIFIED: drop the
+    // `zone == null ? ""` guard from buildContest's exch() → this and the S&P test
+    // go red (zoneToken(null) yields the token "null"). Note that reverting only the
+    // `myCqZone = null` parameter default does NOT bite: `profileFor` passes an
+    // explicit null, and a parameter default only fires for undefined. The runtime
+    // guard is the load-bearing line.
+    const none = buildContest(profileFor("MADISON"), "run", { contestType: "zone" });
+    const exchange = none.steps.filter((s) => s.who === "you")[1];
+    expect(exchange.mustContain).toEqual(["599"]);
+    expect(exchange.suggested).toBe(`${none.dx} 599`);
+    expect(exchange.prompt).toBe("Work them — their call, report.");
+    expect(none.summary).not.toMatch(/Your exchange/);
+
+    // Resolvable: unchanged. Wisconsin is CQ zone 4 (CQ's WAZ zone list,
+    // cqww.com/cq_waz_list.htm, retrieved 2026-07-21 — see buildContest's header for
+    // why our own dataset is NOT the citation here), so the token is "04", not "05".
+    const wi = buildContest(profileFor("MADISON WI"), "run", { contestType: "zone" });
+    const wiExchange = wi.steps.filter((s) => s.who === "you")[1];
+    expect(wiExchange.mustContain).toEqual(["599", "04"]);
+    expect(wiExchange.suggested).toBe(`${wi.dx} 599 04`);
+    expect(wi.summary).toMatch(/Your exchange: 04\./);
+  });
+
+  it("T3: an OMITTED myCqZone fails safe — the parameter default drops the zone too", () => {
+    // Honest note on coverage: today's single call site (start() in
+    // wr-cw-trainer.jsx) always passes an explicit number or null, so the
+    // `myCqZone = null` parameter default is unreachable in production and
+    // reverting it to `= 5` leaves the rest of the suite green. It is pinned
+    // anyway because a future second caller that simply omits the key would
+    // silently revive the exact defect this change exists to kill.
+    // MUTATION: change the default back to `myCqZone = 5` → red (and ONLY red here).
+    const q = buildContest({ myCall: "K9MTE" }, "run", { contestType: "zone" });
+    expect(q.steps.filter((s) => s.who === "you")[1].mustContain).toEqual(["599"]);
+  });
+
+  it("T3: the S&P side drops the zone the same way, with no stray spacing", () => {
+    const none = buildContest(profileFor(""), "sp", { contestType: "zone" });
+    const exchange = none.steps.filter((s) => s.who === "you")[1];
+    expect(exchange.mustContain).toEqual(["599"]);
+    expect(exchange.suggested).toBe("599 TU");
+    expect(exchange.prompt).toBe("Report + TU. Fast and clean.");
+
+    const ct = buildContest(profileFor("NEWINGTON CT"), "sp", { contestType: "zone" });
+    const ctExchange = ct.steps.filter((s) => s.who === "you")[1];
+    expect(ctExchange.mustContain).toEqual(["599", "05"]);
+    expect(ctExchange.suggested).toBe("599 05 TU");
+  });
+
+  it("T3: the DX station always has a zone — dropping ours never blanks theirs", () => {
+    // Only the operator's own zone can be unknown; the DX pool carries one per row.
+    for (let i = 0; i < 20; i++) {
+      const q = buildContest(profileFor("MADISON"), "run", { contestType: "zone" });
+      expect(q.steps[3].text).toMatch(/^599 \d{2} TU$/);
+    }
+  });
+
+  it("T3: the serial (WPX) exchange is untouched — it never needed a zone", () => {
+    const q = buildContest(profileFor("MADISON"), "run", { contestType: "wpx" });
+    const exchange = q.steps.filter((s) => s.who === "you")[1];
+    expect(exchange.mustContain).toHaveLength(2);
+    expect(exchange.mustContain[1]).toMatch(/^\d{3}$/);
+    expect(exchange.prompt).toBe("Work them — their call, report, your serial.");
+  });
+
+  // --- the COPY phrase pool ------------------------------------------------
+  it("a blank {ST} leaves a clean phrase, not a double word gap", () => {
+    // QSO_PHRASES personalise to the operator; two of them carry {ST}.
+    // MUTATION: remove the whitespace collapse from subTokens → red.
+    const s = { myCall: "K9MTE", myName: "TRAVIS", myQth: "MADISON" };
+    expect(subTokens("BK GM UR 599 599 {ST} {ST} BK", s)).toBe("BK GM UR 599 599 BK");
+    expect(subTokens("BK TU {ST} 73 EE", s)).toBe("BK TU 73 EE");
+    // No phrase in the shipped pool comes out with a doubled space for ANY of the
+    // clearable fields — toCodes turns each space into a word gap.
+    const cleared = { myCall: "", myName: "", myQth: "" };
+    for (const p of QSO_PHRASES) {
+      expect(subTokens(p, cleared), `"${p}"`).not.toMatch(/ {2}/);
+      expect(toCodes(subTokens(p, cleared)).filter((t, i, a) => t.wordGap && a[i - 1]?.wordGap))
+        .toEqual([]);
+    }
+    // A resolvable QTH is untouched.
+    expect(subTokens("BK TU {ST} 73 EE", { ...s, myQth: "MADISON WI" })).toBe("BK TU WI 73 EE");
+    // The .trim() is a separate half of the collapse and needs its own pin: a
+    // token at the END of a phrase leaves a TRAILING space that the `\s+` → " "
+    // collapse alone does not remove, and toCodes turns that into a word gap of
+    // silence after the last character. MUTATION: delete only `.trim()` → red.
+    expect(subTokens("QTH {QTH}", cleared)).toBe("QTH");
   });
 });

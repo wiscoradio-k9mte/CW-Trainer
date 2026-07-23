@@ -57,7 +57,12 @@ function keyCallsign(call) {
 
 async function startRagchewCallCq({ autoAdvance = false } = {}) {
   window.localStorage.clear();
-  const user = userEvent.setup();
+  // delay: null drops userEvent's real setTimeout wait between synthetic events
+  // (a no-op cost fix, not a behavior change — see progress-qso.dom.test.jsx for
+  // the full rationale). The fake-timer keying below is unaffected: it drives
+  // raw KeyboardEvent dispatches inside act(), never user.*, once fake timers
+  // are on.
+  const user = userEvent.setup({ delay: null });
   render(<CWTrainer />);
   await user.click(screen.getByText("tap to skip"));
   await gotoTab(user, "QSO");
