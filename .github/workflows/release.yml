@@ -106,7 +106,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Set up Node 22
-        # actions/setup-node v6.4.0
+        # actions/setup-node v7.0.0
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
@@ -260,7 +260,7 @@ jobs:
         # than current stable. (Exactly this shipped in the README and was
         # caught by the brand-truth gate, 2026-07-20.) Deny nothing here;
         # state what this workflow does and let the README carry the warning.
-        # softprops/action-gh-release v3.0.1
+        # softprops/action-gh-release v3.0.2
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           tag_name: ${{ github.ref_name }}
