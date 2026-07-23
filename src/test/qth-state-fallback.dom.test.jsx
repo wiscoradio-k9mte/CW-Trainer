@@ -39,7 +39,12 @@ afterEach(() => {
 // of scope here), so they are located by their current displayed value.
 async function appWithQth(newQth) {
   window.localStorage.clear();
-  const user = userEvent.setup();
+  // delay: null drops userEvent's real setTimeout wait between synthetic events
+  // (a no-op cost fix, not a behavior change — see progress-qso.dom.test.jsx for
+  // the full rationale). This file drives a full QSO contact per test on the
+  // real clock; that per-event wait is what made it the single slowest test in
+  // the suite under CI-shaped contention.
+  const user = userEvent.setup({ delay: null });
   render(<CWTrainer />);
   await user.click(screen.getByText("tap to skip"));
   await user.click(screen.getByRole("button", { name: "Settings" }));

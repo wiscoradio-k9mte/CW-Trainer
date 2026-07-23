@@ -39,38 +39,51 @@ export default defineConfig({
     // is written to no-op when there is no `window` (i.e. the node suite) — see
     // src/test/setup.dom.js. That keeps the node suite's purity intact.
     setupFiles: ["./src/test/setup.dom.js"],
-    // The QSO-flow jsdom tests drive a full multi-step contact with REAL timers
-    // and userEvent (no fake clock), so they legitimately take several seconds —
-    // and more under the parallel run's CPU contention. The CompactSelect setup
-    // (open + commit a combobox) adds a small real-time cost per selection, which
-    // pushed the heaviest contact-drive test past the 5s default. 15s gives these
-    // real-timer integration tests headroom; a logic error still fails fast (as a
-    // wrong assertion), so this doesn't mask a hang — it only absorbs contention.
+    // STRUCTURAL FIX landed 2026-07-23 (was a 15s->30s band-aid before this;
+    // see git history for that comment if you need the old numbers).
     //
-    // RAISED 15s -> 30s, 2026-07-22, on MEASURED evidence rather than a hunch.
-    // The problem is not one flaky test, it is a BAND of them crowding the cap.
-    // Measured with --reporter=json across three pool shapes:
+    // Root cause, confirmed in userEvent's own source (dist/cjs/utils/misc/wait.js):
+    // userEvent.setup()'s default `delay: 0` still schedules a real
+    // `setTimeout(fn, 0)` between every synthetic event; a real setTimeout,
+    // however short, competes for the event loop like any other timer, so under
+    // CPU contention a contact-drive test's MANY sequential clicks (open+commit a
+    // CompactSelect combobox, LISTEN FOR CQ, repeated CONTINUE/CHECK/TRANSMIT)
+    // compounded into several extra seconds. `userEvent.setup({ delay: null })`
+    // makes `wait()` a same-tick no-op (a non-numeric delay skips the setTimeout
+    // entirely) — no DOM events change, only the dead time between them.
     //
-    //   idle, 8 workers   87s   green   worst: progress-qso "...EASY contact
-    //                                   writes exactly one qso record"  6380ms
-    //   + 8 CPU hogs      267s  2 TIMEOUTS  that same test at 15101ms, and
-    //                                   qso-autoadvance [AL-LAST] at 15251ms
-    //   --maxWorkers=2    479s  green   worst: qso-autoadvance [AO] "reminder
-    //     (CI-shaped)                   appears on second consecutive completed
-    //                                   contact"  13497ms  <- 10% margin
+    // Applied to the six jsdom files that drive part or all of a real QSO contact
+    // with real-timer userEvent: progress-qso, qso-live-score, qso-autoadvance,
+    // qth-state-fallback, qso-blank-required-element, qso-send-grading. No test
+    // needed a fake-timer rewrite — qso-autoadvance already switches to
+    // vi.useFakeTimers() + fireEvent for its timed windows (never user.* once fake
+    // timers are on), so delay:null and that pattern don't collide.
     //
-    // 14 tests exceed 4s idle; 47 exceed 8s under load; 12 exceed 12s. At
-    // CI-shaped parallelism the worst sits 10% under the cap, which is a
-    // scheduled outage, not bad luck. Four independent observers (two gates,
-    // two implementers) hit spurious reds within one day, each a different
-    // test, each a pure "Test timed out" with NO assertion involved.
+    // Measured with --reporter=json, matching the method the old comment used
+    // (idle vs. --maxWorkers=2 + 8 CPU hogs on this 8-core box), 3 repeats each
+    // shape to average out scheduler noise:
     //
-    // Why this cannot mask a defect: a wrong assertion still fails instantly.
-    // Only a genuine HANG takes longer -- the same argument this file already
-    // makes for the 5s -> 15s bump above.
+    //   BEFORE (CI-shaped, maxWorkers=2 + 8 hogs), isolated 6-file runs:
+    //     worst single test   8470ms  qth-state-fallback "a state-less QTH..."
+    //     sum of all 6 files' durations: 111-125s across 3 runs
     //
-    // This is the CHEAP mitigation, not the fix. The structural fix is fake
-    // timers on the drive-a-whole-contact tests; it is carded, not done.
-    testTimeout: 30000,
+    //   AFTER, same shape, same 3-repeat method:
+    //     worst single test   6382ms  (same test)               -25% worst-case
+    //     sum of all 6 files' durations: 108-112s across 3 runs
+    //
+    //   AFTER, full 844-test suite, one clean run (815 passed / 29 skipped, as
+    //   before — no test lost): worst test in the WHOLE suite is 6406ms, and it
+    //   is narrow.dom.test.jsx's "...gives the EASY live 'Sending' readout..." —
+    //   NOT one of the six files above. That test keeps one deliberate real
+    //   5000ms wait (a DX-step "Get ready" countdown; its own file comment
+    //   explains why fake timers would just hang there instead of advancing it),
+    //   so it — not the fixed contact-drive band — now sets the suite's floor.
+    //
+    // 10000ms gives that measured 6406ms worst case a ~56% margin: comfortable
+    // headroom for scheduler noise (the repeated runs above varied +/-20% on the
+    // same test) without re-opening the old crowded-cap problem. Still a 67%
+    // reduction from the prior 30000ms. A wrong assertion still fails in
+    // milliseconds; only a genuine hang would ever approach this cap.
+    testTimeout: 10000,
   },
 });
