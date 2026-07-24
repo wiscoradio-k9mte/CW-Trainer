@@ -158,9 +158,9 @@ const LINGO = [
       ["DXCC entity", "A geographic entry on the ARRL DXCC list — may differ from national borders. Alaska (KL7), Hawaii (KH6), and Guantánamo Bay (KG4) are separate DXCC entities from the lower-48 US, even though all are US territory"],
       ["Pileup", "Many stations calling a rare or DXpedition station at once. Send only your callsign — once. A too-long call gets you ignored. Honor directional calls ('NA only')"],
       ["Split", "DX transmits on one frequency, listens on a range above it (e.g. 'UP 5 TO 10'). Your transmitter moves into that range; the DX stays put. You can't hear yourself being worked — that's normal"],
-      ["UP", "The DX instruction to call above their transmit frequency. 'UP 5' = at least 5 kHz up; 'UP 5 TO 10' = spread across a 5-kHz range, not a single parking spot"],
+      ["UP", "The DX instruction to call above their transmit frequency. 'UP 5' = they're listening 5 kHz up (a specific offset); 'UP 5 TO 10' = spread across a 5-kHz range, not a single parking spot"],
       ["QSX", "'Listening on [frequency or range]' — the formal Q-code for split operation. Rarely heard spelled out on modern CW; the UP-style range call dominates. Defined here for reference; not a drill"],
-      ["UTC / Zulu", "Coordinated Universal Time — the standard for all DX operating, logging, and band-opening spots. 'Zulu' is the NATO phonetic for Z (zero UTC offset). 0000 UTC = midnight in London; 1200 UTC = noon"],
+      ["UTC / Zulu", "Coordinated Universal Time — the standard for all DX operating, logging, and band-opening spots. 'Zulu' is the NATO phonetic for Z (zero UTC offset). 0000 UTC = midnight in London in winter (London runs UTC+1 on summer time); 1200 UTC = noon UTC"],
     ],
   },
   {
@@ -225,8 +225,8 @@ const QSO_WALKTHROUGH = [
   },
 ];
 
-const POTA_WALKTHROUGH = [
-  { who: "ACTIVATOR", text: "CQ POTA CQ POTA DE W9ABC W9ABC US-4361 K", why: "An op in a park, calling for hunters. US-4361 is a US POTA reference (US parks use the US- prefix, the ISO country code POTA adopted for all US parks)." },
+export const POTA_WALKTHROUGH = [
+  { who: "ACTIVATOR", text: "CQ POTA CQ POTA DE W9ABC W9ABC K", why: "An op in a park, calling for hunters. Their park (US-4361 — US parks use the US- ISO prefix POTA adopted) rides in the spot and the log, NOT the CQ: on the air you won't hear the reference sent — you already have it from the spot." },
   { who: "YOU", text: "{ME}", why: "Your call. Once. No DE, no K. You're one voice in a pileup — brevity is the courtesy." },
   { who: "ACTIVATOR", text: "{ME} GM UR 559 559 BK", why: "Your report, twice. BK hands it straight back — no callsign ceremony." },
   { who: "YOU", text: "BK GM UR 599 599 {ST} {ST} BK", why: "BK to accept, greeting, their report, your state twice. That's your whole half." },
