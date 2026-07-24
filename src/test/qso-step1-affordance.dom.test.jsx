@@ -587,7 +587,7 @@ describe("break-in mode never survives a step transition", () => {
     const { user } = await startDxStep();
     await user.click(screen.getByRole("button", { name: BREAK_IN_TRIGGER }));
 
-    await user.click(screen.getByRole("button", { name: /Abandon this contact/i }));
+    await user.click(screen.getByRole("button", { name: /Abandon contact/i }));
     const rail = screen.getByRole("complementary", { name: "Options" });
     await user.click(within(rail).getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
 

@@ -60,12 +60,13 @@ describe("COPY tab — setup and interaction", () => {
     const { user } = await renderApp();
     await gotoTab(user, "COPY");
 
-    // The answer input now carries aria-label="Your copy" (the a11y fix added in
-    // the COPY-into-rail phase), so we locate it by its accessible name via the
+    // The answer input's accessible name comes from a real <label htmlFor> (the
+    // F96 fix in fix/a11y-labelname-h1: the caption text IS the name now, so the
+    // visible words a speech-input user says actually match), located by the
     // textbox role — cleaner and stronger than the old placeholder lookup, and it
     // doubles as the guard that the accessible name is present and correct.
     expect(screen.getByText("Your copy — type what you hear")).toBeInTheDocument();
-    const input = screen.getByRole("textbox", { name: "Your copy" });
+    const input = screen.getByRole("textbox", { name: "Your copy — type what you hear" });
     await user.type(input, "abc");
     expect(input).toHaveValue("abc");
   });
