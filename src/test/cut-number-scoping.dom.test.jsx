@@ -92,7 +92,7 @@ describe("COPY callsign rung — a cut-digit mis-copy is not a perfect copy", ()
     rnd.mockRestore();
     expect(screen.getByText("N8NT N8NT N8NT")).toBeTruthy(); // the seed took
 
-    await user.type(screen.getByRole("textbox", { name: "Your copy" }), "9890 9890 9890");
+    await user.type(screen.getByRole("textbox", { name: "Your copy — type what you hear" }), "9890 9890 9890");
     await user.click(screen.getByRole("button", { name: "CHECK" }));
 
     // Only each call's "8" and the two spaces survive: 5 of 14 characters.
@@ -119,7 +119,7 @@ describe("COPY callsign rung — a cut-digit mis-copy is not a perfect copy", ()
     rnd.mockRestore();
     expect(screen.getByText("UR 5NN 5NN BK")).toBeTruthy();
 
-    await user.type(screen.getByRole("textbox", { name: "Your copy" }), "UR 599 599 BK");
+    await user.type(screen.getByRole("textbox", { name: "Your copy — type what you hear" }), "UR 599 599 BK");
     await user.click(screen.getByRole("button", { name: "CHECK" }));
 
     const status = screen.getAllByRole("status").map((n) => n.textContent).join(" | ");

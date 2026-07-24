@@ -480,7 +480,7 @@ describe("E1 — auto-advance: ABANDON on DX step cancels pending advance timer"
     // Timer is now armed (100% copy, toggle ON).
 
     // ABANDON the contact mid-window.
-    const abandonBtn = screen.getByRole("button", { name: /Abandon this contact/i });
+    const abandonBtn = screen.getByRole("button", { name: /Abandon contact/i });
     fireEvent.click(abandonBtn);
     await act(async () => {});
 
@@ -571,7 +571,7 @@ describe("E1 — auto-advance: ABANDON on the LAST copy step does not record a s
     expect(await arm100CopyNoFire()).toBe(true);
 
     // ABANDON before the 4s elapses. In production this clears qsoAdvanceTimer.
-    const abandon = screen.getByRole("button", { name: /Abandon this contact/i });
+    const abandon = screen.getByRole("button", { name: /Abandon contact/i });
     fireEvent.click(abandon);
     await act(async () => {});
 
@@ -842,7 +842,7 @@ describe("E1 — auto-advance: ABANDON on you-step cancels any pending advance t
     for (let i = 0; i < 2; i++) tapAndFinalize();
     await act(async () => {});
 
-    const abandonBtn = screen.getByRole("button", { name: /Abandon this contact/i });
+    const abandonBtn = screen.getByRole("button", { name: /Abandon contact/i });
     fireEvent.click(abandonBtn);
     await act(async () => {});
 
@@ -1141,7 +1141,7 @@ describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", (
     const inContact =
       screen.queryByRole("button", { name: /CONTINUE →/i }) ||
       screen.queryByRole("button", { name: /REPLAY/i }) ||
-      screen.queryByRole("button", { name: /Abandon this contact/i });
+      screen.queryByRole("button", { name: /Abandon contact/i });
     // If the contact didn't start, the test infrastructure is broken — fail loudly.
     expect(inContact).not.toBeNull();
 

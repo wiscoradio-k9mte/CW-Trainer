@@ -80,7 +80,7 @@ describe("COPY relocation — WIDE: options live in the rail, practice in main",
 
     const main = screen.getByRole("main");
     // The practice cluster stays in main in both layouts (design §5).
-    expect(within(main).getByRole("textbox", { name: "Your copy" })).toBeInTheDocument();
+    expect(within(main).getByRole("textbox", { name: "Your copy — type what you hear" })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "CHECK" })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: /NEW/ })).toBeInTheDocument();
     // And the practice surface is NOT in the rail.
@@ -180,7 +180,7 @@ describe("COPY relocation — NARROW: options render inline, no rail", () => {
     expect(within(main).getByText("What to copy — climb as you improve")).toBeInTheDocument();
     expect(within(main).getByText("Conditions")).toBeInTheDocument();
     // Practice surface is also inline in main on narrow.
-    expect(within(main).getByRole("textbox", { name: "Your copy" })).toBeInTheDocument();
+    expect(within(main).getByRole("textbox", { name: "Your copy — type what you hear" })).toBeInTheDocument();
     expect(within(main).getByRole("button", { name: "CHECK" })).toBeInTheDocument();
   });
 });

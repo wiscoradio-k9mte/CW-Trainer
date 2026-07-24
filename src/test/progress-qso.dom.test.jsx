@@ -152,8 +152,8 @@ describe("QSO record — abandoned contact does NOT write a record", () => {
     // Advance one step (not done yet).
     await user.click(screen.getByRole("button", { name: /CONTINUE →/ }));
 
-    // Abandon mid-contact. Aria-label is "Abandon this contact and return to setup".
-    await user.click(screen.getByRole("button", { name: /Abandon this contact/i }));
+    // Abandon mid-contact. Aria-label is "Abandon contact — back to setup".
+    await user.click(screen.getByRole("button", { name: /Abandon contact/i }));
 
     // Confirm we're back to setup (no qso in progress).
     expect(screen.queryByText(/QSO COMPLETE/i)).not.toBeInTheDocument();

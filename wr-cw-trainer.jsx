@@ -2135,6 +2135,14 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
       copyInputRef.current.focus();
     }
   }, [target]);
+  // Id for the answer input, so its visible caption can be a real <label
+  // htmlFor> instead of a parallel aria-label — the div read "Your copy — type
+  // what you hear" while aria-label said only "Your copy", a WCAG 2.5.3 (F96)
+  // mismatch: a speech-input user saying the visible label hit nothing.
+  // useId (not a constant), same reasoning as QsoSim's copyInputId: nothing
+  // stops a future refactor from mounting this tab twice.
+  const copyUid = useId();
+  const copyInputId = `${copyUid}-copy`;
 
   // Band noise runs while real-life conditions are selected on this tab
   useEffect(() => {
@@ -2338,10 +2346,10 @@ function CopyTrainer({ player, settings, isWide, railEl, suppressRail, record })
         </div>
       )}
 
-      <div style={{ ...S.label, marginBottom: 6 }}>Your copy — type what you hear</div>
+      <label htmlFor={copyInputId} style={{ ...S.label, display: "block", marginBottom: 6 }}>Your copy — type what you hear</label>
       <input
+        id={copyInputId}
         ref={copyInputRef}
-        aria-label="Your copy"
         style={S.input}
         value={attempt}
         onChange={(e) => setAttempt(e.target.value)}
@@ -4070,7 +4078,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
           <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
             <button
-              aria-label="Abandon this contact and return to setup"
+              // F96 fix: visible caption is "ABANDON CONTACT / back to setup" —
+              // the old name inserted "this"/"and" between those words, breaking
+              // the contiguous match a speech-input user would say.
+              aria-label="Abandon contact — back to setup"
               style={{ ...S.btn, color: S.text.dim, fontSize: "0.6875rem" }}
               onClick={() => {
                 player.stop();
@@ -4152,7 +4163,10 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
           {/* E4: abandon mid-contact — returns to setup without finishing the exchange */}
           <div style={{ marginTop: 12, borderTop: "1px solid #2E343C", paddingTop: 10 }}>
             <button
-              aria-label="Abandon this contact and return to setup"
+              // F96 fix: visible caption is "ABANDON CONTACT / back to setup" —
+              // the old name inserted "this"/"and" between those words, breaking
+              // the contiguous match a speech-input user would say.
+              aria-label="Abandon contact — back to setup"
               style={{ ...S.btn, color: S.text.dim, fontSize: "0.6875rem" }}
               onClick={() => {
                 player.stop();
@@ -4289,8 +4303,11 @@ function OnAirGuide({ player, settings }) {
         <div style={S.panel}>
           <div style={{ ...S.label, marginBottom: 8 }}>Anatomy of a CQ</div>
           <div style={{ ...S.display, fontSize: 16, letterSpacing: 2, marginBottom: 6 }}>{myCq}</div>
+          {/* F96 fix: "CQ" inserted between "whole" and "call" broke the visible
+              phrase "HEAR THE WHOLE CALL" as a contiguous substring of the name —
+              a speech-input user saying the visible words hit nothing. */}
           <button style={{ ...S.btn, marginBottom: 14, fontSize: "0.75rem" }}
-            aria-label="Hear the whole CQ call in Morse" onClick={() => say(myCq)}>♪ HEAR THE WHOLE CALL</button>
+            aria-label="Hear the whole call in Morse" onClick={() => say(myCq)}>♪ HEAR THE WHOLE CALL</button>
           {CQ_ANATOMY.map(([seg, why]) => (
             <div key={seg} style={{ display: "flex", gap: 12, borderBottom: "1px solid #23272D", padding: "10px 0", alignItems: "baseline" }}>
               <button onClick={() => say(sub(seg))}
@@ -5222,8 +5239,11 @@ function Settings({ settings, setSettings, onClose }) {
           On narrow the gear button above the settings panel is the toggle. */}
       {onClose && (
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          {/* F96 fix: visible caption is "Done" — the old name ("Close settings")
+              never said "Done" at all, so a speech-input user saying the visible
+              word found nothing. */}
           <button
-            aria-label="Close settings"
+            aria-label="Done — close settings"
             onClick={onClose}
             style={{ ...S.btn, padding: "5px 14px", fontSize: "0.75rem", color: "#F2A93B", borderColor: "#F2A93B" }}>
             ✕ Done
@@ -5821,9 +5841,15 @@ export default function CWTrainer() {
           <div>
             {/* H2: small eyebrow carries readable brand words — bump to eyebrowText (#A8823F) for AA */}
             <div style={{ ...S.label, color: S.text.eyebrowText, letterSpacing: 3 }}>WISCO RADIO LABS</div>
-            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, letterSpacing: 4, color: "#F2A93B", fontWeight: 700 }}>
+            {/* The app had NO <h1> anywhere — a screen-reader user had no page title
+                to jump to. This is the one document title, same S.head recipe as
+                the Settings <h2>s: fontWeight is already explicit (700, same value
+                the UA bold default would apply, so nothing changes there), but the
+                UA heading sheet also adds ~0.67em margin-block, which this div never
+                had — zeroed on all four sides so the rendered box is unchanged. */}
+            <h1 style={{ fontFamily: "ui-monospace, monospace", fontSize: 22, letterSpacing: 4, color: "#F2A93B", fontWeight: 700, marginTop: 0, marginRight: 0, marginBottom: 0, marginLeft: 0 }}>
               CW TRAINER
-            </div>
+            </h1>
             <div style={{ ...S.label, marginTop: 2 }}>
               {settings.charWpm} wpm chars · {settings.effWpm} wpm effective · {settings.myCall}
             </div>
