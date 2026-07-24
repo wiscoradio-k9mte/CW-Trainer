@@ -6,7 +6,6 @@ import {
   US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing,
   gradeSend, similarityCw, CUT_TOLERANT_COPY_SOURCES, CUT_TOLERANT_KEY_DRILLS,
-  INTL_SUMMITS, POTA_COUNTRY_PREFIXES,
   randDxStation, zoneToken, reciprocalCall, resolveUSState,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   isReadyToAdvance,
@@ -187,10 +186,10 @@ const LINGO = [
     cat: "Operating abroad",
     blurb: "Working DX from your US station needs no permit. Operating a transmitter from outside the US does. Three frameworks cover most of the world — CEPT is the easiest.",
     items: [
-      ["CEPT", "European Conference of Postal & Telecommunications Administrations. A framework that lets US amateurs operate in participating countries by carrying documents — no advance application. US Extra (and grandfathered Advanced) get full privileges; US General gets limited 'CEPT Novice' privileges; Technicians and non-US-citizens get none. Not all of Europe is on the list (Turkey is a notable gap). NEEDS-SOURCING: verify current country list on the ARRL CEPT page before any trip"],
-      ["CEPT Novice", "The limited operating privileges available to US General licensees in CEPT countries that have adopted ECC Recommendation (05)06. Typically restricted bands/segments and/or lower power, varying by country — a General must not assume Extra-level access abroad. NEEDS-SOURCING: confirm ECC Rec (05)06 adoption and the specific General/Novice band/power limits per host country before teaching them as fact"],
-      ["DA 16-1048", "FCC Public Notice (a free PDF from fcc.gov) that lists the CEPT countries accepting US amateurs under T/R 61-01. Carry it printed. Required document alongside your FCC license printout and US passport (citizenship required). NEEDS-SOURCING: verify the current FCC Public Notice number and its carry requirements on the FCC/ARRL CEPT page"],
-      ["IARP", "Inter-American Amateur Radio Permit. Required before operating in most Americas signatory countries. Obtain through the ARRL — budget weeks, not days, before a trip. Class 1 covers HF/telegraphy (General, grandfathered Advanced/Extra); Class 2 covers above-30 MHz (today's Technician). NEEDS-SOURCING: verify current fee, turnaround, and country list on the ARRL IARP page"],
+      ["CEPT", "European Conference of Postal & Telecommunications Administrations. A framework that lets US amateurs operate in participating countries by carrying documents — no advance application. US Extra (and grandfathered Advanced) get full privileges; US General gets limited 'CEPT Novice' privileges; Technicians and non-US-citizens get none. Not all of Europe is on the list (Turkey is a notable gap). Verify the current country list on the ARRL CEPT page before any trip — participation can change"],
+      ["CEPT Novice", "The limited operating privileges available to US General licensees in CEPT countries that have adopted ECC Recommendation (05)06. Typically restricted bands/segments and/or lower power, varying by country — a General must not assume Extra-level access abroad. Confirm ECC Rec (05)06 adoption and the specific band/power limits for your host country before you travel"],
+      ["DA 16-1048", "FCC Public Notice (a free PDF from fcc.gov) that lists the CEPT countries accepting US amateurs under T/R 61-01. Carry it printed. Required document alongside your FCC license printout and US passport (citizenship required). Verify the current Public Notice number and carry requirements on the FCC/ARRL CEPT page before you travel"],
+      ["IARP", "Inter-American Amateur Radio Permit. Required before operating in most Americas signatory countries. Obtain through the ARRL — budget weeks, not days, before a trip. Class 1 covers HF/telegraphy (General, grandfathered Advanced/Extra); Class 2 covers above-30 MHz (today's Technician). Verify the current fee, turnaround time, and country list on the ARRL IARP page before you apply"],
       ["Reciprocal call", "When operating abroad, the host country's prefix goes FIRST, then your US callsign: DL/N1KB (Germany), I0/W1AW (Italy — I0 is the Rome/Lazio district). This is the reverse of domestic portable notation (W1AW/P). Activity suffix appends last: DL/N1KB/P (portable). Tech Plus (legacy since 2000) and Advanced (grandfathered) appear in older treaty text — the current exam path to full CEPT privileges is Extra"],
     ],
   },
@@ -227,7 +226,7 @@ const QSO_WALKTHROUGH = [
 ];
 
 const POTA_WALKTHROUGH = [
-  { who: "ACTIVATOR", text: "CQ POTA CQ POTA DE W9ABC W9ABC K-4361 K", why: "An op in a park, calling for hunters. K-4361 is a US POTA reference (US parks use the K- prefix, matching the US callsign block)." },
+  { who: "ACTIVATOR", text: "CQ POTA CQ POTA DE W9ABC W9ABC US-4361 K", why: "An op in a park, calling for hunters. US-4361 is a US POTA reference (US parks use the US- prefix, the ISO country code POTA adopted for all US parks)." },
   { who: "YOU", text: "{ME}", why: "Your call. Once. No DE, no K. You're one voice in a pileup — brevity is the courtesy." },
   { who: "ACTIVATOR", text: "{ME} GM UR 559 559 BK", why: "Your report, twice. BK hands it straight back — no callsign ceremony." },
   { who: "YOU", text: "BK GM UR 599 599 {ST} {ST} BK", why: "BK to accept, greeting, their report, your state twice. That's your whole half." },

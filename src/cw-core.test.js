@@ -24,7 +24,7 @@ import {
   toneFor, qsoTrend,
   splashSignature,
   US_PREFIXES,
-  DX_GENERATION_POOL, POTA_COUNTRY_PREFIXES, INTL_SUMMITS,
+  DX_GENERATION_POOL,
   randDxStation, randDxFieldStation, randPark, zoneToken, reciprocalCall,
   drillDxCallsigns, drillDxExchange, drillContestFragments,
   drillSplitPileup, drillReciprocalCalls,
@@ -231,7 +231,7 @@ describe("RST / courtesy / numeric classifiers", () => {
   it("numericForms gives cut equivalents for pure numeric tokens only", () => {
     expect(numericForms("599")).toContain("5NN");
     expect(numericForms("05")).toContain("T5");
-    expect(numericForms("K-1234")).toEqual(["K-1234"]); // park ref untouched
+    expect(numericForms("US-1234")).toEqual(["US-1234"]); // park ref untouched
     expect(numericForms("WI")).toEqual(["WI"]);
   });
 });
@@ -3351,13 +3351,14 @@ describe("withCallArea()", () => {
   });
 });
 
-// ---- randPark() — K- fix ----
+// ---- randPark() — US POTA prefix (April-2024 ISO migration: K-#### retired,
+// US-#### current — https://docs.pota.app/docs/changes.html) ----
 describe("randPark()", () => {
-  it("default (no arg) produces K-#### format — not US-####", () => {
+  it("default (no arg) produces US-#### format — not the retired K-####", () => {
     for (let i = 0; i < 20; i++) {
       const p = randPark();
-      expect(p).toMatch(/^K-\d{4}$/);
-      expect(p).not.toMatch(/^US-/);
+      expect(p).toMatch(/^US-\d{4}$/);
+      expect(p).not.toMatch(/^K-/);
     }
   });
 
@@ -4081,23 +4082,27 @@ describe("buildPota() — opts.p2p (both activating, international P2P)", () => 
     }
   });
 
-  it("step[3] mustContain includes the US park ref (not state)", () => {
+  it("step[3] mustContain includes YOUR US park ref in the current US-#### format (not the retired K-####)", () => {
     for (let i = 0; i < 20; i++) {
       const q = buildPota(POTA_PROF, "hunter", { p2p: true });
       const step = q.steps[3]; // you send your park ref in P2P
-      // The park ref (K-XXXX) must be in mustContain and in suggested
-      const parkToken = step.mustContain.find((t) => /^K-\d{4}$/.test(t));
+      // The park ref (US-XXXX) must be in mustContain and in suggested
+      const parkToken = step.mustContain.find((t) => /^US-\d{4}$/.test(t));
       expect(parkToken).toBeDefined();
       expect(step.suggested).toContain(parkToken);
+      // Guards against a regression to the retired callsign-style prefix.
+      expect(step.mustContain.some((t) => /^K-\d{4}$/.test(t))).toBe(false);
     }
   });
 
-  it("step[4] shows the DX park ref (the one to log)", () => {
+  it("step[4] shows the DX park ref (the one to log) in ITS OWN ISO prefix — internally consistent with your US-#### park ref", () => {
     for (let i = 0; i < 20; i++) {
       const q = buildPota(POTA_PROF, "hunter", { p2p: true });
-      // The DX park ref (intl program, potaPrefix) is in step[4] text
-      // It follows a prefix pattern like "DE-XXXX", "G-XXXX", "F-XXXX", etc.
+      // The DX park ref (intl program, potaPrefix) is in step[4] text.
+      // It follows a prefix pattern like "DE-XXXX", "GB-XXXX", "FR-XXXX", etc. —
+      // never the retired "K-XXXX" the player's own side used to send.
       expect(q.steps[4].text).toMatch(/-\d{4}/);
+      expect(q.steps[4].text).not.toMatch(/\bK-\d{4}\b/);
     }
   });
 
@@ -4112,6 +4117,33 @@ describe("buildPota() — opts.p2p (both activating, international P2P)", () => 
     // P2P doesn't introduce a new activity key — it's still pota with opts.
     const q = buildPota(POTA_PROF, "hunter", { p2p: true });
     expect(q.flavor).toBe("POTA");
+  });
+
+  it("summary states YOUR park in the current US-#### format, not the retired K-####", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      expect(q.summary).toMatch(/US-\d{4}/);
+      expect(q.summary).not.toMatch(/\bK-\d{4}\b/);
+    }
+  });
+
+  it("gradeSend credits sending YOUR park ref in the current US-#### form — 100%, both sides internally consistent", () => {
+    for (let i = 0; i < 20; i++) {
+      const q = buildPota(POTA_PROF, "hunter", { p2p: true });
+      const step = q.steps[3]; // "BK GM UR <rst> <rst> <myPark> <myPark> BK"
+      // Send exactly the suggested script (which is built from the same
+      // randPark() value as mustContain) and confirm full credit.
+      expect(gradeSend(step.mustContain, step.suggested).score).toBe(100);
+    }
+  });
+
+  it("gradeSend does NOT credit the retired K-#### form when the required park ref is US-####", () => {
+    // Guards the grading side of the migration directly: if a script's real
+    // required park ref is (say) "US-4361", sending the old-format "K-4361"
+    // must NOT satisfy that element — the two are different tokens, not
+    // interchangeable cut/courtesy forms.
+    const r = gradeSend(["US-4361"], "K-4361");
+    expect(r.score).toBe(0);
   });
 });
 

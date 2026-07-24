@@ -134,7 +134,7 @@ export function decodeChar(code) {
 }
 
 export const COMMON_WORDS = ["THE","AND","YOU","FOR","ARE","HAM","RIG","ANT","QTH","RST","NAME","TNX","FER","AGN","HW","CPY","WX","HR","ES","DE","UR","73","599","CQ","DX","PWR","WATT","DIPOLE","BAND","CALL","OM","GM","GA","GE","FB","HI","VY","PSE","RPT","NR","TU","POTA","SOTA","IOTA","BK","QRZ","P2P","S2S","EE","QRP","QRS"];
-export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P K-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
+export const QSO_PHRASES = ["CQ POTA CQ POTA DE {ME} K","UR 5NN 5NN BK","BK GM UR 599 599 {ST} {ST} BK","BK TU {ST} 73 EE","CQ SOTA DE {ME}/P","P2P P2P US-4361","S2S S2S","QRZ POTA?","CQ CQ DE {ME}","UR RST 599 599","NAME IS {NAME}","QTH {QTH}","TNX FER CALL","HW CPY?","73 ES GD DX","PSE AGN","RIG IS KX2","ANT IS DIPOLE","WX HR SUNNY","PWR 5 WATTS"];
 
 // stateOf(qth) — pull the trailing two-letter state token out of a QTH like
 // "NEWINGTON CT". Returns "" when the QTH carries no such token.
@@ -197,23 +197,18 @@ export const IOTA_REFS = ["NA-128","EU-005","OC-001","NA-067","EU-115","AF-004"]
 // (re-exported above).  The pool is built from the real bundled DXCC dataset —
 // no hand-rolled table, no NEEDS-SOURCING markers.
 
-// POTA program prefixes beyond the US.  "K" is the US POTA program prefix.
-// NEEDS-SOURCING: validate against the POTA program reference list before ship.
-export const POTA_COUNTRY_PREFIXES = ["K", "VE", "DE", "G", "F", "VK", "JA"];
-
-// International SOTA summit associations — non-US examples for teaching.
-// NEEDS-SOURCING: validate association/region codes against the SOTA database.
-export const INTL_SUMMITS = [
-  "G/LD-001", "DL/AL-001", "F/AB-001", "VK1/AC-001", "EA2/NV-001", "JA/NN-001",
-];
-
 // randPark(prefix) — generates a program-prefixed park reference.
-// US POTA uses "K-####" (NOT "US-####" — the previous "US-" was wrong).
-// randPark()       → "K-1234"   (US default)
+// POTA migrated ALL US parks from the retired callsign-style "K-####" to the
+// ISO 3166-1 alpha-2 country code "US-####" in its April-2024 prefix migration
+// (see https://docs.pota.app/docs/changes.html — "K-0001" → "US-0001"). The
+// field-station table in src/data/dxcc-generation.js already uses the current
+// ISO codes (DE, GB, FR, AU, JP, CA); this default keeps the US side on the
+// same, current convention instead of the retired one.
+// randPark()       → "US-1234"  (US default)
 // randPark("DE")   → "DE-0031"  (Germany)
-// randPark("VK")   → "VK-0456"  (Australia)
-// NEEDS-SOURCING: validate non-US prefix strings against the POTA program list.
-export const randPark = (prefix = "K") =>
+// randPark("VK")   → "VK-0456"  (Australia) — non-US prefixes are unchanged by
+//   the migration (POTA's ISO switch only affected the US program).
+export const randPark = (prefix = "US") =>
   `${prefix}-${String(1 + Math.floor(Math.random() * 9999)).padStart(4, "0")}`;
 
 // zoneToken(zone, cut) — formats a CQ zone for a contest exchange.
@@ -316,7 +311,7 @@ export function courtesyForms(token) {
 
 // numericForms(token) → cut-number equivalents of a pure numeric/cut token:
 // 599 ↔ 5NN, 05 ↔ T5. Only fires on a whole [0-9NT] token; a park number like
-// "1234" only appears as a substring inside "K-1234", never a whole required
+// "1234" only appears as a substring inside "US-1234", never a whole required
 // token, so a park ref is never cut-mangled. Non-numeric tokens pass through.
 export function numericForms(token) {
   const t = String(token);
@@ -946,8 +941,9 @@ export function cqCall(activity, call, suffix = "") {
 /* Contact scripts follow current on-air practice:
    - Ragchew: 3x2 CQ, BT (=) separators, KN to hold the frequency, SK + dit-dit to close.
    - POTA: hunters send their call ONCE — no DE, no K. Short exchange with BK turnovers,
-     state as QTH, activator closes "TU <state> 73 EE". US park refs use the K- prefix
-     (e.g. K-1234); international parks carry their own prefix (e.g. DE-0031).
+     state as QTH, activator closes "TU <state> 73 EE". US park refs use the US-
+     prefix (e.g. US-1234, the current ISO code since POTA's April-2024 migration —
+     see randPark() above); international parks carry their own prefix (e.g. DE-0031).
      NOTE: park reference is NOT sent on the air — the activator logs it, not sends it.
    - SOTA: activator signs /P, summit ref (assoc/region-number) in the CQ, chaser-style exchange.
    - IOTA: DX island station, contest-style — report + island ref, quick TU. */
