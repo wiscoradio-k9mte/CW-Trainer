@@ -13,7 +13,7 @@ import {
   drillProsigns, drillQCodes, drillCommonWords, drillWiderWords, drillQsoLine,
   COMMON_WORDS, ROLE_TERMS,
   filterDrillWords, COMMON_WORD_POOL, WIDE_WORD_POOL,
-  analyzeFist, FIST_TOLERANCE, FIST_MIN_ELEMENTS,
+  analyzeFist, hasWordBoundary, FIST_TOLERANCE, FIST_MIN_ELEMENTS,
   toCodes,
   averageScore,
   cqCall,
@@ -1148,6 +1148,38 @@ describe("analyzeFist()", () => {
     expect(r.spacing.character.verdict).toBe("tight");
   });
 
+  // T2 (fix/word-gap-misclassification): the target-aware fix must not change
+  // a single reading for a target that DOES have a real word boundary — a
+  // no-false-negatives corpus spanning all three word verdicts. Each case runs
+  // BOTH the pre-fix call shape (no 4th arg — legacy default) and the new
+  // explicit shape (hasWordBoundary() on a real multi-word target) and asserts
+  // they are byte-identical, so "unaffected" is demonstrated, not assumed.
+  describe("T2: real word boundaries are unaffected by the target-aware fix", () => {
+    const unitMs = 60;
+    // ideal 7u, ±25% tolerance → good band is [5.25u, 8.75u]; ratios chosen to
+    // land cleanly on either side plus dead-center.
+    const cases = [
+      { ratio: 7,   verdict: "good"  },
+      { ratio: 9,   verdict: "loose" },
+      { ratio: 5.2, verdict: "tight" }, // in the word bucket (>=5u) but below the good band
+    ];
+
+    for (const { ratio, verdict } of cases) {
+      it(`word gap ratio ${ratio}u on "CQ DE W1AW" → "${verdict}", same with or without the fix`, () => {
+        const events = [
+          { type: "dit", durMs: unitMs, gapBeforeMs: 0 },
+          { type: "dit", durMs: unitMs, gapBeforeMs: 3 * unitMs },     // one real letter gap
+          { type: "dit", durMs: unitMs, gapBeforeMs: ratio * unitMs }, // the word gap under test
+        ];
+        const legacy = analyzeFist(events, 20, "straight"); // pre-fix call shape (no 4th arg)
+        const fixed = analyzeFist(events, 20, "straight", hasWordBoundary("CQ DE W1AW"));
+        expect(legacy.spacing.word.verdict).toBe(verdict);
+        expect(fixed.spacing.word.verdict).toBe(verdict);
+        expect(fixed).toEqual(legacy); // identical output start to finish
+      });
+    }
+  });
+
   // CONTRACT CHANGE: suppression used to be expressed as verdict "good", which
   // read to the operator as praise for machine-timed spacing. Suppressed now
   // means "not measured" — null ratio, null verdict.
@@ -1318,6 +1350,111 @@ describe("analyzeFist() — a verdict only exists when it was measured", () => {
     expect(paddle.spacing.element).toEqual({ ratio: null, verdict: null }); // machine-timed
     expect(paddle.spacing.word).toEqual({ ratio: null, verdict: null });    // no word gaps sent
     expect(paddle.weighting).toEqual({ ratio: null, verdict: null });       // machine-timed
+  });
+
+  // -------------------------------------------------------------------------
+  // T1/T3 (fix/word-gap-misclassification): a long HESITATION on a target with
+  // no word boundary must not be misread, by duration alone, as a real word
+  // gap. Before this fix these three tests would all have failed differently
+  // (the first two on the asserted VALUE, "good" instead of null/loose) —
+  // that is the live bug the card describes: a >5u thinking-pause on a
+  // one-word target rendered a real, recorded "words: good".
+  // -------------------------------------------------------------------------
+  describe("word gaps are classified from the TARGET, not from duration alone", () => {
+    it("a >5u hesitation on a no-word-boundary target reports NO word verdict", () => {
+      // callsignFist ("W1AW") plus one more character, keyed after a 7u pause —
+      // the exact scenario the card describes: a thinking-pause that duration
+      // alone would call a word gap (ratio 7 vs ideal 7 → "good").
+      const withHesitation = [
+        ...callsignFist,
+        { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // thinking pause
+        { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+      ];
+      // "W1AW" is one token — hasWordBoundary("W1AW") is false (see its own
+      // tests below); pass that through explicitly, matching what check() does.
+      const r = analyzeFist(withHesitation, 20, "straight", hasWordBoundary("W1AW"));
+      expect(r.spacing.word.ratio).toBeNull();
+      expect(r.spacing.word.verdict).toBeNull();
+      // MUTATION VERIFIED: removing the `|| !targetHasWordBoundary` clause from
+      // the classify loop's char-gap branch turns this into "good" — a value
+      // failure (`expect(received).toBeNull() // received "good"`), not a
+      // crash — so the assertion is the guard, not a thrown error.
+    });
+
+    it("the same hesitation is FOLDED into letter-gap evidence, not dropped", () => {
+      // Fewer pre-existing letter gaps than the corpus test below, so the fold
+      // is visible in the character verdict: one real 3u letter gap plus the
+      // 7u hesitation folded in shifts the median from 3 (good) to 5 (loose).
+      // If the hesitation were DROPPED instead of folded, charGaps would stay
+      // [3] and the verdict would stay "good" — that is the mutation this
+      // test rules out (see the comment below).
+      const events = [
+        { type: "dit", durMs: unitMs,     gapBeforeMs: 0 },
+        { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },     // element gap (A)
+        { type: "dit", durMs: unitMs,     gapBeforeMs: 3 * unitMs }, // real letter gap (good, 3u)
+        { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },     // element gap (A)
+        { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // hesitation, not a word gap
+        { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },     // element gap (A)
+      ];
+      const r = analyzeFist(events, 20, "straight", false); // e.g. target "AAA" — one token
+      expect(r.spacing.word.verdict).toBeNull();
+      expect(r.spacing.character.ratio).toBeCloseTo(5, 5); // median([3,7]) = 5, not 3
+      expect(r.spacing.character.verdict).toBe("loose");
+      // MUTATION VERIFIED: changing the fold to a drop (`continue` instead of
+      // pushing onto charGaps when `!targetHasWordBoundary`) leaves charGaps as
+      // [3], so character.ratio reverts to 3 and character.verdict reverts to
+      // "good" — a value failure on two assertions, not a crash.
+    });
+
+    it("T3: one folded hesitation does NOT flip an otherwise-good letter verdict", () => {
+      // Demonstrates the disposition call, not just states it: with a
+      // realistic callsign-length target (3 real letter gaps already sitting
+      // exactly at the 3u ideal), folding in one 7u hesitation does not move
+      // the median off 3 — median([3,3,3,7]) is still 3, because the outlier
+      // sits outside the middle pair of an even-length sorted array.
+      const withHesitation = [
+        ...callsignFist, // 3 real letter gaps, all exactly 3u — verdict "good"
+        { type: "dit", durMs: unitMs,     gapBeforeMs: 7 * unitMs }, // one hesitation
+        { type: "dah", durMs: 3 * unitMs, gapBeforeMs: unitMs },
+      ];
+      const r = analyzeFist(withHesitation, 20, "straight", false);
+      expect(r.spacing.character.ratio).toBeCloseTo(3, 5);
+      expect(r.spacing.character.verdict).toBe("good");
+      // Scope, stated honestly: this holds because there is enough OTHER
+      // letter-gap evidence to outvote one outlier. With only one or two real
+      // letter gaps (see the test above), the same hesitation IS visible in
+      // the letter verdict — correctly, since there is no other data to weigh
+      // it against. That is real signal surfacing, not a regression.
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasWordBoundary() — does a drill TARGET contain a real word boundary?
+// ---------------------------------------------------------------------------
+describe("hasWordBoundary()", () => {
+  it("a single token (a callsign) has no word boundary", () => {
+    expect(hasWordBoundary("W1AW")).toBe(false);
+  });
+
+  it("a bare number group has no word boundary", () => {
+    expect(hasWordBoundary("599")).toBe(false);
+  });
+
+  it("two or more tokens DO have a word boundary", () => {
+    expect(hasWordBoundary("CQ DE W1AW")).toBe(true);
+    expect(hasWordBoundary("UR 599 599 BK")).toBe(true);
+  });
+
+  it("empty, null, and whitespace-only targets have no word boundary", () => {
+    expect(hasWordBoundary("")).toBe(false);
+    expect(hasWordBoundary(null)).toBe(false);
+    expect(hasWordBoundary(undefined)).toBe(false);
+    expect(hasWordBoundary("   ")).toBe(false);
+  });
+
+  it("surrounding whitespace on a single token still has no word boundary", () => {
+    expect(hasWordBoundary("  W1AW  ")).toBe(false);
   });
 });
 

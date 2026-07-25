@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { createRequire } from "module";
+import { DurationBudgetReporter } from "./src/test/duration-budget-reporter.mjs";
 
 const require = createRequire(import.meta.url);
 // Read the version once at build time. Exposed as __APP_VERSION__ so the
@@ -86,15 +87,33 @@ export default defineConfig({
     // headroom for scheduler noise (the repeated runs above varied +/-20% on the
     // same test) without re-opening the old crowded-cap problem. Still a 67%
     // reduction from the prior 30000ms. A wrong assertion still fails in
-    // milliseconds; only a genuine hang would ever approach this cap.
+    // milliseconds.
     //
     // Cap safety re-verified UNDER LOAD (2026-07-23): a full 844-test run pinned
     // to 2 cores (taskset -c 0,1 — harsher than a real 2-core CI runner, which
     // caps workers rather than over-subscribing) → 815 passed / 0 failed, and the
     // worst test was 5554ms (narrow's deliberate-wait). Every test cleared 10000ms
-    // with >=44% margin. Because delay:null removed the CPU-bound userEvent
-    // ballooning, only the fixed deliberate waits remain, and a fixed wall-clock
-    // wait does not grow under CPU contention — which is why the cap holds.
+    // with >=44% margin.
+    //
+    // CORRECTION (2026-07-25): the line above — "only a genuine hang would ever
+    // approach this cap" — is FALSE and is struck rather than repeated. Measured
+    // that day: with a SECOND concurrent full vitest suite sharing this same
+    // 8-core box (heavier contention than the 2-core taskset pin above), two
+    // tests that already carry the delay:null fix (qth-state-fallback,
+    // qso-blank-required-element) hit the REAL 10000ms timeout. delay:null fixed
+    // the CPU-bound userEvent ballooning, but not the underlying fact that a
+    // test built from many sequential `await user.click(...)` steps still competes
+    // for the event loop, and enough contention can push any such test toward this
+    // cap — a fixed wall-clock wait does not grow under contention, but a
+    // many-step test's WALL-CLOCK TOTAL still can. This is exactly what the
+    // DurationBudgetReporter below exists to catch at 8000ms, before a test gets
+    // anywhere near this 10000ms kill line — see src/test/duration-budget.js for
+    // that threshold's full measured arithmetic.
     testTimeout: 10000,
+    // DurationBudgetReporter (src/test/duration-budget-reporter.mjs): a per-test
+    // duration BUDGET distinct from the testTimeout kill-cap above — CI-only hard
+    // fail, advisory when run locally (see that file for why). 'default' keeps
+    // vitest's normal console output; this just adds the extra check on top.
+    reporters: ["default", new DurationBudgetReporter()],
   },
 });
