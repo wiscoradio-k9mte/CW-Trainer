@@ -9,7 +9,7 @@ import {
   randDxStation, zoneToken, reciprocalCall, resolveUSState,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   isReadyToAdvance,
-  DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, averageScore,
+  DRILL_CATEGORIES, ROLE_TERMS, analyzeFist, hasWordBoundary, averageScore,
   toCodes,
   emptyProgress, appendProgress, migrateProgress,
   learnTrend, keyTrend, copyTrend, toneFor, qsoTrend,
@@ -2548,7 +2548,11 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
     setResult(pct);
     // Analyze fist timing from the events accumulated since the last clear.
     // Read from the ref directly — no re-render needed to compute this.
-    const fist = analyzeFist(keyer.eventsRef.current, settings.keyWpm, settings.keyType);
+    // hasWordBoundary(target) tells analyzeFist whether THIS target could ever
+    // contain a real word gap — a callsign or bare number group never does, so a
+    // long inter-letter hesitation there must not read as "words: good"
+    // (fix/word-gap-misclassification).
+    const fist = analyzeFist(keyer.eventsRef.current, settings.keyWpm, settings.keyType, hasWordBoundary(target));
     setAnalysis(fist);
 
     // Persist to cross-session progress history (v2.0 §1).
@@ -2812,10 +2816,12 @@ function KeyTrainer({ player, settings, setSettings, isWide, railEl, suppressRai
                 {/* Spacing verdicts — up to three rows.
                     A row appears ONLY when analyzeFist actually measured it (verdict
                     non-null). That is the single rule for every reading in this panel:
-                    element gaps are null for paddle/bug (machine-timed), and letter or
-                    word gaps are null when the drill contained none of that gap class —
-                    a callsign drill has no word gaps, so it gets no word-gap row rather
-                    than a fabricated "GOOD". */}
+                    element gaps are null for paddle/bug (machine-timed); word gaps
+                    are null when the DRILL TARGET has no real word boundary — check()
+                    passes hasWordBoundary(target) into analyzeFist, so a callsign or
+                    bare number group folds any long inter-letter hesitation into the
+                    letter-gap reading instead of it being mistaken, by duration alone,
+                    for a word gap that was never sent (fix/word-gap-misclassification). */}
                 {[
                   ["Element gaps", "between elements (ideal 1u)", analysis.spacing.element],
                   ["Letter gaps", "between letters (ideal 3u)", analysis.spacing.character],

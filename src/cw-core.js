@@ -720,9 +720,32 @@ export const DRILL_CATEGORIES = [
    this rule the unmeasured case returned "good", so PROGRESS praised operators
    for word spacing they had never sent — fabricated progress.
 
+   WORD-GAP MISCLASSIFICATION (fix/word-gap-misclassification): "a callsign has
+   no word gaps" above used to be an assumption, not a fact the code checked —
+   gaps were bucketed purely by duration (element <2u, letter 2u–5u, word >5u),
+   so a single long thinking-pause on a ONE-WORD target (a callsign, a bare
+   number group) landed in the word bucket by ratio alone and rendered a real,
+   recorded "words: good" for a word gap that was never sent. Callers now pass
+   `targetHasWordBoundary` — computed from the actual drill target via
+   `hasWordBoundary()` — so the classifier can tell a genuine word gap from an
+   inter-letter hesitation on content that never had a second word. See the
+   classify loop below for the fold decision.
+
    B2 (v1.1): returns wpmDelta (estWpm - keyWpm), wpmVerdict, and lowSample flag.
    B3 (v1.1): returns weighting { ratio, verdict } — median dah vs 3×unit.
               Straight key only; suppressed for paddle (dahs are machine-timed). */
+
+// hasWordBoundary(target) — true when a drill TARGET has at least one real word
+// boundary (two-or-more whitespace-separated tokens), i.e. a genuine inter-word
+// gap is possible when it's keyed. A callsign ("W1AW"), a bare number group, or
+// any single token is one word: whatever pause the operator takes mid-send is,
+// at most, a letter-gap hesitation — never a word gap, no matter how long.
+// Feed this to analyzeFist() so it can tell the two apart instead of guessing
+// from duration alone (see WORD-GAP MISCLASSIFICATION above).
+export function hasWordBoundary(target) {
+  return String(target ?? "").trim().split(/\s+/).filter(Boolean).length > 1;
+}
+
 export const FIST_TOLERANCE = 0.25;
 
 // WPM verdict tolerance: ±3 wpm from target is "on target".  Conservative —
@@ -734,7 +757,12 @@ const FIST_WPM_TOLERANCE = 3;
 // to mean much; the UI should suppress or qualify the reading.
 export const FIST_MIN_ELEMENTS = 8;
 
-export function analyzeFist(events, keyWpm, keyType = "straight") {
+// targetHasWordBoundary: does the drill TARGET actually contain a second word
+// (see hasWordBoundary() above)? Defaults to `true` — the pre-fix, ratio-only
+// classification — so a caller that doesn't know the target (a direct unit
+// test of the classifier, say) gets the same behavior it always did. The one
+// production caller (wr-cw-trainer.jsx's check()) always passes the real value.
+export function analyzeFist(events, keyWpm, keyType = "straight", targetHasWordBoundary = true) {
   // Safe empty-events case: no data to analyze, return neutral zeroes.
   if (!events || events.length === 0) {
     return {
@@ -798,6 +826,22 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
   //
   // Boundary heuristic: < 2u → element gap, 2u–5u → char gap, > 5u → word gap.
   // These thresholds are loose to handle uneven fists without over-splitting.
+  //
+  // TARGET-AWARE OVERRIDE (fix/word-gap-misclassification, T3 design decision):
+  // duration alone cannot tell a real word gap from a long inter-letter
+  // hesitation — a >5u thinking-pause on a one-word target (a callsign, a bare
+  // number group) is not a word gap just because it lasted 7 units. When the
+  // TARGET has no second word (`!targetHasWordBoundary`), a gap that duration
+  // alone would call "word" is FOLDED into charGaps instead of dropped:
+  //   - fold (chosen): the hesitation still counts as letter-gap evidence, so a
+  //     genuinely loose fist still reads "loose" there — nothing is hidden.
+  //   - drop (rejected): the sample vanishes with no verdict anywhere, quietly
+  //     understating the operator's real pause. Silently discarding real signal
+  //     is the same failure family as fabricating a verdict from none — this
+  //     doctrine treats "hide a true reading" and "invent a false one" as
+  //     equally wrong (see cw-core.test.js's "fold, not drop" cases for the
+  //     mutation that tells them apart, and the corpus case showing one folded
+  //     outlier does not flip an already-good letter verdict).
   const elementGaps = [];
   const charGaps = [];
   const wordGaps = [];
@@ -808,7 +852,7 @@ export function analyzeFist(events, keyWpm, keyType = "straight") {
     if (unitMs <= 0) continue;
     const ratio = g / unitMs;
     if (ratio < 2) elementGaps.push(ratio);
-    else if (ratio < 5) charGaps.push(ratio);
+    else if (ratio < 5 || !targetHasWordBoundary) charGaps.push(ratio);
     else wordGaps.push(ratio);
   }
 
@@ -1878,6 +1922,28 @@ const PROGRESS_MIGRATIONS = {
   //     Leaving the field absent is the migration — copyTrend() reads absent as
   //     "unknown" and groups those records separately (see copyConditionsLabel).
 };
+
+// CONSIDERED AND NOT SHIPPED (fix/word-gap-misclassification): a v3→v4 migration
+// that demotes stored wordVerdict:"good" to null for KEY records whose category
+// could never have produced a real word gap — same shape as the v1→v2 demotion
+// above, but per-category instead of blanket. A stored KEY record keeps only
+// `category` (wr-cw-trainer.jsx ~2564), never the actual target string, so a
+// historical verdict can only be judged by what its WHOLE category can ever emit.
+// Measured every DRILL_CATEGORIES generator (4000 draws each, 3 settings profiles):
+// 8 of 14 (words, wordswide, qcodes, prosigns, numbers, rst, cq, qso) ALWAYS emit
+// a real word boundary — nothing to demote. 5 of 14 (callsigns, dxcalls, dxexch,
+// contest, split) are MIXED BY DESIGN (e.g. callsigns draws a 1–3-call run) — a
+// stored "good" there could be a true reading or a fabricated one, and there is
+// no way to tell which after the fact, so a demotion would just trade one kind
+// of wrong for another. The 14th, `recip`, is the only category that ALWAYS
+// produces a single token (reciprocalCall() never inserts a space) — but that
+// guarantee is contingent on `settings.myCall` never containing whitespace,
+// which the Settings callsign input does not enforce (wr-cw-trainer.jsx ~5312
+// only applies .toUpperCase(), never trims or validates the format). One
+// category clearing a real bar, gated on an unrelated, unenforced field, is not
+// a bright line — so no per-category demotion shipped. New records are correct
+// from this fix forward; historical word verdicts on the 5 mixed categories are
+// left exactly as recorded (matches the shop's severable-migration precedent).
 
 // migrateProgress(raw) → a valid progress object.
 //
