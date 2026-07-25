@@ -11,7 +11,13 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
     />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- viewport-fit intentionally left at its default ("auto"), NOT "cover": "cover" asks the
+         page to draw under the display cutout/home-indicator, which is only safe once every
+         edge-to-edge surface is padded with env(safe-area-inset-*) — this tree has none. "auto"
+         insets content out of the cutout automatically, so it's the honest, safe default until
+         that padding is designed together with the Capacitor mobile lane's keyboard/no-scroll
+         contract and validated on real notched hardware. See CLAUDE.md platform roadmap. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CW Trainer — Wisco Radio Labs</title>
     <style>
       html, body, #root { height: 100%; }
