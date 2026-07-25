@@ -284,10 +284,20 @@ const oh2xx = findByCall('OH2XX');
 check('OH2XX → Finland',
   oh2xx?.entityCode === 224, `got ${oh2xx?.name}`);
 
-// Wisconsin → CQ 4
+// Wisconsin → CQ 4, ITU 8
 const wi = multiZoneCallAreas.UnitedStates?.states?.WI;
 check('Wisconsin resolves to CQ 4 in US table',
   wi?.cq === 4, `got ${wi?.cq}`);
+// Straddling-state ITU values. Expected values come from the ARRL/IARU HF
+// Championship zone definitions + the US Census 2020 centre of population,
+// cited at the US_STATE_ZONES table in scripts/build-dxcc-dataset.mjs — NOT
+// read back from this dataset.
+check('Wisconsin resolves to ITU 8 (straddles 90W; pop. centre 89.03W = east)',
+  wi?.itu === 8, `got ${wi?.itu}`);
+
+const mt = multiZoneCallAreas.UnitedStates?.states?.MT;
+check('Montana resolves to ITU 6 (straddles 110W; pop. centre 111.32W = west)',
+  mt?.itu === 6, `got ${mt?.itu}`);
 
 // ---------------------------------------------------------------------------
 // 9. Additional sentinels (coordinator augmentation)

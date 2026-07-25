@@ -106,11 +106,22 @@ describe('DXCC consumer logic — resolveZones', () => {
 // d) Consumer logic — resolveUSState (real shipped function, not dataset read)
 // ---------------------------------------------------------------------------
 describe('DXCC consumer logic — resolveUSState', () => {
-  it('Wisconsin (WI) → CQ 4, ITU 7', () => {
+  // WI and MT straddle an ITU meridian. The expected values are NOT read back
+  // from our own dataset — they come from the ARRL/IARU HF Championship zone
+  // definitions plus the US Census 2020 centre of population, cited in full at
+  // the US_STATE_ZONES table in scripts/build-dxcc-dataset.mjs.
+  it('Wisconsin (WI) → CQ 4, ITU 8 (straddles 90°W; pop. centre 89.03°W = east)', () => {
     const z = resolveUSState('WI');
     expect(z).not.toBeNull();
     expect(z.cq).toBe(4);
-    expect(z.itu).toBe(7);
+    expect(z.itu).toBe(8);
+  });
+
+  it('Montana (MT) → CQ 4, ITU 6 (straddles 110°W; pop. centre 111.32°W = west)', () => {
+    const z = resolveUSState('MT');
+    expect(z).not.toBeNull();
+    expect(z.cq).toBe(4);
+    expect(z.itu).toBe(6);
   });
 
   it('California (CA) → CQ 3, ITU 6', () => {

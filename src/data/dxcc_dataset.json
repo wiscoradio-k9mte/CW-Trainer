@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-07-01T11:49:07.472Z",
+    "generatedAt": "2026-07-25T21:46:18.074Z",
     "source1": "https://www.country-files.com/cty/cty.csv",
     "source2": "github.com/k0swe/dxcc-json (Apache-2.0, vendored)",
     "totalEntities": 402,
@@ -2539,9 +2539,10 @@
         19,
         20,
         29,
-        30
+        30,
+        75
       ],
-      "ituZoneDisplay": "19, 20, 29, 30",
+      "ituZoneDisplay": "19, 20, 29, 30, 75",
       "multiZone": true,
       "flag": "🇷🇺",
       "countryCode": "RU",
@@ -15140,7 +15141,7 @@
     "UnitedStates": {
       "entityCode": 291,
       "determinedBy": "state",
-      "note": "CQ 3/4/5 and ITU 6/7/8 set by state, not the call digit; ITU boundaries follow 110W and 90W meridians so some states straddle two ITU zones (value shown is predominant).",
+      "note": "CQ 3/4/5 and ITU 6/7/8 set by state, not the call digit; ITU boundaries follow the 110W and 90W meridians so eleven states straddle two ITU zones — the value shown is the zone containing that state's 2020 centre of population (ARRL IARU HF Championship rules + US Census Bureau).",
       "states": {
         "AZ": {
           "cq": 3,
@@ -15296,7 +15297,7 @@
         },
         "MT": {
           "cq": 4,
-          "itu": 7
+          "itu": 6
         },
         "ND": {
           "cq": 4,
@@ -15332,7 +15333,7 @@
         },
         "WI": {
           "cq": 4,
-          "itu": 7
+          "itu": 8
         },
         "WY": {
           "cq": 4,
