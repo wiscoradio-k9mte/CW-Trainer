@@ -41,7 +41,7 @@ entityCode,name,primaryPrefix,continent,cqZone,cqZones,ituZone,ituZones,multiZon
 51,"Eritrea","E3",AF,37,"37",48,"48",false,"🇪🇷",ER,false,"^E3[A-Z0-9/]*$"
 52,"Estonia","ES",EU,15,"15",29,"29",false,"🇪🇪",EE,false,"^ES[A-Z0-9/]*$"
 53,"Ethiopia","ET",AF,37,"37",48,"48",false,"🇪🇹",ET,false,"^ET[A-Z0-9/]*$"
-54,"European Russia","UA",EU,,"16|17|40",,"19|20|29|30",true,"🇷🇺",RU,false,"^(U[A-I][1-7]|R[A-Z0-7])[A-Z0-7/]*$"
+54,"European Russia","UA",EU,,"16|17|40",,"19|20|29|30|75",true,"🇷🇺",RU,false,"^(U[A-I][1-7]|R[A-Z0-7])[A-Z0-7/]*$"
 56,"Fernando de Noronha","PY0F",SA,11,"11",13,"13",false,"🇧🇷",BR,false,"^P[P-Y]0F[A-Z0-9/]*$"
 60,"Bahamas","C6",NA,8,"8",11,"11",false,"🇧🇸",BS,false,"^C6[A-Z0-9/]*$"
 61,"Franz Josef Land","R1FJ",EU,40,"40",75,"75",false,"🇷🇺",RU,false,"^R1/F[A-Z0-9/]*$"

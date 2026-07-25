@@ -303,14 +303,48 @@ function buildDeletedEntity(k0e) {
 }
 
 // ---------------------------------------------------------------------------
-// multiZoneCallAreas — hard-coded from authoritative CQ WW WAZ data.
-// These resolve zone ambiguity for call areas within entities that span zones.
-// The CQ zone facts are from cqww.com; the ITU boundaries follow the 110°W
-// and 90°W meridians (some states straddle; value shown is predominant).
+// multiZoneCallAreas — HAND-CODED. These resolve zone ambiguity for call areas
+// within entities that span zones.
+//
+// ⚠ NOT derived from the AD1C cty.csv country file this script otherwise reads:
+// AD1C lists the whole US as ONE entity and carries no per-state zone table.
+// Living inside a generator script makes this table LOOK derived; it is not.
+// Every value must therefore be citable to a source OUTSIDE this repo. Never
+// "check" it against our own generated dataset, another row of this table, or a
+// Wisco Radio doc — that cites the artifact under test and confirms errors.
+//
+// CQ zones — source: CQ WW WAZ rules (cqww.com). "coastal W4" (FL GA SC NC VA)
+// = CQ 5. All 49 CQ values below were re-checked 2026-07-25 (see ITU note) and
+// agree with the external reference.
+//
+// ITU zones (the 90-zone IARU/ITU system — NOT the 3 ITU regions and NOT the 40
+// CQ zones) — source, retrieved 2026-07-25:
+//   ARRL, IARU HF World Championship official rules
+//   https://www.arrl.org/iaru-hf-world-championship
+//   Zone 6 = "U.S.A. (Washington, Oregon, California, Nevada, Idaho, & that part
+//             of Montana, Utah & Arizona west of 110 Deg. W.)"
+//   Zone 7 = "...that part of Utah & Arizona East of 110 Deg. W., & that part of
+//             Michigan, part of Montana, Illinois, Missouri, Arkansas,
+//             Tennessee, Mississippi, Louisiana & Wisconsin west of 90 Deg. W."
+//   Zone 8 = "...& that part of Michigan, Illinois, Missouri, Arkansas,
+//             Mississippi, Tennessee, Louisiana & Wisconsin east of 90 Deg. W."
+//   (Minnesota is listed in Zone 7 UNqualified — it does not straddle.)
+//
+// Eleven states straddle a meridian, so a single-value table must pick a side.
+// TIE-BREAK RULE: the value is the zone containing the state's CENTRE OF
+// POPULATION — U.S. Census Bureau, 2020 Centers of Population by State,
+// retrieved 2026-07-25:
+//   https://www2.census.gov/geo/docs/reference/cenpop2020/CenPop2020_Mean_ST.txt
+// Applied uniformly it resolves all eleven:
+//   90°W  → IL 8 · MI 8 · MS 8 · TN 8 · WI 8 | AR 7 · LA 7 · MO 7
+//   110°W → AZ 6 · MT 6 · UT 6
+// Corroborated per-state by ON4AA's "US Call Areas & Zones by State" (updated
+// 2021-03-01, retrieved 2026-07-25, https://hamwaves.com/map.us/en/), which
+// agrees on every state except MS — ON4AA's default column follows call-area
+// grouping (it groups MS with the W5 states) rather than predominance, so the
+// Census criterion above governs and MS stays 8.
 // ---------------------------------------------------------------------------
 
-// CQ zone assignments by US state (lower 48 + DC).
-// Source:  CQ WW WAZ rules.  "coastal W4" (FL GA SC NC VA) = CQ 5.
 const US_STATE_ZONES = {
   // Pacific (CQ 3, ITU 6)
   AZ: { cq: 3, itu: 6 }, CA: { cq: 3, itu: 6 }, ID: { cq: 3, itu: 6 },
@@ -332,10 +366,12 @@ const US_STATE_ZONES = {
   IA: { cq: 4, itu: 7 }, IL: { cq: 4, itu: 8 }, IN: { cq: 4, itu: 8 },
   KS: { cq: 4, itu: 7 }, KY: { cq: 4, itu: 8 }, LA: { cq: 4, itu: 7 },
   MI: { cq: 4, itu: 8 }, MN: { cq: 4, itu: 7 }, MO: { cq: 4, itu: 7 },
-  MS: { cq: 4, itu: 8 }, MT: { cq: 4, itu: 7 }, ND: { cq: 4, itu: 7 },
+  // MT straddles 110°W; pop. centre 111.32°W is WEST of it → ITU 6 (was 7).
+  MS: { cq: 4, itu: 8 }, MT: { cq: 4, itu: 6 }, ND: { cq: 4, itu: 7 },
   NE: { cq: 4, itu: 7 }, NM: { cq: 4, itu: 7 }, OH: { cq: 4, itu: 8 },
   OK: { cq: 4, itu: 7 }, SD: { cq: 4, itu: 7 }, TN: { cq: 4, itu: 8 },
-  TX: { cq: 4, itu: 7 }, WI: { cq: 4, itu: 7 }, WY: { cq: 4, itu: 7 },
+  // WI straddles 90°W; pop. centre 89.03°W is EAST of it → ITU 8 (was 7).
+  TX: { cq: 4, itu: 7 }, WI: { cq: 4, itu: 8 }, WY: { cq: 4, itu: 7 },
 };
 
 const MULTI_ZONE_CALL_AREAS = {
@@ -343,8 +379,10 @@ const MULTI_ZONE_CALL_AREAS = {
     entityCode: 291,
     determinedBy: 'state',
     note: 'CQ 3/4/5 and ITU 6/7/8 set by state, not the call digit; ' +
-          'ITU boundaries follow 110W and 90W meridians so some states ' +
-          'straddle two ITU zones (value shown is predominant).',
+          'ITU boundaries follow the 110W and 90W meridians so eleven states ' +
+          'straddle two ITU zones — the value shown is the zone containing ' +
+          "that state's 2020 centre of population " +
+          '(ARRL IARU HF Championship rules + US Census Bureau).',
     states: US_STATE_ZONES,
   },
   Canada: {
