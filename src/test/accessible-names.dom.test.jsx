@@ -253,7 +253,7 @@ describe("Settings section captions are real headings", () => {
       const h = screen.getByRole("heading", { name, level: 2 });
       const cs = window.getComputedStyle(h);
       expect(cs.fontWeight).toBe("400");
-      expect(cs.fontSize).toBe("0.6875rem");
+      expect(cs.fontSize).toBe("11px"); // jsdom 30 normalizes computed lengths to px (0.6875rem × 16)
       expect(cs.marginLeft).toBe("0px");
       expect(cs.marginRight).toBe("0px");
       expect(cs.marginTop).toBe(expected[name].marginTop);
