@@ -41,7 +41,13 @@
 #     channels; verified 2026-07-01), so it works as-is. Only a future
 #     re-export made WITH a --channels restriction must include `edge`
 #     (see RELEASING.md § Edge channel prerequisites).
-#   MAIL_* secrets — shared with the stable workflow; no new secrets needed.
+#
+# FAILURE SIGNAL (OPTION C, ratified 2026-08-10 — see security-audit.yml for
+# the full incident): this workflow used to email Travis on failure via a
+# custom notify-escalation.yml call. That email path is gone — a failed run
+# already goes red on the Actions tab and GitHub natively emails the run's
+# actor, so the custom email added nothing a proven-working native path
+# didn't already cover. Do not re-add an email-on-failure job here.
 
 name: Edge Release
 
@@ -368,38 +374,3 @@ jobs:
           snapcraft upload-metadata "${SNAP_FILE}" --force \
             && echo "Metadata (summary, description, icon) pushed to the Snap Store." \
             || echo "WARNING: metadata push failed (non-fatal — the snap is already on edge)."
-
-  # ──────────────────────────────────────────────────────────────────────
-  # Job 3: Email Travis if any job in this workflow failed.
-  # Fires only on failure — not on a skipped upload-edge (confirm_publish=false).
-  # ──────────────────────────────────────────────────────────────────────
-  notify-on-failure:
-    name: Notify on edge release failure
-    needs: [build-and-test, upload-edge]
-    if: failure()
-    uses: ./.github/workflows/notify-escalation.yml
-    with:
-      subject: 'Edge release ${{ inputs.version }} FAILED — action needed'
-      severity: 'high'
-      body: |
-        The edge release workflow failed.
-
-        Version: ${{ inputs.version }}
-        Ref:     ${{ inputs.ref }}
-        Publish: ${{ inputs.confirm_publish }}
-
-        Check the run log for details:
-        ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-        Common causes:
-        - Test suite failure on the target branch, on EITHER arch (fix on the branch, then re-run)
-        - snapcraft build failure (check LXD setup or snapcraft.yaml for errors) —
-          note the arm64 leg is newer and less proven than the amd64 leg
-        - SNAPCRAFT_STORE_CREDENTIALS does not include the edge channel scope
-          (re-export with: snapcraft export-login --snaps wr-cw-trainer
-           --channels stable,candidate,edge - | base64 -w 0)
-        - Version string already claimed on the store (increment: e.g. 2.4.0-edge.2)
-        - Network drop mid-upload (a plain re-run usually clears this)
-
-        The snap was NOT uploaded to the edge channel. No user-visible change occurred.
-    secrets: inherit

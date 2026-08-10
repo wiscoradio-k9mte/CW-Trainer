@@ -19,11 +19,13 @@ controls as theater for this product.
 | `workflows/codeql.yml` | CodeQL SAST for JavaScript/TypeScript | PR, push to main, weekly (Mon 07:17 UTC) |
 | `dependabot.yml` | Version + security update PRs for `npm` and `github-actions` | weekly + on-disclosure for security |
 | `workflows/dependency-review.yml` | Blocks a PR that introduces a high+ vuln or denied license | pull_request |
-| `workflows/security-audit.yml` | `npm audit` sweep; emails Travis on high/critical via the escalation workflow | weekly (Mon 08:30 UTC) + manual |
+| `workflows/security-audit.yml` | `npm audit` sweep; **fails the run** on high/critical (Option C, 2026-08-10 — see the workflow's own header comment) | weekly (Mon 08:30 UTC) + manual |
 
 These complement the release-engineer's `ci.yml` (test + build, the required
-status check), `release.yml`, and `notify-escalation.yml` (the reusable email
-workflow the security-audit calls).
+status check) and `release.yml`. There is no custom escalation-email workflow
+anymore — a failed scheduled/dispatched run is signaled by GitHub's own
+native failure notification, which the shop's morning CI red-run sweep
+triages (see RELEASING.md § "Email escalation").
 
 **Action pinning:** every third-party action is pinned to a full commit SHA, not
 a tag. Dependabot's `github-actions` ecosystem keeps those pins current (and
@@ -48,9 +50,10 @@ in the repo's web UI (Settings →). They are the other half of the baseline.
 
 Free on public repos. CW Trainer is public, so this costs nothing.
 
-> Note: the workflows reference five secrets (`SNAPCRAFT_STORE_CREDENTIALS`,
-> `MAIL_SERVER/PORT/USERNAME/PASSWORD`). Those live in **Actions secrets**, never
-> in the repo — push protection is the backstop that keeps them that way.
+> Note: the workflows reference one secret (`SNAPCRAFT_STORE_CREDENTIALS`). It
+> lives in **Actions secrets**, never in the repo — push protection is the
+> backstop that keeps it that way. (The `MAIL_*` secrets a custom escalation
+> email used to need are gone — see RELEASING.md § "Email escalation".)
 
 ### 2. Branch protection on `main`
 
@@ -122,16 +125,12 @@ per-PR was already on the shop's "skip / theater" list for an offline app).
 
 ## Complete list of secrets + settings Travis must provide
 
-**Actions secrets** (Settings → Secrets and variables → Actions) — five, all already
+**Actions secrets** (Settings → Secrets and variables → Actions) — one, already
 documented in `RELEASING.md`:
 
 | Secret | For | Status |
 |--------|-----|--------|
-| `SNAPCRAFT_STORE_CREDENTIALS` | release.yml — snap upload | required (see RELEASING.md) |
-| `MAIL_SERVER` | escalation email | required |
-| `MAIL_PORT` | escalation email | required |
-| `MAIL_USERNAME` | escalation email | required |
-| `MAIL_PASSWORD` | escalation email (Gmail App Password) | required |
+| `SNAPCRAFT_STORE_CREDENTIALS` | release.yml / release-edge.yml — snap upload | required (see RELEASING.md) |
 
 **Repo settings** (web UI, this document, section by section):
 1. Secret scanning + push protection — ON
