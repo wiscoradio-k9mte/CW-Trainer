@@ -25,12 +25,9 @@ push tag v*.*.*
             │       ├── Extract release notes from metainfo.xml
             │       └── Create GitHub Release
             │
-            ├── Job 3: upload-to-stable  ← MATRIX: amd64 only (arm64 is edge-only pending ARM validation)
-            │       ├── snapcraft upload --release=stable   (amd64 revision)
-            │       └── snapcraft upload-metadata (summary + description + icon from snap; non-fatal)
-            │
-            └── Job 4: notify-on-failure  (only if any prior job failed)
-                    └── notify-escalation.yml → email to wiscoradio@gmail.com
+            └── Job 3: upload-to-stable  ← MATRIX: amd64 only (arm64 is edge-only pending ARM validation)
+                    ├── snapcraft upload --release=stable   (amd64 revision)
+                    └── snapcraft upload-metadata (summary + description + icon from snap; non-fatal)
 
 workflow_dispatch (manual trigger)
     └── release-edge.yml  ← EDGE CHANNEL ONLY; never touches stable
@@ -43,17 +40,13 @@ workflow_dispatch (manual trigger)
             │       ├── snapcore/action-build  (snap artifact)
             │       └── upload-artifact        (one artifact per arch, available even when confirm_publish=false)
             │
-            ├── Job 2: upload-edge  ← MATRIX: amd64 + arm64 (runs ONLY when confirm_publish="true")
-            │       ├── snapcraft upload --release=edge   (one revision per arch)
-            │       └── snapcraft upload-metadata (non-fatal)
-            │
-            └── Job 3: notify-on-failure  (only if any prior job failed)
-                    └── notify-escalation.yml → email to wiscoradio@gmail.com
-
-Security / maintenance workflows (owned by security-engineer)
-    └── notify-escalation.yml  (reusable workflow_call target)
-            └── dawidd6/action-send-mail → wiscoradio@gmail.com
+            └── Job 2: upload-edge  ← MATRIX: amd64 + arm64 (runs ONLY when confirm_publish="true")
+                    ├── snapcraft upload --release=edge   (one revision per arch)
+                    └── snapcraft upload-metadata (non-fatal)
 ```
+
+**Failure signal (Option C, ratified 2026-08-10):** none of the workflows above email
+on failure anymore — see "Email escalation" below for what replaced it.
 
 **ARM64 (added 2026-07-02):** every CI run and every release now builds amd64
 and arm64 natively, one job per arch, on GitHub's own arm64-hosted runner
@@ -316,57 +309,11 @@ re-export — include `edge` if you do.
 **Expiry:** Snap Store credentials expire (typically 1 year). Re-export and update
 the secret before the old one expires or when you see a 401 in the upload step.
 
----
-
-### MAIL_SERVER
-
-**What it is:** SMTP hostname for the escalation email sender.
-
-**For Gmail:** `smtp.gmail.com`
-
-```bash
-gh secret set MAIL_SERVER --repo wiscoradio-k9mte/CW-Trainer --body "smtp.gmail.com"
-```
-
----
-
-### MAIL_PORT
-
-**What it is:** SMTP port. Use 465 for implicit TLS (Gmail App Passwords).
-
-```bash
-gh secret set MAIL_PORT --repo wiscoradio-k9mte/CW-Trainer --body "465"
-```
-
----
-
-### MAIL_USERNAME
-
-**What it is:** The sender's email address / SMTP login.
-
-```bash
-gh secret set MAIL_USERNAME --repo wiscoradio-k9mte/CW-Trainer --body "wiscoradio@gmail.com"
-```
-
----
-
-### MAIL_PASSWORD
-
-**What it is:** A Gmail App Password (NOT your Gmail account password). App
-Passwords work even when 2FA is enabled and give exactly SMTP-send access — they
-cannot log into the account or read mail.
-
-**How to obtain:**
-1. Go to https://myaccount.google.com/apppasswords
-2. Select app: Mail; device: a name you'll recognize (e.g. "CW Trainer CI")
-3. Click Generate — copy the 16-character password (no spaces)
-
-```bash
-gh secret set MAIL_PASSWORD --repo wiscoradio-k9mte/CW-Trainer --body "YOUR_APP_PASSWORD_HERE"
-```
-
-**Security note:** App Passwords can be revoked individually. Revoke and regenerate
-if the secret is ever exposed.
+This is now the **only** Actions secret the pipeline needs. `MAIL_SERVER`,
+`MAIL_PORT`, `MAIL_USERNAME`, and `MAIL_PASSWORD` used to configure a custom
+escalation-email step — that step is gone (see "Email escalation" below). If
+those secrets still exist in the repo they're inert; Travis removes them
+separately after this change merges.
 
 ---
 
@@ -425,8 +372,8 @@ human to be present at publish time, the exact thing this model avoids.
 2. **Confirm version numbers match.** `package.json` version is `2.0.0` AND
    `snap/snapcraft.yaml` version is `"2.0.0"` (it is — as of the V2.0 batch commit).
 
-3. **Confirm secrets are set.** All five secrets above must exist in the repo
-   before you push the tag.
+3. **Confirm secrets are set.** `SNAPCRAFT_STORE_CREDENTIALS` must exist in the
+   repo before you push the tag.
 
 4. **Push all local commits to main.**
 
@@ -501,18 +448,28 @@ must also match. Keep all three in sync when bumping versions.
 
 ---
 
-## Email escalation — when it fires
+## Email escalation — Option C (ratified 2026-08-10)
 
-The `notify-escalation.yml` reusable workflow sends email to `wiscoradio@gmail.com`
-when called by another workflow. It fires when:
+There is no custom escalation email anymore. `notify-escalation.yml` (a reusable
+workflow wrapping `dawidd6/action-send-mail`) used to fire on a release failure
+or a high/critical `npm audit` finding — but its Gmail SMTP credentials had gone
+stale, and its first-ever real fire (2026-08-10, after 8 clean weekly runs) failed
+outright, meaning the "escalation" path had never once actually delivered.
 
-- The release workflow fails (Job 3 in `release.yml`)
-- A security/maintenance workflow (owned by security-engineer) calls it because it
-  found a high/critical vulnerability it cannot safely auto-patch, a failing gate,
-  or a breaking-change dependency bump
+Travis's call: drop the custom email, rely on **GitHub-native failure
+notifications** (a failed workflow run — scheduled or on-demand — emails the
+user GitHub associates with the run; verified delivered 2026-08-10) plus the
+**shop's morning CI red-run sweep**, which triages every red run across every
+repo. So:
 
-It does NOT fire on successful runs or routine events. The subject line is prefixed
-with `[CW Trainer / <severity>]` so it can be filtered in Gmail.
+- `release.yml` / `release-edge.yml` — a failed run goes red on the Actions tab;
+  no email step needed, GitHub's own notification covers it.
+- `security-audit.yml` — a high/critical `npm audit` finding now **fails the run**
+  (see the workflow's own header comment for the full incident and rationale),
+  so the same native-failure-notification path covers it too.
+
+`workflow_dispatch` remains available on `security-audit.yml` to run the audit
+on demand at any time.
 
 ---
 
@@ -530,8 +487,9 @@ When the roadmap reaches Windows (Microsoft Store) or macOS (App Store):
 
 ## Manual steps the human does (the automation can't)
 
-The pipeline builds, tests, packages, releases to stable, pushes the listing
-text + icon, and emails on failure. A short list stays human-only — do these after
+The pipeline builds, tests, packages, releases to stable, and pushes the listing
+text + icon (a failed run is signaled natively by GitHub, not a custom email —
+see "Email escalation" above). A short list stays human-only — do these after
 each launch or enhancement:
 
 **Every stable release:**
@@ -564,5 +522,3 @@ each launch or enhancement:
 - **Snapcraft store credentials expire (~1 year).** When they do, the release will
   fail at the upload step — regenerate with `snapcraft export-login --channels
   stable,candidate,edge` and update the `SNAPCRAFT_STORE_CREDENTIALS` Actions secret.
-- **Mail app password** — if the Gmail app password is revoked/changed, re-set
-  `MAIL_PASSWORD` (the escalation email will start failing if it lapses).
