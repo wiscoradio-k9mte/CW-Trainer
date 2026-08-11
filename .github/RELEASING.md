@@ -35,8 +35,10 @@ workflow_dispatch (manual trigger)
             │
             ├── Job 1: build-and-test  ← MATRIX: amd64 + arm64, native per arch (always runs)
             │       ├── checkout at specified ref
+            │       ├── validate snapcraft grade (fail fast)
+            │       ├── npm ci → npm test        ← the gate, on the COMMITTED tree
             │       ├── patch snapcraft.yaml + package.json version (build-time only, not committed)
-            │       ├── npm ci → npm test → npm run build → npm run pack / pack:arm64
+            │       ├── npm run build → npm run pack / pack:arm64
             │       ├── snapcore/action-build  (snap artifact)
             │       └── upload-artifact        (one artifact per arch, available even when confirm_publish=false)
             │
@@ -123,6 +125,17 @@ Increment `N` for each new edge build from the same
 branch (…-edge.1, …-edge.2, …). The `-edge.N` suffix is valid semver
 and makes the build visible as pre-release in both the store and the app's
 version display.
+
+The `X.Y.Z` you pick **may be ahead of the branch's committed `package.json`** —
+that is the normal case when you are edge-testing a feature branch that has not
+had its release-prep bump yet (e.g. the 2026-07-02 edge builds were dispatched as
+`2.4.0-edge.1` from a tree still at `2.3.0`). This is safe *because the version
+patch happens AFTER the test suite* — see the diagram above and the comment on
+that workflow step. Moving the patch back before the gate re-breaks it: the
+suite's consistency guards read `package.json`'s version and compare it against
+other committed files, so a dispatcher-chosen build stamp injected first makes
+them assert against a value the workflow itself just wrote. That is exactly what
+made every edge dispatch fail between 2026-07-24 and 2026-08-11.
 
 **Grade:** The snap must be built with `grade: stable` (not `grade: devel`).
 `grade: devel` would lock the snap to the edge/beta channels permanently —
