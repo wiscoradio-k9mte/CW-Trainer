@@ -158,10 +158,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Patch version for edge build
-        # Injects the edge version string into snapcraft.yaml and package.json
-        # at build time only — these changes are NOT committed and exist solely
-        # in the runner's working directory for this build.
+      - name: Validate snap grade
+        # Split out of the version-patch step so it still fails FAST, before the
+        # ~2-minute install+suite. Needs the checkout, so it cannot move up into
+        # "Validate inputs" (that step runs before the repo exists on disk).
         #
         # WHY grade:stable (not grade:devel):
         # A snap built with grade:devel can ONLY be released to edge or beta —
@@ -170,14 +170,7 @@ jobs:
         # must be built with grade:stable. This workflow validates that the
         # snapcraft.yaml already carries grade:stable and refuses to proceed
         # if someone changed it.
-        # VERSION is passed via env: (hardening, see "Validate inputs" above).
-        env:
-          VERSION: ${{ inputs.version }}
         run: |
-          echo "--- Patching snap/snapcraft.yaml ---"
-          sed -i "s/^version: .*/version: \"${VERSION}\"/" snap/snapcraft.yaml
-          grep "^version:" snap/snapcraft.yaml
-
           GRADE=$(grep "^grade:" snap/snapcraft.yaml | awk '{print $2}')
           if [ "${GRADE}" != "stable" ]; then
             echo "ERROR: snap/snapcraft.yaml grade is '${GRADE}', expected 'stable'."
@@ -186,6 +179,46 @@ jobs:
             exit 1
           fi
           echo "Grade check passed: grade:stable (safe to promote to stable later)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite (the gate)
+        # A broken build never reaches the Snap Store — not even the edge channel.
+        # Runs natively on both amd64 and arm64 via the matrix above.
+        #
+        # ⚠ THIS RUNS BEFORE THE VERSION PATCH, DELIBERATELY (fixed 2026-08-11).
+        # The suite gates the COMMITTED tree — the same tree ci.yml and
+        # release.yml gate. It contains consistency guards that read
+        # package.json's version and compare it against other committed files
+        # (src/test/metainfo-sync.test.js compares it to the AppStream
+        # metainfo's newest <release>). Patching package.json to a
+        # dispatcher-chosen build stamp FIRST overwrote the very input those
+        # guards check, so they were asking a question about a file the workflow
+        # had just falsified. That is what failed run 31528036830
+        # (2.4.1-edge.1 vs a metainfo correctly documenting release 2.4.1) and
+        # it would have failed EVERY edge dispatch since the guard landed on
+        # 2026-07-24 — the channel was unreachable. Do not move the patch back
+        # above this step; nothing between here and "Build renderer" needs the
+        # edge version, and everything that does now follows it.
+        run: npm test
+
+      - name: Patch version for edge build
+        # Injects the edge version string into snapcraft.yaml and package.json
+        # at build time only — these changes are NOT committed and exist solely
+        # in the runner's working directory for this build.
+        #
+        # Runs AFTER the test gate (see that step's note) and BEFORE everything
+        # that consumes the version: `npm run build` bakes it into the bundle via
+        # Vite's __APP_VERSION__ define, electron-builder stamps the unpacked
+        # tree from package.json, and snapcraft reads snapcraft.yaml's version.
+        # VERSION is passed via env: (hardening, see "Validate inputs" above).
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "--- Patching snap/snapcraft.yaml ---"
+          sed -i "s/^version: .*/version: \"${VERSION}\"/" snap/snapcraft.yaml
+          grep "^version:" snap/snapcraft.yaml
 
           echo "--- Patching package.json ---"
           # patch via node so JSON formatting is preserved; VERSION comes from
@@ -197,14 +230,6 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
           node -p "require('./package.json').version"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run full test suite (the gate)
-        # A broken build never reaches the Snap Store — not even the edge channel.
-        # Runs natively on both amd64 and arm64 via the matrix above.
-        run: npm test
 
       - name: Build renderer (Vite)
         run: npm run build
