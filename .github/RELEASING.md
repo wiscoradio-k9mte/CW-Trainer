@@ -442,7 +442,7 @@ or using `snapcraft` in `--destructive-mode` (builds directly on the host, not i
 a container — fast but less hermetic; works if the runner OS matches core22).
 
 **snapcraft.yaml version:** `snapcraft.yaml` hardcodes the version (currently
-`version: "2.4.0"` — check the file rather than trusting this line). The
+`version: "2.4.1"` — check the file rather than trusting this line). The
 release workflow validates that `package.json` matches the tag; `snapcraft.yaml`
 must also match. Keep all three in sync when bumping versions.
 
