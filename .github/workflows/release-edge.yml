@@ -62,9 +62,9 @@ on:
         description: >
           Snap version string for this edge build. Must include a pre-release suffix
           to distinguish it from stable. Increment the trailing number for each new
-          edge build from the same branch (e.g. 2.4.0-edge.1, 2.4.0-edge.2, ...).
+          edge build from the same branch (e.g. 2.4.1-edge.1, 2.4.1-edge.2, ...).
         required: true
-        default: '2.4.0-edge.1'
+        default: '2.4.1-edge.1'
       confirm_publish:
         description: >
           Set to "true" to upload the snap to the Snap Store edge channel.

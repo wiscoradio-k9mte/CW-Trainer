@@ -75,6 +75,14 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.4.1" date="2026-08-11" type="stable">
+      <description>
+        <p>An accessibility fix:</p>
+        <ul>
+          <li>Raised the contrast of secondary/instructional text (labels, hints, and toggle captions) so it reads clearly wherever it appears — including the app's standard unselected-toggle background, where it previously fell short of the WCAG AA contrast standard. This corrects 15 text sites that failed the standard at normal size and 150% zoom, and 8 that were still failing even at 200% zoom — a real difference for low-vision users.</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.4.0" date="2026-07-22" type="stable">
       <description>
         <p>International and DX operating, plus fairer sending grades — with a stack of fixes and refinements from edge testing folded in:</p>

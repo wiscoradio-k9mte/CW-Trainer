@@ -6042,8 +6042,8 @@ export default function CWTrainer() {
               It sits at S.text.dim rather than the tagline's faint: H2's rule makes
               faint decorative-only, and a version string someone is meant to read and
               transcribe into a bug report is not decorative. The visible token is
-              aria-hidden with an sr-only twin so AT says "Version 2.4.0" instead of
-              spelling out "vee two point four point zero". */}
+              aria-hidden with an sr-only twin so AT says "Version 2.4.1" (or whatever
+              ships) instead of spelling out "vee two point four point one". */}
           <div style={{ fontFamily: "system-ui, sans-serif", color: S.text.faint, fontSize: S.type.micro, letterSpacing: 1, marginTop: 4 }}>
             made in the Driftless
             <span aria-hidden="true"> · </span>
