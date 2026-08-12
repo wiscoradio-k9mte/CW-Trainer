@@ -106,9 +106,10 @@ filtering, QSB, AGC).
 sudo snap install wr-cw-trainer
 ```
 
-That installs the current stable release (**2.4.0**, amd64/x86-64), which includes
-International/DX operating, the generated word list, compact option menus and the
-reach-the-key layout, and the improved QSO transmission grading.
+That installs the current stable release (**2.4.1**, amd64/x86-64) — International/DX
+operating, the generated word list, compact option menus and the reach-the-key layout,
+the improved QSO transmission grading, and the 2.4.1 contrast fix that brings
+instructional text up to the WCAG AA standard on every background.
 
 **Trying what's next (edge channel):** in-progress work lands on the edge channel
 first. On **amd64**, install it with `sudo snap install wr-cw-trainer --edge` (or
@@ -121,18 +122,19 @@ hardware — so `sudo snap install wr-cw-trainer` will not install on arm64.
 arm64 snaps *are* pushed to the **edge** channel during feature testing, so
 `--edge` may well install for you — but edge carries pre-release builds that can
 be **older than the current stable release**, so it is not a substitute. To run
-2.4.0 on arm64, download `wr-cw-trainer_2.4.0_arm64.snap` from the
+2.4.1 on arm64, download `wr-cw-trainer_2.4.1_arm64.snap` from the
 [releases page](https://github.com/wiscoradio-k9mte/CW-Trainer/releases):
 
 ```bash
-sudo snap install --dangerous wr-cw-trainer_2.4.0_arm64.snap
+sudo snap install --dangerous wr-cw-trainer_2.4.1_arm64.snap
 ```
 
 A `--dangerous` install isn't tracked by a channel, so it won't auto-update — you'll
 need to repeat this each release. Reports from real ARM hardware are very welcome via
 the issue tracker; that's what will get arm64 onto stable.
 
-**From source** — requires **Node.js 18+** and npm:
+**From source** — requires **Node.js 22.12 or newer** and npm (the version CI builds
+with; Vite 8 needs `^20.19 || >=22.12` and Electron 42 needs `>=22.12`):
 
 ```bash
 git clone https://github.com/wiscoradio-k9mte/CW-Trainer.git

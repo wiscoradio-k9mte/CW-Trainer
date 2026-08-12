@@ -119,8 +119,8 @@ pre-release suffix, preventing version-number collisions with stable.
 ### Version and grade
 
 **Version:** Use `X.Y.Z-edge.N` for the next candidate — i.e. the version you
-intend to release, with an `-edge.N` suffix. (2.4.0 shipped to stable on
-2026-07-20, so the next candidate is `2.5.0-edge.1` or `2.4.1-edge.1`.)
+intend to release, with an `-edge.N` suffix. (2.4.1 shipped to stable on
+2026-08-12, so the next candidate is `2.4.2-edge.1` or `2.5.0-edge.1`.)
 Increment `N` for each new edge build from the same
 branch (…-edge.1, …-edge.2, …). The `-edge.N` suffix is valid semver
 and makes the build visible as pre-release in both the store and the app's

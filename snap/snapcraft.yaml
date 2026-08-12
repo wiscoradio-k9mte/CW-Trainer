@@ -24,17 +24,11 @@ description: |
 
   • Reference guides on CW lingo, on-air procedure, and the history of the code.
 
-  What's new in 2.4.0 — from K9MTE:
+  What's new in 2.4.1 — from K9MTE:
 
-  • International and DX operating. A bundled DXCC entity dataset brings real foreign prefixes and callsigns into the trainer: two new QSO activities (Work DX and Contest), five new sending drills at the hard end of the ladder (DX callsigns, DX exchanges, contest fragments, split & pileup, and abroad callsigns), and a DX walkthrough in the on-air guide.
+  • Easier to read. The gray used for instructions, hints, and the small captions on toggle buttons was too dark against some of the app's backgrounds — worst on an unselected toggle, where it measured 4.17:1 against the 4.5:1 that the WCAG AA contrast standard asks for. It is now a lighter gray that clears AA on every background it lands on. Nothing moved and nothing behaves differently; the small print is simply easier to read — which matters most when your eyes are tired or the screen is bright.
 
-  • Two new copy rungs from a proper word list. Copy practice now draws on a frequency-ranked English word list built from public-domain texts — "Common words" is the top 500, and a new "Wider vocabulary" rung steps up to ranks 1001–5000.
-
-  • Fairer sending grades in the QSO sim. Your over is now scored on the elements you actually need to convey, in any valid on-air form — not on matching one scripted wording. Send it the way you'd really send it and it counts.
-
-  • Compact option menus and a reworked practice layout that keeps the on-screen key reachable without scrolling — a real difference on small and touch screens.
-
-  • Plus the usual round of fixes and polish.
+  Before that, in 2.4.0: international and DX operating — a bundled DXCC entity dataset, the Work DX and Contest QSO activities, five new sending drills at the hard end of the ladder, and a DX walkthrough in the on-air guide; two more copy rungs drawn from a frequency-ranked word list; QSO sending graded on the elements you actually convey rather than on matching one scripted wording; and compact option menus that keep the on-screen key reachable without scrolling.
 
   Also building for arm64: an aarch64 build is produced and tested natively on every release, but it is not yet published to stable, pending validation on real ARM hardware. ARM users can install it from the .snap asset on the GitHub release page (github.com/wiscoradio-k9mte/CW-Trainer/releases) — reports from real ARM hardware are very welcome, and are what will get arm64 onto stable.
 

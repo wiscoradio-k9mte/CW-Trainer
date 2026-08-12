@@ -22,15 +22,20 @@ linux:
   executableName: wr-cw-trainer
   # Keep synopsis under ~78 chars — the Snap store enforces a short summary.
   synopsis: Learn Morse code (CW) the Koch way, with copy practice and a QSO sim
+  # DELIBERATELY SHORT AND COUNT-FREE. The canonical, always-current store copy lives
+  # in snap/snapcraft.yaml — that is what the Snap Store listing actually shows, and
+  # what `snapcraft upload-metadata` pushes. This text is a SECOND hand-maintained copy
+  # of the same pitch, and a second copy always drifts: it sat at "a six-rung copy
+  # ladder" and a POTA/SOTA/IOTA/ragchew-only QSO list well past 2.4.0, because nothing
+  # renders it (`npm run pack` is `electron-builder --dir`, which emits no metadata) and
+  # so nothing ever caught it. Only `npm run dist` (deb/AppImage — not a shipped target
+  # today) would consume it. Keeping it free of rung counts, drill counts and activity
+  # lists is what stops it going stale again; put anything that changes per release in
+  # snapcraft.yaml, not here.
   description: |
     CW Trainer by Wisco Radio Labs — learn Morse code (CW) the way hams actually use it, from your first two characters to a full on-air contact. Fully offline. No account, no network, no ads.
 
-    • Koch-method lessons — every character at full speed from lesson one, with Farnsworth spacing; a new character unlocks at 90% accuracy.
-    • A six-rung copy ladder — single characters, pairs, random groups, ham words, callsigns, and full QSO phrases.
-    • Sending practice with a built-in iambic paddle and straight-key decoder that shows exactly what your fist sends — including the HH "start over" prosign. Key on screen, with the keyboard, or with your own paddle or straight key through a USB adapter (VBand-compatible — the [ and ] keys).
-    • A QSO simulator with POTA, SOTA, IOTA, and ragchew contacts — on-air break-in fills, honest signal reports, and a 5-second "get ready" countdown before the code starts.
-    • Realistic band conditions — selectable receiver filtering (wide / CW 500 Hz / APF), QSB fading, and AGC.
-    • Reference guides on CW lingo, on-air procedure, and the history of the code.
+    Koch-method character lessons, a copy-practice ladder, sending practice with a live decoder and fist feedback, and a QSO simulator covering ragchew, POTA, SOTA, IOTA, DX and contest contacts — plus cross-session progress tracking, realistic band conditions, and built-in reference guides. Key on screen, with the keyboard, or with your own paddle or straight key through a VBand-style USB adapter.
 
     Made in the Driftless by Wisco Radio Labs (K9MTE). GPL-3.0 · open source · fully offline.
   desktop:
