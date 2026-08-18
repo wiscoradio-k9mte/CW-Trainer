@@ -2,13 +2,29 @@
 /**
  * build-dxcc-dataset.mjs
  *
- * MAINTAINER / CI ONLY — never imported by the app at runtime.
- * The app reads the bundled JSON from src/data/dxcc_dataset.json; this script
- * is how that artifact is (re)generated.  Run: npm run build:dxcc
+ * MAINTAINER ONLY — never imported by the app at runtime, and NOT run by CI
+ * or `npm test`/`npm run build` (verified: no workflow or npm lifecycle
+ * script references build:dxcc). The app reads the bundled JSON from
+ * src/data/dxcc_dataset.json; this script is how that artifact is
+ * (re)generated.  Run: npm run build:dxcc
  *
  * Sources:
- *   1. AD1C cty.csv  (fetched from country-files.com, authoritative for current
- *      340 entities: primaryPrefix, zones, continent, alias prefixes)
+ *   1. AD1C cty.csv — a PINNED, checksum-verified snapshot vendored at
+ *      scripts/vendor/cty.csv (authoritative for current 340 entities:
+ *      primaryPrefix, zones, continent, alias prefixes). This used to be
+ *      fetched live from country-files.com on every run, which made a
+ *      regen non-reproducible (upstream can change the file at any time,
+ *      so the same command produced different output on different days
+ *      with no record of why) and made the build impossible offline. Now
+ *      this script reads only the vendored snapshot — network-free — and
+ *      FATALs if its bytes don't match the checksum recorded in
+ *      scripts/vendor/cty.csv.meta.json (see scripts/lib/cty-snapshot.mjs).
+ *      To deliberately pull a fresh cty.csv and re-pin: `npm run
+ *      refresh:cty-snapshot` (the only script here that touches the
+ *      network), then review the diff before re-running this script.
+ *      Licence: country-files.com publishes cty.csv under an MIT-style
+ *      permissive licence — see scripts/vendor/CTY-LICENSE.txt for the
+ *      cited source and full text.
  *   2. scripts/vendor/k0swe-dxcc.json  (vendored Apache-2.0 snapshot from
  *      github.com/k0swe/dxcc-json; provides flag, countryCode, prefixRegex,
  *      and all 62 deleted entities not in cty.csv)
@@ -19,18 +35,27 @@
  *   README.md          — schema docs + consumer snippet
  */
 
-import https from 'node:https';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyCtySnapshot } from './lib/cty-snapshot.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT       = join(__dirname, '..');
-const DATA_DIR   = join(ROOT, 'src', 'data');
 const VENDOR_DIR = join(__dirname, 'vendor');
 
-const CTY_CSV_URL     = 'https://www.country-files.com/cty/cty.csv';
-const K0SWE_JSON_PATH = join(VENDOR_DIR, 'k0swe-dxcc.json');
+// These env overrides exist ONLY so the drift-detection FATAL path can be
+// tested end-to-end against a throwaway fixture directory (a deliberately
+// mismatched snapshot+pin) without ever touching the real vendored files or
+// writing into the real src/data — see src/test/dxcc-cty-snapshot-pin.test.js.
+// DATA_DIR is overridden too, not just the two inputs: if a future bug ever
+// makes the checksum check pass when it shouldn't, this stops that test from
+// being able to overwrite the real bundled dataset with fixture data as a
+// side effect of proving the bug existed. Unset in normal use.
+const DATA_DIR          = process.env.CW_TRAINER_DXCC_DATA_DIR    || join(ROOT, 'src', 'data');
+const CTY_SNAPSHOT_PATH = process.env.CW_TRAINER_CTY_SNAPSHOT_PATH || join(VENDOR_DIR, 'cty.csv');
+const CTY_META_PATH     = process.env.CW_TRAINER_CTY_META_PATH     || join(VENDOR_DIR, 'cty.csv.meta.json');
+const K0SWE_JSON_PATH   = join(VENDOR_DIR, 'k0swe-dxcc.json');
 
 // ---------------------------------------------------------------------------
 // primaryPrefix overrides — applied after cty.csv is parsed.
@@ -45,25 +70,17 @@ const PRIMARY_PREFIX_OVERRIDES = {
 };
 
 // ---------------------------------------------------------------------------
-// Fetch helpers
+// Changelog — hand-maintained. buildReadme() below renders this verbatim
+// into src/data/README.md. Every run stamps meta.generatedAt with today's
+// date, so without a real history here a second regen would silently relabel
+// its own README's changelog "Initial generation" on a date that isn't the
+// initial generation — add a row here when you make a change worth noting,
+// don't let the generatedAt timestamp stand in for one.
 // ---------------------------------------------------------------------------
-
-/** Download a URL and resolve with the full text. */
-function fetchText(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-        res.resume();
-        return;
-      }
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end',  () => resolve(Buffer.concat(chunks).toString('utf8')));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
-}
+const DATASET_CHANGELOG = [
+  { date: '2026-07-02', notes: 'Initial generation from AD1C cty.csv + k0swe snapshot' },
+  { date: '2026-08-18', notes: 'cty.csv source pinned to a checksum-verified vendored snapshot (scripts/vendor/cty.csv) instead of a live fetch on every run — makes regen reproducible and network-free; see scripts/vendor/CTY-LICENSE.txt for the licence basis. No entity data changed by this regen.' },
+];
 
 // ---------------------------------------------------------------------------
 // cty.csv parser
@@ -454,7 +471,9 @@ Bundled DXCC (DX Century Club) entity data for offline lookup by the CW Trainer 
 The app reads \`dxcc_dataset.json\` locally at runtime; it never fetches this data.
 
 Generated: ${meta.generatedAt}
-Source 1: AD1C country files — ${CTY_CSV_URL}  (current entities, zones, prefixes)
+Source 1: AD1C country files — ${meta.source1.url}  (current entities, zones, prefixes)
+  Pinned snapshot retrieved ${meta.source1.retrievedAt}, sha256 ${meta.source1.sha256}
+  (scripts/vendor/cty.csv — licence: scripts/vendor/CTY-LICENSE.txt)
 Source 2: k0swe/dxcc-json (Apache-2.0, vendored) — deleted entities, flag, countryCode, prefixRegex baseline
 Validated against: ARRL DXCC List January 2026 (340 current + 62 deleted = 402 total)
 
@@ -466,8 +485,13 @@ Validated against: ARRL DXCC List January 2026 (340 current + 62 deleted = 402 t
 | \`dxcc_entities.csv\` | Flat-file mirror for inspection or import into a spreadsheet |
 | \`README.md\` | This document |
 
-The generator script is \`scripts/build-dxcc-dataset.mjs\` (maintainer/CI only).
-Run \`npm run build:dxcc\` to regenerate.  Requires network access to country-files.com.
+The generator script is \`scripts/build-dxcc-dataset.mjs\` (maintainer-only, not run by CI).
+Run \`npm run build:dxcc\` to regenerate — reads the vendored, checksum-pinned
+\`scripts/vendor/cty.csv\`, no network required. It FATALs if that file's bytes
+don't match the checksum recorded in \`scripts/vendor/cty.csv.meta.json\` (drift
+or corruption caught loudly, not silently absorbed). To deliberately pull a
+fresh cty.csv from country-files.com and re-pin it, run
+\`npm run refresh:cty-snapshot\` first, review the diff, then regenerate.
 Run \`npm run validate:dxcc\` after regeneration for a thorough correctness check.
 
 ## Entity schema (one object per entity, 402 total)
@@ -544,7 +568,7 @@ Australia (by call area / state).
 
 | Date | Notes |
 |---|---|
-| ${meta.generatedAt.slice(0, 10)} | Initial generation from AD1C cty.csv + k0swe snapshot |
+${DATASET_CHANGELOG.map(c => `| ${c.date} | ${c.notes} |`).join('\n')}
 `;
 }
 
@@ -555,17 +579,24 @@ Australia (by call area / state).
 async function main() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
-  // 1. Fetch cty.csv
-  console.log(`Fetching ${CTY_CSV_URL} …`);
-  let csvText;
-  try {
-    csvText = await fetchText(CTY_CSV_URL);
-  } catch (err) {
-    console.error('FATAL: Could not fetch cty.csv:', err.message);
-    console.error('The app must never ship data from the generator\'s memory.');
-    console.error('Resolve network access and re-run.');
+  // 1. Load the vendored, checksum-pinned cty.csv snapshot — no network.
+  console.log(`Reading pinned snapshot ${CTY_SNAPSHOT_PATH} …`);
+  const csvText  = readFileSync(CTY_SNAPSHOT_PATH, 'utf8');
+  const ctyMeta  = JSON.parse(readFileSync(CTY_META_PATH, 'utf8'));
+  const checksum = verifyCtySnapshot(csvText, ctyMeta.sha256);
+  if (!checksum.ok) {
+    console.error('FATAL: vendored cty.csv does not match its pinned checksum.');
+    console.error(`  file:     ${CTY_SNAPSHOT_PATH}`);
+    console.error(`  pin:      ${CTY_META_PATH}`);
+    console.error(`  expected: ${checksum.expected}`);
+    console.error(`  actual:   ${checksum.actual}`);
+    console.error('This means the vendored file was edited or corrupted, or the pin is');
+    console.error('stale relative to it. Restore scripts/vendor/cty.csv from git, OR — if');
+    console.error('this is a deliberate upstream refresh — run "npm run refresh:cty-snapshot"');
+    console.error('so the file and its checksum are re-pinned together, then re-run this.');
     process.exit(1);
   }
+  console.log(`  → checksum OK (${checksum.actual})`);
   console.log(`  → ${csvText.split('\n').filter(l => l.trim()).length} lines`);
 
   // 2. Load vendored k0swe data
@@ -603,7 +634,11 @@ async function main() {
 
   const meta = {
     generatedAt: new Date().toISOString(),
-    source1: CTY_CSV_URL,
+    source1: {
+      url: ctyMeta.url,
+      retrievedAt: ctyMeta.retrievedAt,
+      sha256: ctyMeta.sha256,
+    },
     source2: 'github.com/k0swe/dxcc-json (Apache-2.0, vendored)',
     totalEntities: allEntities.length,
     currentCount: currentEntities.length,

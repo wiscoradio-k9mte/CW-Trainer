@@ -1,0 +1,51 @@
+cty.csv attribution and licence
+================================
+
+Source:    AD1C Contest Country Files — https://www.country-files.com/cty/cty.csv
+Publisher: Jim Reisert, AD1C
+Cited:     https://www.country-files.com/copyright/  (retrieved 2026-08-18)
+
+The site's Copyright page states, verbatim (quoted in full):
+
+    Copyright © 1994-
+
+    Permission is hereby granted, free of charge, to any person obtaining
+    a copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be
+    included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+    NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+    BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+    ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+This is the standard MIT License text. It is the ONLY licence/copyright
+statement published anywhere on country-files.com, and it lives on a
+site whose sole purpose is publishing these country files — read as
+governing them. It explicitly permits copying, redistribution, and
+sublicensing, subject only to keeping this notice with any copy —
+which is why cty.csv is vendored into this repo (scripts/vendor/cty.csv)
+rather than only checksum-pinned.
+
+This file satisfies that "included in all copies" condition for the
+vendored copy in this directory. Keep it alongside cty.csv; do not
+strip it out on refresh.
+
+The "Copyright © 1994-" line is reproduced exactly as published — the
+trailing year was not present in the page's raw HTML at fetch time
+(likely populated by a template that didn't render for this fetch);
+the substantive permissive-license text above is unaffected by that.
+
+Retrieval date of the pinned cty.csv itself, its source URL, and its
+sha256 checksum are recorded in cty.csv.meta.json, not here — this file
+is the licence text only, so a data refresh never touches it.

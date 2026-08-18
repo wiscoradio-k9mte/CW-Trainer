@@ -45,6 +45,7 @@
     "test:watch": "vitest",
     "build:dxcc": "node scripts/build-dxcc-dataset.mjs",
     "validate:dxcc": "node scripts/validate-dxcc.mjs",
+    "refresh:cty-snapshot": "node scripts/refresh-cty-snapshot.mjs",
     "build:words": "node scripts/generate/build-words-en.mjs",
     "validate:words": "node scripts/validate-words-en.mjs"
   },
