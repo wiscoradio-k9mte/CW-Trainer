@@ -9,7 +9,8 @@
 //   2. RX filter group — three aria-pressed buttons with an unassociated caption
 //      (WCAG 1.3.1: the grouping relationship existed visually only).
 //   3. Cut-numbers toggle — the accessible name was the button's own STATE
-//      ("599 OFF"), never its purpose (WCAG 1.3.1).
+//      ("599 OFF"), never its purpose (WCAG 1.3.1); the follow-up fix made the
+//      name STABLE across both states (fix/cut-numbers-state-free-label).
 //   4. Settings section captions — styled like headings but not headings, so the
 //      panel could not be navigated by heading (WCAG 1.3.1, and 2.4.10 at AAA).
 //
@@ -135,43 +136,63 @@ describe("RX filter — the three buttons are a named group", () => {
 // ---------------------------------------------------------------------------
 // 3. Cut-numbers toggle
 // ---------------------------------------------------------------------------
-describe("Cut numbers toggle — the name says what it does", () => {
-  // Purpose first, then the button's own visible text. Both halves are load-bearing:
-  // the caption is the fix (AT used to hear only the state); the trailing visible
-  // text is what keeps the control reachable by speech input under WCAG 2.5.3.
-  const NAME_OFF = "Cut numbers (contest style) 599 OFF";
-  const NAME_ON = "Cut numbers (contest style) 5NN ON";
+describe("Cut numbers toggle — the name is stable, the state is not in it", () => {
+  // The accessible name is the caption alone, and per the APG toggle-button/switch
+  // patterns ("the label on a toggle does not change when its state changes") it must
+  // be IDENTICAL off and on — that is the defect this test suite now guards.
+  const NAME = "Cut numbers (contest style)";
 
-  it("names the purpose and contains the visible text, in both states", async () => {
+  it("the accessible name is the SAME string off and on", async () => {
     const { user } = await renderApp();
     await openSettings(user);
 
-    const btn = screen.getByRole("button", { name: NAME_OFF, pressed: false });
-    expect(btn.textContent).toBe("599 OFF");
-    // The visible text is inside the accessible name — the label-in-name requirement.
-    expect(NAME_OFF).toContain(btn.textContent);
-
-    await user.click(btn);
-    const onBtn = screen.getByRole("button", { name: NAME_ON, pressed: true });
-    expect(onBtn).toBe(btn);
-    expect(NAME_ON).toContain(btn.textContent);
+    const offBtn = screen.getByRole("button", { name: NAME, pressed: false });
+    await user.click(offBtn);
+    const onBtn = screen.getByRole("button", { name: NAME, pressed: true });
+    // Same element, same computed name — a query for the OFF-state name still finds
+    // it after the click, which is only possible if the name never changed.
+    expect(onBtn).toBe(offBtn);
   });
 
-  it("the state is carried by aria-pressed, not only by the name", async () => {
+  it("aria-pressed still flips on click", async () => {
     const { user } = await renderApp();
     await openSettings(user);
 
-    const btn = screen.getByRole("button", { name: NAME_OFF });
+    const btn = screen.getByRole("button", { name: NAME });
     expect(btn.getAttribute("aria-pressed")).toBe("false");
     await user.click(btn);
     expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("the current value is still rendered VISIBLY, in both states", async () => {
+    const { user } = await renderApp();
+    await openSettings(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    // A stable accessible name must not make the control mute for sighted users —
+    // the literal value that will be sent still has to be on screen.
+    expect(btn.textContent).toBe("CUT NUMBERS 599");
+    await user.click(btn);
+    expect(btn.textContent).toBe("CUT NUMBERS 5NN");
+  });
+
+  it("the value display does not leak into the accessible name", async () => {
+    const { user } = await renderApp();
+    await openSettings(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    await user.click(btn);
+    // "5NN" is on screen (previous test) but must not have joined the computed name —
+    // that would silently reintroduce the state-in-name defect via a back door.
+    expect(screen.getByRole("button", { name: NAME })).toBe(btn);
+    expect(screen.queryByRole("button", { name: /5NN/ })).toBeNull();
   });
 
   it("the 599 → 5NN gloss is announced as the button's description", async () => {
     const { user } = await renderApp();
     await openSettings(user);
 
-    const btn = screen.getByRole("button", { name: NAME_OFF });
+    const btn = screen.getByRole("button", { name: NAME });
     const describedBy = btn.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy).textContent.trim())
