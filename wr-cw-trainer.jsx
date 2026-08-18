@@ -6,6 +6,7 @@ import {
   US_PREFIXES, IOTA_DX_PREFIXES, NAMES, QTHS, RSTS, KOCH, glyphs,
   SUMMITS, IOTA_REFS, randPark, cutNum, rand, randCall, timing,
   gradeSend, similarityCw, CUT_TOLERANT_COPY_SOURCES, CUT_TOLERANT_KEY_DRILLS,
+  validateCallsign,
   randDxStation, zoneToken, reciprocalCall, resolveUSState,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   isReadyToAdvance,
@@ -5246,9 +5247,28 @@ function Settings({ settings, setSettings, onClose }) {
   const uid = useId();
   // "Your station" text inputs — real <label htmlFor> associations.
   const callId = `${uid}-mycall`, nameId = `${uid}-myname`, qthId = `${uid}-myqth`;
+  const callErrId = `${uid}-mycall-err`;
   // Caption/gloss text naming the RX-filter group and the cut-numbers toggle.
   const rxGroupLabelId = `${uid}-rxfilter`;
   const cutLabelId = `${uid}-cut`, cutGlossId = `${uid}-cutgloss`, cutBtnId = `${uid}-cutbtn`;
+
+  // Callsign format check (myCall is sent AND graded in QSO practice, so
+  // garbage here teaches a wrong fist — see validateCallsign in cw-core.js).
+  // Validated on BLUR, not on every keystroke: checking while typing would flag
+  // every valid callsign at each intermediate character ("K" then "K9" …),
+  // which is hostile, not helpful. `touched` gates the message so a fresh
+  // Settings visit doesn't open with an error already showing, and refocusing
+  // the field clears it again — so re-editing an already-flagged value doesn't
+  // re-flicker the message at every intermediate keystroke either; it only
+  // reappears once the operator leaves the field again with the new value.
+  const [callTouched, setCallTouched] = useState(false);
+  const callCheck = validateCallsign(settings.myCall);
+  // An EMPTY callsign is its own already-explained state (the QSO send screen
+  // tells the operator plainly that an unset call means sends go unscored —
+  // see the `score === null` branch in checkSend), not a malformed one — so it
+  // does not also raise a format error here. Only a non-blank value that fails
+  // the shape check does.
+  const callShowError = callTouched && callCheck.reason !== "empty" && !callCheck.valid;
   return (
     <div style={S.panel}>
       {/* Close control — only shown on wide where Settings is in the right rail.
@@ -5323,9 +5343,29 @@ function Settings({ settings, setSettings, onClose }) {
             Harmless on desktop. Callsign always uppercases via textTransform anyway,
             but autoCapitalize keeps the mobile keyboard in CAPS mode — one fewer tap. */}
         {/* M1: 0.9375rem → S.type.body (0.875rem) — Settings inputs match other buttons */}
-        <input id={callId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px" }} value={settings.myCall}
+        {/* Every keystroke still saves immediately (onChange → setSettings, same as
+            every other field in this panel — see the store.save effect keyed on
+            `settings`). The format check never blocks typing or blocks the save;
+            it only surfaces on blur, once there's a finished value to judge. This
+            matches the doctrine call: rejecting mid-type ("K", "K9"…) or discarding
+            what the operator typed would be hostile and would contradict this
+            panel's own free-form, always-saving design (see `required()` in
+            cw-core.js for why Settings fields are deliberately never forced). */}
+        {/* border (not borderColor) toggles here, always present as a key on
+            both renders — see the S.selected comment on the same React
+            shorthand/non-shorthand conflict this would otherwise trigger. */}
+        <input id={callId} style={{ ...S.input, fontSize: S.type.body, padding: "8px 12px", border: callShowError ? `1px solid ${S.tone.err}` : S.input.border }} value={settings.myCall}
           autoCapitalize="characters" autoCorrect="off" spellCheck={false}
-          onChange={(e) => setSettings((s) => ({ ...s, myCall: e.target.value.toUpperCase() }))} />
+          aria-invalid={callShowError || undefined}
+          aria-describedby={callShowError ? callErrId : undefined}
+          onChange={(e) => setSettings((s) => ({ ...s, myCall: e.target.value.toUpperCase() }))}
+          onFocus={() => setCallTouched(false)}
+          onBlur={() => setCallTouched(true)} />
+        {callShowError && (
+          <div id={callErrId} role="alert" style={{ fontSize: "0.6875rem", color: S.tone.err, fontFamily: "system-ui, sans-serif", marginTop: 4, lineHeight: 1.5 }}>
+            Doesn't look like a callsign (letters, a digit, letters — e.g. K9MTE, G0ABC). It's still saved, and it's what gets sent and graded as your call in QSO practice.
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
         <div style={{ flex: 1 }}>

@@ -343,6 +343,64 @@ export function isRstReport(token) {
 // exact cut-form matching). Data-driven so Travis can adjust before the edge push.
 export const RST_ACCEPT_ANY_WELLFORMED = true;
 
+// validateCallsign(raw) → { valid, reason } — is `raw` shaped like an amateur
+// radio callsign? Settings.myCall previously accepted any string, and myCall is
+// interpolated into every CQ/exchange script AND is what QSO sends are graded
+// against (gradeSend's `required(myCall)`), so garbage there teaches a wrong
+// fist and normalizes an invalid call on the air.
+//
+// GRAMMAR (general worldwide shape, not US-specific): a callsign is a prefix +
+// a separating numeral + a suffix. Source: ITU Radio Regulations, Article 19
+// §19.68-19.71 & Appendix 42 (Table of International Call Sign Series) —
+// summarized plainly at https://en.wikipedia.org/wiki/Amateur_radio_call_signs:
+// "An amateur operator's call sign is composed of a prefix, a separating
+// numeral, and a suffix. The prefix can be composed of letters or numbers, the
+// separating numeral is between 0 and 9, and a suffix is from one to four
+// characters, usually letters." Verified against real examples from that
+// source's own table (K4X, B2AA, N2ASD, A22A, 4X4AAA, 3DA0RS, HL1AA) — the
+// regex below matches all of them, because a prefix that already contains a
+// digit (4X, 3DA, A2…) still leaves a later digit free to serve as the
+// separating numeral. FCC Part 97 US formats (Groups A-D: 1x2/2x1/2x2/1x3/2x3
+// — e.g. K9MTE, W1AW, AA1A, KE9XYZ) are all instances of this one
+// international shape, so no US-specific carve-out is needed.
+//
+// The prefix group requires at least one LETTER (`[A-Z0-9]*[A-Z][A-Z0-9]*`,
+// not a plain `[A-Z0-9]{1,3}`) because no ITU call-sign series is pure digits
+// — every allocated block in the source table above starts from or includes a
+// letter. Without that, an obviously-fake string like "1234ABCD" parses as
+// prefix="123"+numeral="4"+suffix="ABCD" and passes; caught by testing the
+// validator against that string before trusting the regex (see cw-core.test.js).
+//
+// Deliberately PERMISSIVE otherwise: this checks GRAMMAR only — does the
+// string have the shape of a callsign — never whether it is actually issued
+// (that needs a live FCC/ITU lookup, out of scope for an offline app).
+// Rejecting a real operator's own callsign is a worse defect than accepting a
+// fictitious one, so every named real-world form (K9MTE, W1AW, G0ABC, JA1XYZ,
+// VK2DEF, and portable/appended forms like K9MTE/4, W1AW/P, VK2DEF/QRP) is
+// verified to pass — see cw-core.test.js.
+const CALLSIGN_RE = /^([A-Z0-9]*[A-Z][A-Z0-9]*)[0-9][A-Z]{1,4}$/;
+
+// A trailing "/X" appendage (call-area override or operating-status note — /P
+// portable, /M mobile, /MM maritime mobile, /QRP low power, or a bare digit
+// like K9MTE/4) is real, common on-air usage but not part of the assigned
+// callsign's own grammar, so it is checked separately and kept just as
+// permissive: any short all-digit or all-letter token, rather than
+// enumerating every abbreviation in use worldwide.
+const APPENDAGE_RE = /^([0-9]{1,2}|[A-Z]{1,4})$/;
+
+export function validateCallsign(raw) {
+  // Internal whitespace (a paste artifact) is stripped, not just trimmed —
+  // permissive on formatting noise that carries no grammatical meaning.
+  const value = String(raw ?? "").toUpperCase().replace(/\s+/g, "");
+  if (value === "") return { valid: false, reason: "empty" };
+
+  const [base, ...appendages] = value.split("/");
+  if (!CALLSIGN_RE.test(base)) return { valid: false, reason: "format" };
+  if (appendages.some((tok) => !APPENDAGE_RE.test(tok))) return { valid: false, reason: "appendage" };
+
+  return { valid: true, reason: null };
+}
+
 // isBlankElement(el) → true for a required element that carries no content:
 // undefined, null, "", or whitespace only. The operator's Settings fields are
 // deliberately free-form (they can be cleared), so any PROFILE-DERIVED element

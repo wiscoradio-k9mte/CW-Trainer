@@ -4,7 +4,7 @@ import {
   gradeSend, similarityCw, canonicalizeCw,
   CUT_TOLERANT_COPY_SOURCES, CUT_TOLERANT_KEY_DRILLS,
   decodeChar, DECODE_PROSIGNS, KOCH,
-  isWellFormedRst, isRstReport, courtesyForms, numericForms,
+  isWellFormedRst, isRstReport, courtesyForms, numericForms, validateCallsign,
   COURTESY_EQUIVALENTS,
   buildRagchew, buildPota, buildSota, buildIota, buildDx, buildContest,
   cutNum, isReadyToAdvance, required, isBlankElement,
@@ -218,6 +218,49 @@ describe("RST / courtesy / numeric classifiers", () => {
     expect(isRstReport("5NN")).toBe(true);
     expect(isRstReport("579")).toBe(false); // valid RST, but not the report slot
     expect(isRstReport("123")).toBe(false); // RST-shaped serial
+  });
+
+  // Real callsigns, both directions. Sources + grammar: see the comment on
+  // CALLSIGN_RE in cw-core.js (ITU RR Art. 19 + FCC Part 97 Groups A-D).
+  it("validateCallsign accepts real US formats (1x2/2x1/1x3/2x2/2x3) and non-US calls", () => {
+    for (const call of [
+      "K9MTE",   // 1x3, the app's own default developer example (Wisco Radio Labs / K9MTE)
+      "W1AW",    // 1x2, ARRL HQ — the app's DEFAULT_SETTINGS.myCall example
+      "AA1A",    // 2x1
+      "KE9XYZ",  // 2x3
+      "G0ABC",   // United Kingdom
+      "JA1XYZ",  // Japan
+      "VK2DEF",  // Australia
+    ]) {
+      expect(validateCallsign(call), call).toEqual({ valid: true, reason: null });
+    }
+  });
+
+  it("validateCallsign accepts portable/mobile/QRP appendages and a call-area override", () => {
+    for (const call of ["K9MTE/4", "W1AW/P", "VK2DEF/QRP", "VK2DEF/M"]) {
+      expect(validateCallsign(call), call).toEqual({ valid: true, reason: null });
+    }
+  });
+
+  it("validateCallsign is case- and whitespace-insensitive (the input auto-uppercases, but the validator doesn't rely on that)", () => {
+    expect(validateCallsign("k9mte")).toEqual({ valid: true, reason: null });
+    expect(validateCallsign(" K9MTE ")).toEqual({ valid: true, reason: null });
+  });
+
+  it("validateCallsign rejects empty, garbage, digit-only, and punctuation-only strings", () => {
+    expect(validateCallsign("")).toEqual({ valid: false, reason: "empty" });
+    expect(validateCallsign("   ")).toEqual({ valid: false, reason: "empty" });
+    expect(validateCallsign("asdf")).toEqual({ valid: false, reason: "format" });
+    expect(validateCallsign("12345")).toEqual({ valid: false, reason: "format" });
+    expect(validateCallsign("!!!!!")).toEqual({ valid: false, reason: "format" });
+    // No ITU call-sign series is pure digits — a numeral-only "prefix" is fake,
+    // even though a naive prefix+digit+suffix regex would accept it.
+    expect(validateCallsign("1234ABCD")).toEqual({ valid: false, reason: "format" });
+  });
+
+  it("validateCallsign rejects a malformed appendage even when the base call is fine", () => {
+    expect(validateCallsign("K9MTE/").valid).toBe(false);
+    expect(validateCallsign("K9MTE/12345").valid).toBe(false); // not a 1-2 digit call area
   });
 
   it("courtesyForms expands the curated set; passes non-members through", () => {
