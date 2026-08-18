@@ -428,6 +428,67 @@ export function required(...tokens) {
   return tokens.filter((t) => !isBlankElement(t)).map((t) => String(t).trim());
 }
 
+// claimedTokenIndices(tokens, requiredElements) — order/position-aware element
+// assignment for the RST-vs-serial collision (board card "contest-serial edge",
+// the disclosed residual off the original send-grading fix, PR #22 2026-07-19).
+//
+// A contest exchange requires BOTH the canonical RST report AND a separate
+// numeric serial/zone (`buildContest`'s `required(rpt, myExch)`), and a random
+// 3-digit serial is RST-shaped surprisingly often: RST is R∈1-5 / S∈1-9 / T∈1-9
+// (R-S-T system, https://en.wikipedia.org/wiki/R-S-T_system — matches the
+// R∈1–5/S∈1–9/T∈1–9 grammar `isWellFormedRst` already encodes below) — of the
+// 999 values `serial()` can draw (1-999, zero-padded to 3 digits), 405 decut to
+// a valid RST shape, verified by direct enumeration: 40.5%. Before this fix, the
+// RST slot's `sentHasRst` scanned the WHOLE send for any well-formed-RST-shaped
+// TOKEN with no regard for what else that token was doing — so an operator who
+// sent ONLY the serial (report forgotten) and drew one of those ~40% of serials
+// had the same token credited as BOTH the RST report and the serial. That is
+// the exact defect: a wrong transmission (no report sent) graded as correct.
+//
+// The fix reserves a token for whichever OTHER required element it is the
+// literal, exact value of, so the RST slot's shape-only leniency can no longer
+// draw on a token already spoken for elsewhere. This only ever touches
+// NUMERIC-shaped required elements (`numericForms` returns >1 form only for a
+// pure [0-9NT]+ token) — callsigns, names, courtesy words, and every other
+// required element are untouched, and their own matching is unchanged (still
+// the substring-in-`flat` test in `isConveyed` below). Contest exchanges are
+// conventionally sent report-first (ARRL "Contest Basics",
+// https://www.arrl.org/contest-basics: "...gives the required exchange...the
+// exchange is the signal report and state..."), matching the order this file
+// already builds the script in — but gradeSend intentionally ignores word
+// order (fork 2/5), so this can't just special-case "the first token is the
+// RST"; it has to reserve by VALUE, not position, to survive a reordered send.
+//
+// Named ambiguity (Travis-flagged, not hidden): if the operator sends the SAME
+// token count as required numeric elements — e.g. "599 599" when the random
+// serial itself happens to be 599 — each token gets its own element and both
+// are credited; a real bijective assignment exists, so crediting both is no
+// more generous than the coincidence itself. Sending only ONE such token when
+// TWO are required now credits at most one of them and leaves the other a
+// real, honest miss — the residual this ticket exists to close.
+//
+// EVERY matching occurrence is claimed, not just the first. This app's own
+// scripts routinely double a token for clarity ("UR RST 599 599" — see
+// QSO_PHRASES/the suggested scripts throughout this file), and an operator
+// doing the same with the serial ("123 123", RST never sent) must not leave a
+// "spare" copy behind for the RST branch to pick up — that would silently
+// re-open the exact defect this fix closes, just requiring two tokens instead
+// of one. Claiming every occurrence means a doubled serial is recognized as
+// ONE required element sent twice (fine, per the ratified repetition rule),
+// not as one required element plus a leftover RST-shaped token.
+function claimedTokenIndices(tokens, requiredElements) {
+  const claimed = new Set();
+  for (const el of requiredElements) {
+    if (isBlankElement(el)) continue;
+    const E = String(el).toUpperCase();
+    if (isRstReport(E)) continue; // the RST slot itself never reserves a token from itself
+    const forms = numericForms(E);
+    if (forms.length < 2) continue; // not a numeric/cut element — nothing to claim
+    tokens.forEach((t, i) => { if (forms.includes(t)) claimed.add(i); });
+  }
+  return claimed;
+}
+
 // gradeSend(requiredElements, sent, opts) → { score, hits, missing }
 // score = round(hits / required × 100), coarse by design (fork 5): with one
 // required element it is 0 or 100; with two, 0 / 50 / 100. `hits`/`missing`
@@ -443,7 +504,11 @@ export function gradeSend(requiredElements, sent, opts = {}) {
   const norm = String(sent).trim().toUpperCase().replace(/\s+/g, " ");
   const tokens = norm ? norm.split(" ") : [];
   const flat = norm.replace(/\s+/g, "");
-  const sentHasRst = tokens.some(isWellFormedRst);
+  // A token already reserved as the literal value of a DIFFERENT required
+  // numeric element (e.g. the contest serial) can't ALSO stand in for the
+  // RST's shape-only leniency — see claimedTokenIndices above.
+  const claimedByOthers = claimedTokenIndices(tokens, requiredElements);
+  const sentHasRst = tokens.some((t, i) => !claimedByOthers.has(i) && isWellFormedRst(t));
 
   const isConveyed = (el) => {
     // 0. A blank element can never be conveyed. Guard first, because every branch
