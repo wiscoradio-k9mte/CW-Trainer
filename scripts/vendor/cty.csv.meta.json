@@ -1,0 +1,7 @@
+{
+  "url": "https://www.country-files.com/cty/cty.csv",
+  "retrievedAt": "2026-08-18T22:37:38.000Z",
+  "sha256": "aaf5b5a2982eb3925749f8d2899f53cc45e5bba1aeefb834cd01e4ec0e65c305",
+  "license": "MIT-style permissive licence, country-files.com/copyright/ (retrieved 2026-08-18) — full text in CTY-LICENSE.txt",
+  "note": "build-dxcc-dataset.mjs verifies scripts/vendor/cty.csv against this sha256 before every regen. A mismatch is a FATAL error (see scripts/lib/cty-snapshot.mjs), never a silent fallback. To deliberately update the pin, run `npm run refresh:cty-snapshot`, review the diff, then re-run `npm run build:dxcc`."
+}

@@ -5,8 +5,10 @@
 Bundled DXCC (DX Century Club) entity data for offline lookup by the CW Trainer app.
 The app reads `dxcc_dataset.json` locally at runtime; it never fetches this data.
 
-Generated: 2026-07-25T21:46:18.074Z
+Generated: 2026-08-18T22:46:09.705Z
 Source 1: AD1C country files — https://www.country-files.com/cty/cty.csv  (current entities, zones, prefixes)
+  Pinned snapshot retrieved 2026-08-18T22:37:38.000Z, sha256 aaf5b5a2982eb3925749f8d2899f53cc45e5bba1aeefb834cd01e4ec0e65c305
+  (scripts/vendor/cty.csv — licence: scripts/vendor/CTY-LICENSE.txt)
 Source 2: k0swe/dxcc-json (Apache-2.0, vendored) — deleted entities, flag, countryCode, prefixRegex baseline
 Validated against: ARRL DXCC List January 2026 (340 current + 62 deleted = 402 total)
 
@@ -18,8 +20,13 @@ Validated against: ARRL DXCC List January 2026 (340 current + 62 deleted = 402 t
 | `dxcc_entities.csv` | Flat-file mirror for inspection or import into a spreadsheet |
 | `README.md` | This document |
 
-The generator script is `scripts/build-dxcc-dataset.mjs` (maintainer/CI only).
-Run `npm run build:dxcc` to regenerate.  Requires network access to country-files.com.
+The generator script is `scripts/build-dxcc-dataset.mjs` (maintainer-only, not run by CI).
+Run `npm run build:dxcc` to regenerate — reads the vendored, checksum-pinned
+`scripts/vendor/cty.csv`, no network required. It FATALs if that file's bytes
+don't match the checksum recorded in `scripts/vendor/cty.csv.meta.json` (drift
+or corruption caught loudly, not silently absorbed). To deliberately pull a
+fresh cty.csv from country-files.com and re-pin it, run
+`npm run refresh:cty-snapshot` first, review the diff, then regenerate.
 Run `npm run validate:dxcc` after regeneration for a thorough correctness check.
 
 ## Entity schema (one object per entity, 402 total)
@@ -96,4 +103,5 @@ Australia (by call area / state).
 
 | Date | Notes |
 |---|---|
-| 2026-07-25 | Initial generation from AD1C cty.csv + k0swe snapshot |
+| 2026-07-02 | Initial generation from AD1C cty.csv + k0swe snapshot |
+| 2026-08-18 | cty.csv source pinned to a checksum-verified vendored snapshot (scripts/vendor/cty.csv) instead of a live fetch on every run — makes regen reproducible and network-free; see scripts/vendor/CTY-LICENSE.txt for the licence basis. No entity data changed by this regen. |

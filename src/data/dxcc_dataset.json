@@ -1,7 +1,11 @@
 {
   "meta": {
-    "generatedAt": "2026-07-25T21:46:18.074Z",
-    "source1": "https://www.country-files.com/cty/cty.csv",
+    "generatedAt": "2026-08-18T22:46:09.705Z",
+    "source1": {
+      "url": "https://www.country-files.com/cty/cty.csv",
+      "retrievedAt": "2026-08-18T22:37:38.000Z",
+      "sha256": "aaf5b5a2982eb3925749f8d2899f53cc45e5bba1aeefb834cd01e4ec0e65c305"
+    },
     "source2": "github.com/k0swe/dxcc-json (Apache-2.0, vendored)",
     "totalEntities": 402,
     "currentCount": 340,
