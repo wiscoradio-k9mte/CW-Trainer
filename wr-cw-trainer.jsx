@@ -5250,7 +5250,7 @@ function Settings({ settings, setSettings, onClose }) {
   const callErrId = `${uid}-mycall-err`;
   // Caption/gloss text naming the RX-filter group and the cut-numbers toggle.
   const rxGroupLabelId = `${uid}-rxfilter`;
-  const cutLabelId = `${uid}-cut`, cutGlossId = `${uid}-cutgloss`, cutBtnId = `${uid}-cutbtn`;
+  const cutLabelId = `${uid}-cut`, cutGlossId = `${uid}-cutgloss`;
 
   // Callsign format check (myCall is sent AND graded in QSO practice, so
   // garbage here teaches a wrong fist — see validateCallsign in cw-core.js).
@@ -5391,25 +5391,38 @@ function Settings({ settings, setSettings, onClose }) {
             599 → 5NN, 0 → T in QSO exchanges
           </div>
         </div>
-        {/* The button's own text is its whole accessible name today ("5NN ON" / "599
-            OFF"), so AT hears the state and never the purpose. aria-labelledby names
-            the caption FIRST and then self-references the button, giving
-            "Cut numbers (contest style) 5NN ON".
-            Why the self-reference and not the caption alone: the caption alone would
-            drop "5NN ON" out of the accessible name while it is still the visible text
-            on the control, which is a WCAG 2.5.3 (label-in-name) failure — a speech-input
-            user says what they see. Keeping the visible text in the name means the state
-            is announced twice (name + aria-pressed), which is redundant but harmless;
-            removing that redundancy properly needs state-free visible text, i.e. a
-            visual change, which is out of scope here. */}
+        {/* STATE-FREE LABEL (fix/cut-numbers-state-free-label, follows PR #36).
+            PR #36's interim fix kept the button's own STATE text ("5NN ON" / "599 OFF")
+            inside the accessible name via a self-referencing aria-labelledby, purely to
+            satisfy WCAG 2.5.3 without a state-free redesign — but that leaves the name
+            itself changing on activation. Both the ARIA APG Toggle Button and Switch
+            patterns say this plainly: "it is critical the label on a toggle [switch]
+            does not change when its state changes" (w3.org/WAI/ARIA/apg/patterns/button/,
+            .../switch/) — their own worked example is a "Mute" button whose accessible
+            name stays "Mute" in both states, state carried only by aria-pressed. That is
+            also the fix here: aria-labelledby now names ONLY the caption, so the name is
+            the constant "Cut numbers (contest style)"; aria-pressed is the sole state
+            channel, so AT no longer hears the state twice.
+            The button's visible text is now "CUT NUMBERS" (always) — a real,
+            case-insensitive substring of that name, so WCAG 2.5.3 still holds (SC text:
+            "the name contains the text that is presented visually"; case differences are
+            explicitly excluded from the comparison per the SC's own Understanding doc).
+            The trailing "5NN"/"599" is a SIGHTED-USER affordance, not a second label: it
+            shows the literal value that will be keyed — more useful at a glance than a
+            bare ON/OFF, because that value IS the whole feature — but it's marked
+            aria-hidden because the fact it encodes (on vs. off) is already surfaced
+            programmatically via aria-pressed, the same move the 2.5.3 Understanding doc
+            describes for "Name (required)": a qualifier doesn't have to be textually IN
+            the name as long as it's exposed some other accessible way. Whole-button
+            border/color/weight still flips with state, unchanged from before — that
+            stays the at-a-glance cue for a sighted operator working at speed. */}
         <button
-          id={cutBtnId}
-          aria-labelledby={`${cutLabelId} ${cutBtnId}`}
+          aria-labelledby={cutLabelId}
           aria-describedby={cutGlossId}
           aria-pressed={settings.cutNumbers}
           onClick={() => setSettings((s) => ({ ...s, cutNumbers: !s.cutNumbers }))}
           style={{ ...S.btn, padding: "8px 14px", ...(settings.cutNumbers ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: DIM }) }}>
-          {settings.cutNumbers ? "5NN ON" : "599 OFF"}
+          CUT NUMBERS <span aria-hidden="true">{settings.cutNumbers ? "5NN" : "599"}</span>
         </button>
       </div>
       {/* M3: duplicate Farnsworth paragraph removed — the full gloss lives at the slider
