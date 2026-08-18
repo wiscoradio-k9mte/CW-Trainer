@@ -173,6 +173,85 @@ describe("gradeSend() — required-element scoring", () => {
     expect(gradeSend(["123"], "123").score).toBe(100); // sent the actual serial
   });
 
+  // ---------------------------------------------------------------------------
+  // Order/position-aware element assignment (the "contest-serial edge" card):
+  // when a contest step requires BOTH the RST report AND a separate serial
+  // (buildContest's `required(rpt, myExch)`), a lone RST-shaped serial must not
+  // ALSO credit the RST slot — the report genuinely wasn't sent. See
+  // claimedTokenIndices' header comment for the domain research + the rule.
+  // ---------------------------------------------------------------------------
+  it("THE DEFECT: an RST-shaped serial sent ALONE (report forgotten) no longer credits the RST slot too", () => {
+    // Required: the canonical report (599) AND a separate serial (123, itself
+    // RST-shaped — one of the ~40% of serials that are). Operator sends only
+    // "123" — the serial, report never keyed. Before the fix this scored 100
+    // (the lone token satisfied BOTH the RST-shape check and the serial's exact
+    // match). MUTATION: reverting sentHasRst to `tokens.some(isWellFormedRst)`
+    // (dropping the claimedByOthers exclusion) makes this go 100 again.
+    const r = gradeSend(["599", "123"], "123");
+    expect(r.score).toBe(50);
+    expect(r.hits).toEqual(["123"]);     // the serial IS genuinely present
+    expect(r.missing).toEqual(["599"]);  // the report genuinely is not
+  });
+
+  it("the correct case: report + serial both sent, in either order, both credited", () => {
+    // Conventional order (report first — ARRL Contest Basics, cited above).
+    expect(gradeSend(["599", "123"], "599 123").score).toBe(100);
+    // gradeSend intentionally ignores word order (fork 2/5) — a reversed send
+    // must still credit both, by VALUE not position.
+    const reversed = gradeSend(["599", "123"], "123 599");
+    expect(reversed.score).toBe(100);
+    expect(reversed.hits.sort()).toEqual(["123", "599"]);
+  });
+
+  it("cut-number forms of report + serial are both still position-aware", () => {
+    // 5NN (cut report) + 1N1 (cut for serial 191 — itself RST-shaped: R=1,S=9,
+    // T=1 all valid, confirmed via isWellFormedRst — a real collision case in
+    // cut form) — sent as only the serial, report dropped.
+    const droppedReport = gradeSend(["5NN", "1N1"], "1N1");
+    expect(droppedReport.score).toBe(50);
+    expect(droppedReport.hits).toEqual(["1N1"]);
+    expect(droppedReport.missing).toEqual(["5NN"]);
+    // Both sent in cut form: report as 5NN, the RST-shaped cut serial 1N1.
+    const both = gradeSend(["5NN", "1N1"], "5NN 1N1");
+    expect(both.score).toBe(100);
+  });
+
+  it("named ambiguity: the random serial itself draws 599 (599 required twice) — pre-existing, unaffected by this fix", () => {
+    // Genuine coincidence the card names: buildContest's serial() can draw 599,
+    // making BOTH required elements (report and exchange) literally "599". Both
+    // are then classified as isRstReport (it tests the VALUE, not which slot the
+    // value came from), so both read the one shared sentHasRst flag — exactly as
+    // before this fix (this path never reaches claimedTokenIndices at all, since
+    // an RST-report-valued element is excluded from claiming/being claimed). One
+    // "599" therefore credits both, whether sent once or twice — there genuinely
+    // is no way to tell which occurrence was "meant" as which, so this doesn't
+    // get tightened; documented here so the next reader doesn't mistake it for
+    // an oversight in the new assignment logic.
+    expect(gradeSend(["599", "599"], "599 599").score).toBe(100);
+    expect(gradeSend(["599", "599"], "599").score).toBe(100);
+  });
+
+  it("a doubled serial (RST never sent) doesn't leave a spare token for the RST branch to pick up", () => {
+    // This app's own scripts routinely double a token for clarity ("UR RST 599
+    // 599"), and an operator doing the same with the serial alone — "123 123",
+    // habit, RST never keyed — must not accidentally satisfy the RST slot just
+    // because there happen to be two RST-shaped tokens sitting around. Every
+    // occurrence of a claimed value is reserved, not just the first.
+    // MUTATION: claim only the FIRST matching token (tokens.findIndex + a
+    // `!claimed.has` guard instead of tokens.forEach) → this goes back to 100,
+    // because the second "123" is left unclaimed and satisfies sentHasRst.
+    const r = gradeSend(["599", "123"], "123 123");
+    expect(r.score).toBe(50);
+    expect(r.hits).toEqual(["123"]);
+    expect(r.missing).toEqual(["599"]);
+  });
+
+  it("does not regress the single-numeric-element case (no OTHER numeric element to collide with)", () => {
+    // No second required numeric element exists here, so nothing is ever
+    // "claimed away" — the RST slot's shape leniency applies exactly as before.
+    expect(gradeSend(["599"], "123").score).toBe(100); // any well-formed RST still counts alone
+  });
+
   it("fork 3: courtesy abbrev equivalence — TU ≡ TNX ≡ TKS in the send", () => {
     // MUTATION: empty COURTESY_EQUIVALENTS → TNX/TKS stop satisfying required TU.
     expect(gradeSend(["TU"], "TU 73").score).toBe(100);
