@@ -452,6 +452,7 @@ describe("QSO split toggle — the setting actually reaches the transmitted CQ t
 
     const revealed = readRevealedTarget();
     expect(revealed).not.toBeNull();
+    expect(revealed).toContain("CQ"); // positive control: prove we read the CQ, not an empty sibling
     expect(revealed).not.toContain("UP 5 TO 10");
   });
 });
