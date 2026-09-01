@@ -69,9 +69,13 @@ async function startRagchewCallCq({ autoAdvance = false } = {}) {
   await chooseOption(user, "Activity", /Ragchew/i);
   await chooseOption(user, "Role", /Call CQ/i);
   // Opt in to hands-free auto-advance (default OFF) BEFORE starting the contact.
+  // The toggle's accessible name is STABLE across states (enhancement/
+  // toggle-stable-names) — it no longer contains "OFF"/"ON", so look it up by
+  // its caption instead. Plain getByRole, no presence guard: the toggle always
+  // renders here (pre-contact QSO setup), so a future miss should fail this
+  // helper loudly, not silently skip arming AUTO for the tests that request it.
   if (autoAdvance) {
-    const autoBtn = screen.queryByRole("button", { name: /AUTO OFF/i });
-    if (autoBtn) await user.click(autoBtn);
+    await user.click(screen.getByRole("button", { name: "Auto-advance on a perfect over" }));
   }
   // Call CQ → step 0 is a you-send. Required elements = CQ + your call (calling CQ
   // is not a bare callsign — that's how you ANSWER a CQ). mustContain = ["CQ","W1AW"].

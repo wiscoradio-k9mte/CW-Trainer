@@ -30,6 +30,12 @@ afterEach(() => {
   cleanup();
 });
 
+// The toggle's accessible name is now STABLE across both states (see
+// enhancement/toggle-stable-names, accessible-names.dom.test.jsx section 5) — it
+// no longer changes between "AUTO OFF" and "AUTO ON". Every getByRole lookup
+// below must key on this constant name, not the visible ON/OFF text.
+const AUTO_TOGGLE_NAME = "Auto-advance on a perfect over";
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -87,7 +93,7 @@ async function setupDxStep({ autoAdvanceOn = false } = {}) {
   // "Answer a CQ" is the default role (first step = DX = copy step).
 
   if (autoAdvanceOn) {
-    const autoBtn = screen.getByRole("button", { name: /AUTO OFF/i });
+    const autoBtn = screen.getByRole("button", { name: AUTO_TOGGLE_NAME });
     await user.click(autoBtn);
   }
 
@@ -160,7 +166,7 @@ async function setupYouStep({ autoAdvanceOn = false } = {}) {
   await chooseOption(user, "Role", /Call CQ/i, rail);
 
   if (autoAdvanceOn) {
-    const autoBtn = within(rail).getByRole("button", { name: /AUTO OFF/i });
+    const autoBtn = within(rail).getByRole("button", { name: AUTO_TOGGLE_NAME });
     await user.click(autoBtn);
   }
 
@@ -1094,11 +1100,13 @@ describe("E1 — a11y: resultLive suffix 'Advancing automatically.' only when ar
 // E1 — Toggle UI: label and aria-pressed
 // ---------------------------------------------------------------------------
 
-describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", () => {
+describe("E1 — toggle UI: AUTO label (stable name) and aria-pressed in optionsJSX", () => {
 
   // -------------------------------------------------------------------------
-  // Test AP: toggle starts OFF (aria-pressed=false); clicking once → aria-pressed=true,
-  //   label AUTO ON; clicking again → back to OFF.
+  // Test AP: toggle starts OFF (aria-pressed=false); clicking once → aria-pressed=true;
+  //   clicking again → back to OFF. The accessible NAME is stable across both states
+  //   (enhancement/toggle-stable-names) — aria-pressed is the only state channel now,
+  //   so this asserts against the SAME element throughout, not a name that flips.
   //
   // Mutation (not directly testable without impl change but ensures the toggle
   // renders): removing the aria-pressed attribute → assertion fails → RED.
@@ -1107,15 +1115,15 @@ describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", (
     const { user } = await freshApp();
     await gotoTab(user, "QSO");
 
-    const offBtn = screen.getByRole("button", { name: /AUTO OFF/i });
-    expect(offBtn).toHaveAttribute("aria-pressed", "false");
+    const btn = screen.getByRole("button", { name: AUTO_TOGGLE_NAME });
+    expect(btn).toHaveAttribute("aria-pressed", "false");
 
-    await user.click(offBtn);
-    const onBtn = screen.getByRole("button", { name: /AUTO ON/i });
-    expect(onBtn).toHaveAttribute("aria-pressed", "true");
+    await user.click(btn);
+    expect(screen.getByRole("button", { name: AUTO_TOGGLE_NAME })).toBe(btn);
+    expect(btn).toHaveAttribute("aria-pressed", "true");
 
-    await user.click(onBtn);
-    expect(screen.getByRole("button", { name: /AUTO OFF/i })).toHaveAttribute("aria-pressed", "false");
+    await user.click(btn);
+    expect(btn).toHaveAttribute("aria-pressed", "false");
   });
 
   // -------------------------------------------------------------------------
@@ -1125,7 +1133,7 @@ describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", (
     const { user } = await freshApp();
     await gotoTab(user, "QSO");
 
-    expect(screen.getByRole("button", { name: /AUTO OFF/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: AUTO_TOGGLE_NAME })).toBeInTheDocument();
 
     // Start a contact (EASY mode so the DX panel renders CONTINUE immediately).
     const rail = screen.getByRole("complementary", { name: "Options" });
@@ -1147,8 +1155,7 @@ describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", (
 
     // During the contact, optionsJSX is not rendered (qso is set; the ternary
     // renders contextJSX in the rail, not optionsJSX).
-    expect(screen.queryByRole("button", { name: /AUTO OFF/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /AUTO ON/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: AUTO_TOGGLE_NAME })).not.toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
@@ -1170,7 +1177,7 @@ describe("E1 — toggle UI: AUTO OFF/ON label and aria-pressed in optionsJSX", (
       JSON.parse(window.localStorage.getItem("wrcw:settings") || "{}").qsoAutoAdvance;
 
     expect(persisted()).toBe(false);                 // default OFF, persisted
-    await user.click(screen.getByRole("button", { name: /AUTO OFF/i }));
+    await user.click(screen.getByRole("button", { name: AUTO_TOGGLE_NAME }));
     expect(persisted()).toBe(true);                  // toggling ON persists true
   });
 
