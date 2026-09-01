@@ -13,6 +13,11 @@
 //      name STABLE across both states (fix/cut-numbers-state-free-label).
 //   4. Settings section captions — styled like headings but not headings, so the
 //      panel could not be navigated by heading (WCAG 1.3.1, and 2.4.10 at AAA).
+//   5/6. QSO AUTO / SPLIT toggles — the identical cut-numbers defect (card
+//      "…zg3EJlQ", 2026-08-31): the name WAS "AUTO ON"/"AUTO OFF" and
+//      "SPLIT ON"/"SPLIT OFF", so it changed on click. Fixed with the same
+//      pattern: aria-labelledby → the caption alone, aria-pressed carries state,
+//      visible text unchanged (enhancement/toggle-stable-names).
 //
 // The layout assertions matter as much as the ARIA ones: <label> and <h2> carry UA
 // default styles (inline display; bold weight and em-relative block margins) that
@@ -32,7 +37,7 @@
 
 import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/react";
-import { renderApp, gotoTab } from "./helpers.jsx";
+import { renderApp, gotoTab, chooseOption } from "./helpers.jsx";
 
 // The QSO copy input's visible caption, verbatim. Used for BOTH the visible-text
 // assertion and the accessible-name lookup — if those two ever need different
@@ -197,6 +202,112 @@ describe("Cut numbers toggle — the name is stable, the state is not in it", ()
     expect(describedBy).toBeTruthy();
     expect(document.getElementById(describedBy).textContent.trim())
       .toBe("599 → 5NN, 0 → T in QSO exchanges");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. QSO AUTO toggle
+// ---------------------------------------------------------------------------
+describe("QSO auto-advance toggle — the name is stable, the state is not in it", () => {
+  const NAME = "Auto-advance on a perfect over";
+
+  it("the accessible name is the SAME string off and on", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const offBtn = screen.getByRole("button", { name: NAME, pressed: false });
+    await user.click(offBtn);
+    const onBtn = screen.getByRole("button", { name: NAME, pressed: true });
+    // Same element, same computed name — only possible if the name never changed.
+    expect(onBtn).toBe(offBtn);
+  });
+
+  it("aria-pressed still flips on click", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const btn = screen.getByRole("button", { name: NAME });
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    await user.click(btn);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("the visible text is byte-identical to the pre-fix ON/OFF string, in both states", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const btn = screen.getByRole("button", { name: NAME });
+    // Before this fix the button's own textContent WAS its accessible name
+    // ("AUTO OFF"/"AUTO ON"). The fix moves the state word behind aria-hidden but
+    // must not change a single rendered character — that's what keeps the phone-gate
+    // geometry from PR #70's era untouched.
+    expect(btn.textContent).toBe("AUTO OFF");
+    await user.click(btn);
+    expect(btn.textContent).toBe("AUTO ON");
+  });
+
+  it("the ON/OFF word does not leak into the accessible name", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const btn = screen.getByRole("button", { name: NAME });
+    await user.click(btn);
+    expect(screen.getByRole("button", { name: NAME })).toBe(btn);
+    expect(screen.queryByRole("button", { name: /AUTO ON/ })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. QSO SPLIT toggle (dx / hunt only)
+// ---------------------------------------------------------------------------
+describe("QSO split toggle — the name is stable, the state is not in it", () => {
+  const NAME = "Split (UP)";
+
+  async function showSplitToggle(user) {
+    await gotoTab(user, "QSO");
+    // Split only renders for activity=dx, role=hunt. Picking "Work DX" auto-resets
+    // Role to its last term, "Hunt the DX" — exactly the role that shows Split.
+    await chooseOption(user, "Activity", /Work DX/);
+  }
+
+  it("the accessible name is the SAME string off and on", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const offBtn = screen.getByRole("button", { name: NAME, pressed: false });
+    await user.click(offBtn);
+    const onBtn = screen.getByRole("button", { name: NAME, pressed: true });
+    expect(onBtn).toBe(offBtn);
+  });
+
+  it("aria-pressed still flips on click", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    await user.click(btn);
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("the visible text is byte-identical to the pre-fix ON/OFF string, in both states", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    expect(btn.textContent).toBe("SPLIT OFF");
+    await user.click(btn);
+    expect(btn.textContent).toBe("SPLIT ON");
+  });
+
+  it("the ON/OFF word does not leak into the accessible name", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    await user.click(btn);
+    expect(screen.getByRole("button", { name: NAME })).toBe(btn);
+    expect(screen.queryByRole("button", { name: /SPLIT ON/ })).toBeNull();
   });
 });
 

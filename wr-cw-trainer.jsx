@@ -3124,6 +3124,11 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
   // at the first instance's input.
   const qsoUid = useId();
   const copyInputId = `${qsoUid}-copy`;
+  // Caption ids for the AUTO / SPLIT toggle labels — same purpose as copyInputId,
+  // used below to give each toggle a state-free accessible name (see the
+  // STATE-FREE LABEL comments at each button).
+  const autoLabelId = `${qsoUid}-auto`, autoGlossId = `${qsoUid}-autogloss`;
+  const splitLabelId = `${qsoUid}-split`, splitGlossId = `${qsoUid}-splitgloss`;
 
   const [qso, setQso] = useState(null);
   const [step, setStep] = useState(0);
@@ -3707,16 +3712,29 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <div>
-            <div style={S.label}>Auto-advance on a perfect over</div>
-            <div style={{ fontSize: "0.75rem", color: DIM, fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+            <div id={autoLabelId} style={S.label}>Auto-advance on a perfect over</div>
+            <div id={autoGlossId} style={{ fontSize: "0.75rem", color: DIM, fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
               When you score 100% on an over, automatically continue after a few seconds — no click needed.
             </div>
           </div>
+          {/* STATE-FREE LABEL — reuses the shipped cut-numbers pattern exactly
+              (see wr-cw-trainer.jsx's cut-numbers block below, and
+              [[project-cwtrainer-cutnumbers-state-free-label]]). The old text
+              ("AUTO ON"/"AUTO OFF") WAS the accessible name, so it changed on every
+              click — the ARIA APG Button-toggle/Switch patterns are explicit that a
+              toggle's label must not do that. aria-labelledby now names only the
+              caption ("Auto-advance on a perfect over", constant); aria-pressed is
+              the sole state channel. The visible text is unchanged byte-for-byte —
+              "AUTO " + "ON"/"OFF" renders identically to the old literal string, only
+              the ON/OFF half is now aria-hidden (redundant with aria-pressed and the
+              border/color flip, so hiding it from AT loses nothing). */}
           <button
+            aria-labelledby={autoLabelId}
+            aria-describedby={autoGlossId}
             aria-pressed={settings.qsoAutoAdvance}
             onClick={() => setSettings((s) => ({ ...s, qsoAutoAdvance: !s.qsoAutoAdvance }))}
             style={{ ...S.btn, padding: "8px 14px", flexShrink: 0, ...(settings.qsoAutoAdvance ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: DIM }) }}>
-            {settings.qsoAutoAdvance ? "AUTO ON" : "AUTO OFF"}
+            AUTO <span aria-hidden="true">{settings.qsoAutoAdvance ? "ON" : "OFF"}</span>
           </button>
         </div>
       </div>
@@ -3727,16 +3745,19 @@ function QsoSim({ player, settings, setSettings, isWide, railEl, suppressRail, r
         <div style={{ marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div>
-              <div style={S.label}>Split (UP)</div>
-              <div style={{ fontSize: "0.75rem", color: DIM, fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
+              <div id={splitLabelId} style={S.label}>Split (UP)</div>
+              <div id={splitGlossId} style={{ fontSize: "0.75rem", color: DIM, fontFamily: "system-ui, sans-serif", marginTop: 2 }}>
                 DX CQ includes a QSX directive — practice copying "UP 5 TO 10".
               </div>
             </div>
+            {/* STATE-FREE LABEL — same fix as the AUTO toggle above; see its comment. */}
             <button
+              aria-labelledby={splitLabelId}
+              aria-describedby={splitGlossId}
               aria-pressed={dxSplit}
               onClick={() => setDxSplit((v) => !v)}
               style={{ ...S.btn, padding: "8px 14px", flexShrink: 0, ...(dxSplit ? { borderColor: "#F2A93B", color: "#F2A93B", fontWeight: 700 } : { color: DIM }) }}>
-              {dxSplit ? "SPLIT ON" : "SPLIT OFF"}
+              SPLIT <span aria-hidden="true">{dxSplit ? "ON" : "OFF"}</span>
             </button>
           </div>
         </div>
