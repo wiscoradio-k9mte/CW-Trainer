@@ -37,6 +37,11 @@
 
 import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/react";
+// The REAL ARIA accname algorithm — the same one getByRole's `name` matcher runs
+// under the hood (see @testing-library/dom's queries/role.js). Used below (LOW-2)
+// to prove WCAG 2.5.3 as a computed RELATIONSHIP between the name and the visible
+// text, not as two independently-hardcoded string literals that happen to agree.
+import { computeAccessibleName } from "dom-accessibility-api";
 import { renderApp, gotoTab, chooseOption } from "./helpers.jsx";
 
 // The QSO copy input's visible caption, verbatim. Used for BOTH the visible-text
@@ -210,6 +215,7 @@ describe("Cut numbers toggle — the name is stable, the state is not in it", ()
 // ---------------------------------------------------------------------------
 describe("QSO auto-advance toggle — the name is stable, the state is not in it", () => {
   const NAME = "Auto-advance on a perfect over";
+  const GLOSS = "When you score 100% on an over, automatically continue after a few seconds — no click needed.";
 
   it("the accessible name is the SAME string off and on", async () => {
     const { user } = await renderApp();
@@ -255,6 +261,52 @@ describe("QSO auto-advance toggle — the name is stable, the state is not in it
     expect(screen.getByRole("button", { name: NAME })).toBe(btn);
     expect(screen.queryByRole("button", { name: /AUTO ON/ })).toBeNull();
   });
+
+  // MED-1: mirrors the cut-numbers "gloss is announced as the description" cell —
+  // the missing 5th cut-numbers-parity cell, and the LIVE survivor the gate found:
+  // dropping aria-describedby from BOTH toggles, or swapping the two glosses
+  // (SPLIT announcing AUTO's text and vice versa), both shipped at 912 green
+  // without this. Two independent checks: the role query itself filtered by
+  // `description` (proves getByRole's own accdescription resolution agrees), and
+  // the raw DOM walk (proves it's THIS toggle's own gloss, not a coincidence of
+  // two toggles sharing identical description text).
+  it("the gloss is announced as the button's description", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const btn = screen.getByRole("button", { name: NAME, description: GLOSS });
+    expect(btn).toBe(screen.getByRole("button", { name: NAME }));
+    expect(document.getElementById(btn.getAttribute("aria-describedby")).textContent.trim()).toBe(GLOSS);
+  });
+
+  // LOW-1: pins the aria-hidden ATTRIBUTE on the state span. Limit stated plainly
+  // (same shape as the RX-filter aria-label-null pin above): this does NOT prove
+  // AT reading order or that a screen reader actually skips it — jsdom has no AT,
+  // only a DOM. It proves the attribute a real AT would honor is present.
+  it("the ON/OFF value span is marked aria-hidden", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const btn = screen.getByRole("button", { name: NAME });
+    const span = btn.querySelector("span");
+    expect(span).not.toBeNull();
+    expect(span.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  // LOW-2: WCAG 2.5.3 as a RELATIONSHIP, not two string literals that happen to
+  // agree. `NAME` above and the button's own visible prefix are independently
+  // typed constants — renaming the caption and updating NAME in lockstep would
+  // leave this file green even if the real computed name no longer contained the
+  // visible text. Running the actual accname algorithm (computeAccessibleName,
+  // the same one getByRole uses) against the button's own rendered first child
+  // closes that: it fails if the two ever drift apart for real.
+  it("the computed accessible name genuinely contains the visible prefix (2.5.3, not by coincidence)", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+
+    const btn = screen.getByRole("button", { name: NAME });
+    expect(computeAccessibleName(btn).toLowerCase()).toContain(btn.firstChild.textContent.trim().toLowerCase());
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -262,6 +314,7 @@ describe("QSO auto-advance toggle — the name is stable, the state is not in it
 // ---------------------------------------------------------------------------
 describe("QSO split toggle — the name is stable, the state is not in it", () => {
   const NAME = "Split (UP)";
+  const GLOSS = 'DX CQ includes a QSX directive — practice copying "UP 5 TO 10".';
 
   async function showSplitToggle(user) {
     await gotoTab(user, "QSO");
@@ -308,6 +361,98 @@ describe("QSO split toggle — the name is stable, the state is not in it", () =
     await user.click(btn);
     expect(screen.getByRole("button", { name: NAME })).toBe(btn);
     expect(screen.queryByRole("button", { name: /SPLIT ON/ })).toBeNull();
+  });
+
+  // MED-1 — see the matching AUTO test above for the full rationale. This is the
+  // half of the live survivor that catches a TARGET SWAP (SPLIT announcing AUTO's
+  // gloss text) — the AUTO cell alone can't, since a swap still leaves AUTO's own
+  // describedby resolving to AUTO's own gloss.
+  it("the gloss is announced as the button's description", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const btn = screen.getByRole("button", { name: NAME, description: GLOSS });
+    expect(btn).toBe(screen.getByRole("button", { name: NAME }));
+    expect(document.getElementById(btn.getAttribute("aria-describedby")).textContent.trim()).toBe(GLOSS);
+  });
+
+  // LOW-1 — see the matching AUTO test above for the stated limit.
+  it("the ON/OFF value span is marked aria-hidden", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    const span = btn.querySelector("span");
+    expect(span).not.toBeNull();
+    expect(span.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  // LOW-2 — see the matching AUTO test above for the full rationale.
+  it("the computed accessible name genuinely contains the visible prefix (2.5.3, not by coincidence)", async () => {
+    const { user } = await renderApp();
+    await showSplitToggle(user);
+
+    const btn = screen.getByRole("button", { name: NAME });
+    expect(computeAccessibleName(btn).toLowerCase()).toContain(btn.firstChild.textContent.trim().toLowerCase());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADDITIVE (announced, gate-found 2026-08-31): a PRE-EXISTING hole adjacent to
+// the SPLIT toggle's surface, unrelated to the name-stability fix above.
+// `opts = { split: dxSplit }` (wr-cw-trainer.jsx, QsoSim.start) can be severed to
+// `{ split: false }` and every one of this file's OTHER tests — including the
+// four SPLIT tests above, which only ever check aria-pressed and the button's
+// OWN text — stayed green. aria-pressed was announcing a state that reached
+// nothing: the DX CQ never gained "UP 5 TO 10" no matter what the toggle said.
+// Closing cell drives the REALISTIC path end-to-end: toggle SPLIT on, start the
+// contact, REVEAL the DX CQ text, and read what's actually IN the DOM — not a
+// shortcut into QsoSim's internal state.
+// ---------------------------------------------------------------------------
+describe("QSO split toggle — the setting actually reaches the transmitted CQ text", () => {
+  // Duplicated from qso-autoadvance.dom.test.jsx's readRevealedTarget rather than
+  // shared — this file has no existing cross-file helper import, and one more
+  // small DOM-walk is cheaper than introducing that coupling for a single site.
+  function readRevealedTarget() {
+    let sentLabelEl = null;
+    for (const el of document.querySelectorAll("*")) {
+      if (el.children.length === 0 && el.textContent.trim() === "Sent") {
+        sentLabelEl = el;
+        break;
+      }
+    }
+    if (!sentLabelEl) return null;
+    return sentLabelEl.nextElementSibling?.textContent?.trim() ?? null;
+  }
+
+  it("SPLIT on: the revealed DX CQ carries the UP 5 TO 10 directive", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+    await chooseOption(user, "Activity", /Work DX/); // role auto-resets to hunt
+
+    await user.click(screen.getByRole("button", { name: "Split (UP)", pressed: false }));
+    await user.click(screen.getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+    await user.click(await screen.findByRole("button", { name: /REVEAL/i }));
+
+    const revealed = readRevealedTarget();
+    expect(revealed).not.toBeNull();
+    expect(revealed).toContain("UP 5 TO 10");
+  });
+
+  it("SPLIT off (default): the revealed DX CQ carries no split directive", async () => {
+    const { user } = await renderApp();
+    await gotoTab(user, "QSO");
+    await chooseOption(user, "Activity", /Work DX/);
+
+    // No click on the toggle — confirm it's really off before trusting the negative.
+    expect(screen.getByRole("button", { name: "Split (UP)" })).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(screen.getByRole("button", { name: /LISTEN FOR CQ|CALL CQ/ }));
+    await user.click(await screen.findByRole("button", { name: /REVEAL/i }));
+
+    const revealed = readRevealedTarget();
+    expect(revealed).not.toBeNull();
+    expect(revealed).not.toContain("UP 5 TO 10");
   });
 });
 
