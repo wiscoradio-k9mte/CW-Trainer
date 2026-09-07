@@ -264,7 +264,7 @@ jobs:
         # caught by the brand-truth gate, 2026-07-20.) Deny nothing here;
         # state what this workflow does and let the README carry the warning.
         # softprops/action-gh-release v3.0.2
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           tag_name: ${{ github.ref_name }}
           name: 'CW Trainer v${{ steps.get-version.outputs.version }}'
